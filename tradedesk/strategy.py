@@ -142,7 +142,7 @@ class BaseStrategy(abc.ABC):
         while True:
             for epic in self.epics:
                 try:
-                    snapshot = self.client.get_market_snapshot(epic)
+                    snapshot = await self.client.get_market_snapshot(epic)
                     bid = float(snapshot["snapshot"]["bid"])
                     offer = float(snapshot["snapshot"]["offer"])
                     mid = (bid + offer) / 2

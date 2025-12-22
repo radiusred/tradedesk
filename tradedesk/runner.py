@@ -47,49 +47,66 @@ def configure_logging(level: str = "INFO") -> None:
 
 
 async def _run_strategies_async(
-    strategy_instances: List[BaseStrategy]
+    strategy_instances: List[BaseStrategy],
+    client: IGClient
 ) -> None:
     """
     Run multiple strategies concurrently.
     
     Args:
-        client: Authenticated IG client
         strategy_instances: List of instantiated strategy objects
+        client: IG client to be closed on shutdown
     """
-    if not strategy_instances:
-        log.warning("No strategies to run")
-        return
-    
-    # Log what we're running
-    for strategy in strategy_instances:
-        log.info(
-            "Loaded %s monitoring %d EPIC%s: %s",
-            strategy.__class__.__name__,
-            len(strategy.epics),
-            "s" if len(strategy.epics) != 1 else "",
-            ", ".join(strategy.epics) if strategy.epics else "(none)"
-        )
-    
-    # Collect all unique EPICs across all strategies
-    all_epics = set()
-    for strategy in strategy_instances:
-        all_epics.update(strategy.epics)
-    
-    if all_epics:
-        log.info("Total unique EPICs to monitor: %d", len(all_epics))
-    else:
-        log.warning("No EPICs defined in any strategy - nothing to monitor")
-    
-    # Run all strategies concurrently
-    tasks = [asyncio.create_task(strategy.run()) for strategy in strategy_instances]
-    
     try:
-        await asyncio.gather(*tasks)
-    except asyncio.CancelledError:
-        log.info("Strategies cancelled")
-        for task in tasks:
-            task.cancel()
-        await asyncio.gather(*tasks, return_exceptions=True)
+        if not strategy_instances:
+            log.warning("No strategies to run")
+            return
+        
+        # Log what we're running
+        for strategy in strategy_instances:
+            log.info(
+                "Loaded %s monitoring %d EPIC%s: %s",
+                strategy.__class__.__name__,
+                len(strategy.epics),
+                "s" if len(strategy.epics) != 1 else "",
+                ", ".join(strategy.epics) if strategy.epics else "(none)"
+            )
+        
+        # Collect all unique EPICs across all strategies
+        all_epics = set()
+        for strategy in strategy_instances:
+            all_epics.update(strategy.epics)
+        
+        if all_epics:
+            log.info("Total unique EPICs to monitor: %d", len(all_epics))
+        else:
+            log.warning("No EPICs defined in any strategy - nothing to monitor")
+        
+        # Run all strategies concurrently
+        tasks = [asyncio.create_task(strategy.run()) for strategy in strategy_instances]
+        
+        try:
+            await asyncio.gather(*tasks)
+        except asyncio.CancelledError:
+            log.info("Strategies cancelled")
+            for task in tasks:
+                task.cancel()
+            await asyncio.gather(*tasks, return_exceptions=True)
+    finally:
+        # Ensure client is closed
+        await client.close()
+
+
+async def _create_client_and_strategies(strategy_classes: List[Type[BaseStrategy]]) -> tuple[IGClient, List[BaseStrategy]]:
+    """Create authenticated client and instantiate strategies."""
+    # Create and authenticate IG client
+    log.info("Authenticating with IG...")
+    client = IGClient()
+    await client.start()
+    
+    # Instantiate strategies with authenticated client
+    strategy_instances = [cls(client) for cls in strategy_classes]
+    return client, strategy_instances
 
 
 def run_strategies(
@@ -138,27 +155,27 @@ def run_strategies(
         log.error("Configuration error: %s", e)
         sys.exit(1)
     
-    # Create IG client
-    try:
-        log.info("Authenticating with IG...")
-        client = IGClient()
-    except Exception as e:
-        log.error("Failed to create IG client: %s", e)
-        sys.exit(1)
-    
-    # Instantiate strategies
-    try:
-        strategy_instances = [cls(client) for cls in strategy_classes]
-    except Exception as e:
-        log.exception("Failed to instantiate strategies: %s", e)
-        sys.exit(1)
+    async def main():
+        client = None
+        try:
+            client, strategy_instances = await _create_client_and_strategies(strategy_classes)
+            
+            # Run strategies
+            log.info("Starting strategies...")
+            log.info("-" * 70)
+            
+            await _run_strategies_async(strategy_instances, client)
+        except Exception as e:
+            log.exception("Fatal error: %s", e)
+            raise
+        finally:
+            # Ensure client is closed even if there's an error
+            if client:
+                await client.close()
     
     # Run strategies
-    log.info("Starting strategies...")
-    log.info("-" * 70)
-    
     try:
-        asyncio.run(_run_strategies_async(strategy_instances))
+        asyncio.run(main())
     except KeyboardInterrupt:
         log.info("")
         log.info("-" * 70)

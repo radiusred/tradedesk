@@ -12,6 +12,7 @@ authors = [
     {name = "Darren Davison", email = "darren@davisononline.org"}
 ]
 dependencies = [
+    "aiohttp>=3.9.0",
     "requests>=2.31",
     "lightstreamer-client-lib>=2.0",
     "python-dotenv>=1.0",
