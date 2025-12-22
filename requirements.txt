@@ -1,0 +1,8 @@
+python-dotenv>=1.0
+requests>=2.31
+lightstreamer-client-lib>=2.2
+
+# tests
+pytest>=8.0
+responses>=0.25
+pytest-asyncio>=0.23
