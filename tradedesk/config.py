@@ -23,12 +23,19 @@ Example .env file:
 
 import os
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Literal
 
 # Try to load .env file if it exists
 try:
     from dotenv import load_dotenv
-    load_dotenv()
+
+    cwd_env = Path.cwd() / ".env"    
+    if cwd_env.exists():
+        load_dotenv(dotenv_path=cwd_env)
+    else:
+        # Fallback to standard behavior (searches parents)
+        load_dotenv()
 except ImportError:
     # python-dotenv not installed, just use environment variables
     pass
@@ -47,15 +54,22 @@ class Settings:
     """
     
     # IG API credentials
-    ig_api_key: str = os.getenv("IG_API_KEY", "")
-    ig_username: str = os.getenv("IG_USERNAME", "")
-    ig_password: str = os.getenv("IG_PASSWORD", "")
-    
-    # Environment: "DEMO" or "LIVE"
-    environment: Literal["DEMO", "LIVE"] = os.getenv("IG_ENVIRONMENT", "DEMO")  # type: ignore
-    
-    # Logging level
-    log_level: str = os.getenv("LOG_LEVEL", "INFO")
+    ig_api_key: str = ""
+    ig_username: str = ""
+    ig_password: str = ""
+    environment: Literal["DEMO", "LIVE"] = "DEMO"
+    log_level: str = "INFO"
+
+    def __post_init__(self):
+        """
+        Refresh values from environment after load_dotenv has run.
+        This allows the global 'settings' instance to be populated correctly.
+        """
+        self.ig_api_key: str = os.getenv("IG_API_KEY", "")
+        self.ig_username: str = os.getenv("IG_USERNAME", "")
+        self.ig_password: str = os.getenv("IG_PASSWORD", "")
+        self.environment = os.getenv("IG_ENVIRONMENT", self.environment) # type: ignore
+        self.log_level = os.getenv("LOG_LEVEL", self.log_level)
     
     def validate(self) -> None:
         """
