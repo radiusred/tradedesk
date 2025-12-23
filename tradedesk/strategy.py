@@ -15,7 +15,7 @@ import abc
 import asyncio
 import logging
 from datetime import datetime, timezone
-from typing import Any, Dict, List
+from typing import Any
 
 # ----------------------------------------------------------------------
 # Lightstreamer import – optional for the production daemon.
@@ -54,7 +54,7 @@ class BaseStrategy(abc.ABC):
     
     # Subclasses should define which EPICs they want to monitor
     # This will be used by the runner to create subscriptions
-    EPICS: List[str] = []
+    EPICS: list[str] = []
     
     # Default polling interval when Lightstreamer is unavailable
     POLL_INTERVAL = 2  # seconds
@@ -86,7 +86,7 @@ class BaseStrategy(abc.ABC):
         bid: float,
         offer: float,
         timestamp: str,
-        raw_data: Dict[str, Any]
+        raw_data: dict[str, Any]
     ) -> None:
         """
         Called whenever a price update is received for a subscribed EPIC.
@@ -167,7 +167,7 @@ class BaseStrategy(abc.ABC):
         
         log.info("Starting Lightstreamer streaming for %s", ", ".join(self.epics))
         
-        queue: asyncio.Queue[Dict[str, Any]] = asyncio.Queue()
+        queue: asyncio.Queue[dict[str, Any]] = asyncio.Queue()
         
         # --- GET THE CURRENT LOOP ---
         loop = asyncio.get_running_loop()

@@ -2,7 +2,7 @@
 import asyncio
 import logging
 import time
-from typing import Any, Dict, Optional, Tuple
+from typing import Any
 
 import aiohttp
 from .config import settings
@@ -42,23 +42,23 @@ class IGClient:
 
         # OAuth token management
         self.uses_oauth = False
-        self.oauth_access_token: Optional[str] = None
-        self.oauth_refresh_token: Optional[str] = None
+        self.oauth_access_token: str | None = None
+        self.oauth_refresh_token: str | None = None
         self.oauth_expires_at: float = 0  # Unix timestamp
         
         # Identity / Session info
-        self.account_id: Optional[str] = None
-        self.client_id: Optional[str] = None
+        self.account_id: str | None = None
+        self.client_id: str | None = None
         
         # Lightstreamer authentication tokens (different from OAuth!)
-        self.ls_cst: Optional[str] = None
-        self.ls_xst: Optional[str] = None
+        self.ls_cst: str | None = None
+        self.ls_xst: str | None = None
         
         # Rate limiting and concurrency control
         self.last_auth_attempt: float = 0
         self.min_auth_interval: float = 5.0  # Minimum 5 seconds between auth attempts
         self._auth_lock = asyncio.Lock()  # Prevent concurrent authentication
-        self._session: Optional[aiohttp.ClientSession] = None
+        self._session: aiohttp.ClientSession | None = None
 
     async def __aenter__(self):
         """Async context manager entry."""
@@ -114,7 +114,7 @@ class IGClient:
         
         self.last_auth_attempt = time.time()
 
-    async def _perform_auth_request(self) -> Tuple[Dict[str, Any], Dict[str, Any]]:
+    async def _perform_auth_request(self) -> tuple[dict[str, Any], dict[str, Any]]:
         """
         Executes the login request and handles network/protocol errors.
         Returns: (response_headers, json_body)
@@ -171,7 +171,7 @@ class IGClient:
     # ------------------------------------------------------------------
     # Auth Handlers (Version Specific)
     # ------------------------------------------------------------------
-    def _handle_v2_auth(self, headers: Dict[str, Any], body: Dict[str, Any]) -> None:
+    def _handle_v2_auth(self, headers: dict[str, Any], body: dict[str, Any]) -> None:
         """
         Handles Version 2 Authentication (CST / X-SECURITY-TOKEN).
         Required for Lightstreamer streaming.
@@ -196,7 +196,7 @@ class IGClient:
         
         log.info("Authenticated (V2) – Streaming enabled.")
 
-    async def _handle_v3_auth(self, body: Dict[str, Any]) -> None:
+    async def _handle_v3_auth(self, body: dict[str, Any]) -> None:
         """
         Handles Version 3 Authentication (OAuth).
         Warning: Does NOT support Lightstreamer.
@@ -222,7 +222,7 @@ class IGClient:
             "System will use REST polling."
         )
 
-    def _apply_session_headers(self, new_headers: Dict[str, str]) -> None:
+    def _apply_session_headers(self, new_headers: dict[str, str]) -> None:
         """Updates internal headers and the active session."""
         self.headers.update(new_headers)
         if self._session:
@@ -231,7 +231,7 @@ class IGClient:
     # ------------------------------------------------------------------
     # OAuth Management
     # ------------------------------------------------------------------
-    async def _store_oauth_token(self, oauth_token: Dict[str, Any], account_id: str, client_id: str) -> None:
+    async def _store_oauth_token(self, oauth_token: dict[str, Any], account_id: str, client_id: str) -> None:
         """Store OAuth credentials and calculate expiry time."""
         self.oauth_access_token = oauth_token["access_token"]
         self.oauth_refresh_token = oauth_token.get("refresh_token")
@@ -258,7 +258,7 @@ class IGClient:
     # ------------------------------------------------------------------
     # Requests & Helpers
     # ------------------------------------------------------------------
-    async def _request(self, method: str, path: str, **kwargs) -> Dict[str, Any]:
+    async def _request(self, method: str, path: str, **kwargs) -> dict[str, Any]:
         url = f"{self.base_url}{path}"
         
         if not self._session:
@@ -304,11 +304,11 @@ class IGClient:
         # For this refactor, we just re-auth. The original code did a manual retry here.
         pass 
 
-    async def get_market_snapshot(self, epic: str) -> Dict[str, Any]:
+    async def get_market_snapshot(self, epic: str) -> dict[str, Any]:
         """Return the latest market snapshot for the given EPIC."""
         return await self._request("GET", f"/markets/{epic}")
 
-    async def get_price_ticks(self, epic: str) -> Dict[str, Any]:
+    async def get_price_ticks(self, epic: str) -> dict[str, Any]:
         """Convenient shortcut to the "prices" endpoint."""
         return await self._request("GET", f"/prices/{epic}")
 
@@ -319,7 +319,7 @@ class IGClient:
         size: float,
         currency: str = "USD",
         force_open: bool = True,
-    ) -> Dict[str, Any]:
+    ) -> dict[str, Any]:
         """Submit a simple market order."""
         order = {
             "epic": epic,

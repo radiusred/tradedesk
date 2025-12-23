@@ -13,7 +13,6 @@ Provides the run_strategies() function which:
 import asyncio
 import logging
 import sys
-from typing import List, Type
 
 from .client import IGClient
 from .config import settings
@@ -47,7 +46,7 @@ def configure_logging(level: str = "INFO") -> None:
 
 
 async def _run_strategies_async(
-    strategy_instances: List[BaseStrategy],
+    strategy_instances: list[BaseStrategy],
     client: IGClient
 ) -> None:
     """
@@ -97,7 +96,7 @@ async def _run_strategies_async(
         await client.close()
 
 
-async def _create_client_and_strategies(strategy_classes: List[Type[BaseStrategy]]) -> tuple[IGClient, List[BaseStrategy]]:
+async def _create_client_and_strategies(strategy_classes: list[type[BaseStrategy]]) -> tuple[IGClient, list[BaseStrategy]]:
     """Create authenticated client and instantiate strategies."""
     # Create and authenticate IG client
     log.info("Authenticating with IG...")
@@ -110,7 +109,7 @@ async def _create_client_and_strategies(strategy_classes: List[Type[BaseStrategy
 
 
 def run_strategies(
-    strategy_classes: List[Type[BaseStrategy]],
+    strategy_classes: list[type[BaseStrategy]],
     log_level: str | None = None
 ) -> None:
     """
