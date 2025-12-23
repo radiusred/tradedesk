@@ -1,13 +1,6 @@
 # tradedesk/runner.py
 """
 Strategy orchestration and execution.
-
-Provides the run_strategies() function which:
-- Sets up logging
-- Validates configuration
-- Creates an authenticated IG client
-- Instantiates and runs user strategies
-- Handles graceful shutdown
 """
 
 import asyncio
@@ -21,18 +14,27 @@ from .strategy import BaseStrategy
 log = logging.getLogger(__name__)
 
 
-def configure_logging(level: str = "INFO") -> None:
+def configure_logging(level: str = "INFO", force: bool = False) -> None:
     """
     Configure root logger with console output.
     
+    By default, this is non-destructive: if the root logger already has handlers,
+    it will do nothing (assuming the application has configured logging).
+    
     Args:
         level: Logging level (DEBUG, INFO, WARNING, ERROR)
+        force: If True, clear existing handlers and force this configuration
     """
-    logger = logging.getLogger()
-    logger.setLevel(level.upper())
+    root_logger = logging.getLogger()
     
-    # Remove any existing handlers
-    logger.handlers.clear()
+    # If logging is already configured and we aren't forcing it, exit.
+    if root_logger.hasHandlers() and not force:
+        return
+
+    root_logger.setLevel(level.upper())
+    
+    if force:
+        root_logger.handlers.clear()
     
     # Create console handler with formatting
     formatter = logging.Formatter(
@@ -42,7 +44,7 @@ def configure_logging(level: str = "INFO") -> None:
     
     handler = logging.StreamHandler(sys.stdout)
     handler.setFormatter(formatter)
-    logger.addHandler(handler)
+    root_logger.addHandler(handler)
 
 
 async def _run_strategies_async(
@@ -110,42 +112,27 @@ async def _create_client_and_strategies(strategy_classes: list[type[BaseStrategy
 
 def run_strategies(
     strategy_classes: list[type[BaseStrategy]],
-    log_level: str | None = None
+    log_level: str | None = None,
+    setup_logging: bool = True
 ) -> None:
     """
     Main entry point for running trading strategies.
     
-    This function:
-    1. Configures logging
-    2. Validates configuration from .env
-    3. Creates an authenticated IG client
-    4. Instantiates all provided strategy classes
-    5. Runs them concurrently until interrupted
-    
     Args:
         strategy_classes: List of BaseStrategy subclasses to run
         log_level: Optional log level override (uses settings.log_level if None)
-    
-    Example:
-        from tradedesk import run_strategies
-        from my_strategies import MyStrategy, AnotherStrategy
-        
-        if __name__ == "__main__":
-            run_strategies([MyStrategy, AnotherStrategy])
-    
-    Raises:
-        ValueError: If configuration is invalid
-        RuntimeError: If IG authentication fails
+        setup_logging: If True (default), attempts to configure basic logging
+                       unless handlers are already present.
     """
     # Configure logging
-    level = log_level or settings.log_level
-    configure_logging(level)
+    if setup_logging:
+        level = log_level or settings.log_level
+        configure_logging(level)
     
     log.info("=" * 70)
     log.info("Tradedesk Strategy Runner")
     log.info("=" * 70)
     log.info("Environment: %s", settings.environment)
-    log.info("Log level: %s", level)
     
     # Validate configuration
     try:

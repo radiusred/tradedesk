@@ -11,18 +11,56 @@ from tradedesk.runner import run_strategies, configure_logging, _run_strategies_
 class TestRunner:
     """Test the strategy runner."""
     
-    def test_configure_logging(self):
-        """Test logging configuration."""
+    def test_configure_logging_defaults(self):
+        """Test logging configuration works when no handlers exist."""
         import logging
         
-        # Clear existing handlers
+        # Clear existing handlers to simulate clean slate
         root_logger = logging.getLogger()
         root_logger.handlers.clear()
         
-        # Configure logging
         configure_logging("DEBUG")
         
-        # Verify configuration
+        # Should have added a handler
+        assert root_logger.level == logging.DEBUG
+        assert len(root_logger.handlers) == 1
+        assert isinstance(root_logger.handlers[0], logging.StreamHandler)
+
+    def test_configure_logging_respects_existing(self):
+        """Test logging configuration does NOT overwrite existing handlers."""
+        import logging
+        
+        root_logger = logging.getLogger()
+        root_logger.handlers.clear()
+        
+        # Manually add a handler
+        dummy_handler = logging.NullHandler()
+        root_logger.addHandler(dummy_handler)
+        root_logger.setLevel(logging.WARNING)
+        
+        # Try to configure logging (should perform no-op)
+        configure_logging("DEBUG")
+        
+        # Level should NOT have changed to DEBUG
+        assert root_logger.level == logging.WARNING
+        # Should NOT have added a StreamHandler
+        assert len(root_logger.handlers) == 1
+        assert root_logger.handlers[0] == dummy_handler
+
+    def test_configure_logging_force(self):
+        """Test logging configuration CAN force overwrite."""
+        import logging
+        
+        root_logger = logging.getLogger()
+        root_logger.handlers.clear()
+        
+        # Manually add a handler
+        root_logger.addHandler(logging.NullHandler())
+        
+        # Force configure
+        configure_logging("DEBUG", force=True)
+        
+        # Should have wiped NullHandler and added StreamHandler
         assert root_logger.level == logging.DEBUG
         assert len(root_logger.handlers) == 1
         assert isinstance(root_logger.handlers[0], logging.StreamHandler)
