@@ -21,6 +21,7 @@ import logging
 from typing import Any, Dict
 
 from tradedesk import BaseStrategy, IGClient, run_strategies
+from tradedesk.subscriptions import MarketSubscription
 
 log = logging.getLogger(__name__)
 

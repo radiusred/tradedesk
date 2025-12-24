@@ -97,6 +97,35 @@ class Settings:
                 f"IG_ENVIRONMENT must be 'DEMO' or 'LIVE', got '{self.environment}'"
             )
 
+def load_strategy_config(config_path: str) -> dict:
+    """
+    Load strategy configuration from YAML file.
+    
+    Args:
+        config_path: Path to YAML config file
+    
+    Returns:
+        Dictionary containing configuration
+    """
+    import yaml
+    from pathlib import Path
+    
+    config_file = Path(config_path)
+    if not config_file.exists():
+        raise FileNotFoundError(f"Config file not found: {config_path}")
+    
+    try:
+        with open(config_file) as f:
+            config = yaml.safe_load(f)
+        
+        if config is None:
+            raise ValueError(f"Empty config file: {config_path}")
+        
+        return config
+    
+    except yaml.YAMLError as e:
+        raise ValueError(f"Invalid YAML in {config_path}: {e}")
+
 
 # Global settings instance - loaded when module is imported
 settings = Settings()

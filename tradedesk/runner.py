@@ -98,20 +98,35 @@ async def _run_strategies_async(
         await client.close()
 
 
-async def _create_client_and_strategies(strategy_classes: list[type[BaseStrategy]]) -> tuple[IGClient, list[BaseStrategy]]:
-    """Create authenticated client and instantiate strategies."""
-    # Create and authenticate IG client
+async def _create_client_and_strategies(strategy_specs: list) -> tuple[IGClient, list[BaseStrategy]]:
+    """
+    Create authenticated client and instantiate strategies.
+    
+    Args:
+        strategy_specs: List of either:
+            - BaseStrategy subclasses (old format)
+            - Tuples of (StrategyClass, kwargs_dict) (new format)
+    """
     log.info("Authenticating with IG...")
     client = IGClient()
     await client.start()
     
-    # Instantiate strategies with authenticated client
-    strategy_instances = [cls(client) for cls in strategy_classes]
+    strategy_instances = []
+    for spec in strategy_specs:
+        if isinstance(spec, tuple):
+            strategy_class, kwargs = spec
+            instance = strategy_class(client, **kwargs)
+        else:
+            strategy_class = spec
+            instance = strategy_class(client)
+        
+        strategy_instances.append(instance)
+    
     return client, strategy_instances
 
 
 def run_strategies(
-    strategy_classes: list[type[BaseStrategy]],
+    strategy_specs: list,
     log_level: str | None = None,
     setup_logging: bool = True
 ) -> None:
@@ -119,10 +134,19 @@ def run_strategies(
     Main entry point for running trading strategies.
     
     Args:
-        strategy_classes: List of BaseStrategy subclasses to run
-        log_level: Optional log level override (uses settings.log_level if None)
-        setup_logging: If True (default), attempts to configure basic logging
-                       unless handlers are already present.
+        strategy_specs: List of strategy specifications. Each can be:
+            - A BaseStrategy subclass (e.g., MyStrategy)
+            - A tuple of (StrategyClass, kwargs_dict)
+        log_level: Optional log level override
+        setup_logging: If True, configure basic logging
+    
+    Examples:
+        run_strategies([MyStrategy, AnotherStrategy])
+        
+        run_strategies([
+            (MyStrategy, {"config_path": "config1.yaml"}),
+            (MyStrategy, {"config_path": "config2.yaml"}),
+        ])
     """
     # Configure logging
     if setup_logging:
@@ -144,7 +168,7 @@ def run_strategies(
     async def main():
         client = None
         try:
-            client, strategy_instances = await _create_client_and_strategies(strategy_classes)
+            client, strategy_instances = await _create_client_and_strategies(strategy_specs)
             
             # Run strategies
             log.info("Starting strategies...")

@@ -16,6 +16,8 @@ dependencies = [
     "requests>=2.31",
     "lightstreamer-client-lib>=2.0",
     "python-dotenv>=1.0",
+    "numpy>=2.4.0",
+    "pyyaml>=6.0",
 ]
 
 [project.optional-dependencies]

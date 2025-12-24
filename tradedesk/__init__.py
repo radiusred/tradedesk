@@ -32,7 +32,19 @@ Example:
 from .client import IGClient
 from .strategy import BaseStrategy
 from .runner import run_strategies
-from .config import settings
+from .config import settings, load_strategy_config
+from .subscriptions import MarketSubscription, ChartSubscription
+from .chartdata import Candle, ChartHistory
 
 __version__ = "0.1.0"
-__all__ = ["IGClient", "BaseStrategy", "run_strategies", "settings"]
+__all__ = [
+    "IGClient",
+    "BaseStrategy", 
+    "run_strategies",
+    "settings",
+    "load_strategy_config",
+    "MarketSubscription",
+    "ChartSubscription",
+    "Candle",
+    "ChartHistory",
+]
