@@ -104,54 +104,114 @@ Strategies may place trades using the provided `IGClient`.
 
 ---
 
-## Writing your first strategy
 
-A minimal example looks like this:
+## Strategy Authoring
 
-```python
-from tradedesk import BaseStrategy
+A strategy in **tradedesk** is a subclass of `BaseStrategy`. The base class provides:
 
-class LogPriceStrategy(BaseStrategy):
-    EPICS = ["CS.D.EURUSD.CFD.IP"]
+- Lightstreamer streaming for real-time MARKET + CHART feeds
+- REST polling fallback for MARKET feeds
+- Candle history storage via `ChartHistory` for CHART subscriptions
 
-    async def on_price_update(self, epic, price):
-        self.logger.info(
-            "Price update",
-            extra={"epic": epic, "price": price},
-        )
-```
+### 1) Declare subscriptions (required)
 
-This strategy:
-- Subscribes to EUR/USD
-- Logs every incoming price update
-- Does **not** place trades
+Strategies declare the feeds they need using `SUBSCRIPTIONS`. Each item must be a `Subscription` object such as:
 
-See the `/examples` directory for:
-- A simple logging strategy
-- A basic trading strategy (with order placement commented out)
-
----
-
-## Running strategies
-
-Strategies are run using the `run_strategies` entry point:
+- `MarketSubscription(epic)` for tick-level bid/offer updates
+- `ChartSubscription(epic, period)` for completed OHLCV candles
 
 ```python
-from tradedesk import run_strategies
-from my_strategies import LogPriceStrategy
+from tradedesk.strategy import BaseStrategy
+from tradedesk.subscriptions import MarketSubscription, ChartSubscription
 
-run_strategies([
-    LogPriceStrategy,
-])
+class MyStrategy(BaseStrategy):
+    SUBSCRIPTIONS = [
+        MarketSubscription("CS.D.GBPUSD.TODAY.IP"),
+        ChartSubscription("CS.D.GBPUSD.TODAY.IP", "5MINUTE"),
+    ]
 ```
 
-This will:
-1. Authenticate with IG
-2. Start price streaming
-3. Run all strategies concurrently
-4. Shut down cleanly on Ctrl-C
+### 2) Implement your handlers
 
----
+#### Tick updates (MARKET)
+
+Implement `on_price_update(...)` to react to bid/offer updates from MARKET subscriptions:
+
+```python
+async def on_price_update(self, epic, bid, offer, timestamp, raw_data):
+    mid = (bid + offer) / 2
+    print(epic, mid)
+```
+
+#### Completed candles (CHART)
+
+Override `on_candle_update(...)` for candle-based logic. The default implementation stores completed candles in `self.charts[(epic, period)]`.
+
+```python
+from tradedesk.indicators.williams_r import WilliamsR
+
+class CandleStrategy(BaseStrategy):
+    SUBSCRIPTIONS = [ChartSubscription("CS.D.GBPUSD.TODAY.IP", "5MINUTE")]
+
+    def __init__(self, client, config=None):
+        super().__init__(client, config)
+        self.wr = WilliamsR(period=14)
+
+    async def on_candle_update(self, epic, period, candle):
+        await super().on_candle_update(epic, period, candle)
+
+        wr = self.wr.update(candle)
+        if self.wr.ready() and wr is not None and wr < -80:
+            print("Oversold")
+```
+
+### 3) Chart history
+
+For each `ChartSubscription(epic, period)` the base class creates a `ChartHistory` instance stored at:
+
+```
+self.charts[(epic, period)]
+```
+
+The maximum stored candle count is controlled by:
+
+```yaml
+chart:
+  history_length: 200
+```
+
+### 4) Indicator warmup using historical candles
+
+Indicators declare how many completed candles they need before becoming ready via:
+
+```
+Indicator.warmup_periods()
+```
+
+At startup, tradedesk can preload the required number of historical candles per chart subscription and feed them into registered indicators.
+
+#### Register indicators
+
+Indicators must be registered against a `ChartSubscription`:
+
+```python
+class MyStrategy(BaseStrategy):
+    SUBSCRIPTIONS = [ChartSubscription("CS.D.GBPUSD.TODAY.IP", "1MINUTE")]
+
+    def __init__(self, client, config=None):
+        super().__init__(client, config)
+
+        self.sub_1m = self.SUBSCRIPTIONS[0]
+        self.wr = WilliamsR(period=14)
+
+        self.register_indicator(self.sub_1m, self.wr)
+```
+
+#### Warmup safety
+
+- Warmup feeds historical candles directly into indicators
+- `on_candle_update` is **not** called during warmup by default
+- Trading logic only runs on live data
 
 ## Best practices (strongly recommended)
 
@@ -169,7 +229,7 @@ This will:
 
 This framework makes very few guarantees — defensive coding is essential.
 
----
+--- 
 
 ## Project status & future work
 

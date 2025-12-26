@@ -7,6 +7,7 @@ from datetime import datetime, timezone
 from unittest.mock import AsyncMock, MagicMock, Mock, patch, PropertyMock
 import pytest
 from tradedesk.strategy import BaseStrategy
+from tradedesk.subscriptions import MarketSubscription
 
 class TestBaseStrategy:
     """Test the BaseStrategy base class."""
@@ -16,7 +17,7 @@ class TestBaseStrategy:
         mock_client = MagicMock()
         
         class TestStrategy(BaseStrategy):
-            EPICS = ["CS.D.EURUSD.CFD.IP", "CS.D.GBPUSD.CFD.IP"]
+            SUBSCRIPTIONS = [MarketSubscription("CS.D.EURUSD.CFD.IP"), MarketSubscription("CS.D.GBPUSD.CFD.IP")]
             
             async def on_price_update(self, epic, bid, offer, timestamp, raw_data):
                 pass
@@ -24,24 +25,9 @@ class TestBaseStrategy:
         strategy = TestStrategy(mock_client)
         
         assert strategy.client == mock_client
-        assert strategy.epics == ["CS.D.EURUSD.CFD.IP", "CS.D.GBPUSD.CFD.IP"]
-        assert strategy.POLL_INTERVAL == 2
+        assert strategy.POLL_INTERVAL == 5
         assert strategy.watchdog_threshold == 60
         assert isinstance(strategy.last_update, datetime)
-    
-    def test_initialization_no_epics(self):
-        """Test strategy with no EPICs warns."""
-        mock_client = MagicMock()
-        
-        class TestStrategy(BaseStrategy):
-            async def on_price_update(self, epic, bid, offer, timestamp, raw_data):
-                pass
-        
-        with patch('logging.Logger.warning') as mock_warning:
-            strategy = TestStrategy(mock_client)
-            
-            assert strategy.epics == []
-            mock_warning.assert_called_once()
     
     @pytest.mark.asyncio
     @patch('tradedesk.strategy.settings')
@@ -56,7 +42,7 @@ class TestBaseStrategy:
         })
         
         class TestStrategy(BaseStrategy):
-            EPICS = ["CS.D.EURUSD.CFD.IP"]
+            SUBSCRIPTIONS = [MarketSubscription("CS.D.EURUSD.CFD.IP")]
             
             def __init__(self, client):
                 super().__init__(client)
@@ -119,7 +105,7 @@ class TestBaseStrategy:
         updates = []
         
         class TestStrategy(BaseStrategy):
-            EPICS = ["CS.D.EURUSD.CFD.IP", "CS.D.GBPUSD.CFD.IP"]
+            SUBSCRIPTIONS = [MarketSubscription("CS.D.EURUSD.CFD.IP"), MarketSubscription("CS.D.GBPUSD.CFD.IP")]
             
             async def on_price_update(self, epic, bid, offer, timestamp, raw_data):
                 updates.append({
@@ -167,7 +153,7 @@ class TestBaseStrategy:
         updates = []
         
         class TestStrategy(BaseStrategy):
-            EPICS = ["CS.D.EURUSD.CFD.IP"]
+            SUBSCRIPTIONS = [MarketSubscription("CS.D.EURUSD.CFD.IP")]
             
             async def on_price_update(self, epic, bid, offer, timestamp, raw_data):
                 updates.append('update')
@@ -207,7 +193,7 @@ class TestBaseStrategy:
         mock_client.client_id = "CLIENT123"
         
         class TestStrategy(BaseStrategy):
-            EPICS = ["CS.D.EURUSD.CFD.IP"]
+            SUBSCRIPTIONS = [MarketSubscription("CS.D.EURUSD.CFD.IP")]
             
             async def on_price_update(self, epic, bid, offer, timestamp, raw_data):
                 pass
@@ -254,7 +240,7 @@ class TestConcreteStrategy:
         mock_client = MagicMock()
         
         class SimpleStrategy(BaseStrategy):
-            EPICS = ["CS.D.EURUSD.CFD.IP"]
+            SUBSCRIPTIONS = [MarketSubscription("CS.D.EURUSD.CFD.IP")]
             
             def __init__(self, client):
                 super().__init__(client)

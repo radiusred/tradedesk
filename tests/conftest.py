@@ -5,6 +5,11 @@ import sys
 from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 
+from tradedesk.chartdata import Candle
+from tradedesk.strategy import BaseStrategy
+from tradedesk.subscriptions import ChartSubscription
+
+
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 
 @pytest.fixture(autouse=True)
@@ -109,3 +114,58 @@ def mock_lightstreamer():
             'client_class': mock_ls_client_class,
             'subscription_class': mock_subscription_class
         }
+
+def make_candle(i: int) -> Candle:
+    """
+    Deterministic candle series with monotonically increasing prices.
+    """
+    base = 100.0 + i
+    return Candle(
+        timestamp=f"2025-01-01T00:{i:02d}:00Z",
+        open=base,
+        high=base + 0.5,
+        low=base - 0.5,
+        close=base + 0.2,
+        volume=1000.0,
+        tick_count=10,
+    )
+
+@pytest.fixture
+def candle_factory():
+    """
+    Returns a function: (i:int) -> Candle
+    """
+    return make_candle
+
+
+@pytest.fixture
+def make_candles(candle_factory):
+    """
+    Returns a function: (n:int, start:int=0) -> list[Candle]
+    """
+    def _make(n: int, start: int = 0) -> list[Candle]:
+        return [candle_factory(i) for i in range(start, start + n)]
+
+    return _make
+
+
+@pytest.fixture
+def DummyStrategy():
+    """
+    A minimal concrete BaseStrategy subclass usable in tests.
+
+    Usage:
+        Strat = DummyStrategy([ChartSubscription(...), ...])
+        strat = Strat(client=None)
+    """
+
+    def _factory(subscriptions: list[ChartSubscription]):
+        class _DummyStrategy(BaseStrategy):
+            SUBSCRIPTIONS = subscriptions
+
+            async def on_price_update(self, epic, bid, offer, timestamp, raw_data) -> None:
+                return
+
+        return _DummyStrategy
+
+    return _factory

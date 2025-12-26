@@ -17,6 +17,7 @@ import logging
 from datetime import datetime, timezone
 from typing import Any
 
+
 # ----------------------------------------------------------------------
 # Lightstreamer import – optional for the production daemon.
 # ----------------------------------------------------------------------
@@ -30,6 +31,7 @@ from .client import IGClient
 from .config import settings
 from .subscriptions import MarketSubscription, ChartSubscription
 from .chartdata import Candle, ChartHistory
+from .indicators.base import Indicator
 
 log = logging.getLogger(__name__)
 
@@ -66,11 +68,8 @@ class BaseStrategy(abc.ABC):
     # Subclasses should define which data streams they want
     SUBSCRIPTIONS: list[MarketSubscription | ChartSubscription] = []
     
-    # Legacy support - converts to MarketSubscription
-    EPICS: list[str] = []
-    
     # Default polling interval when Lightstreamer is unavailable
-    POLL_INTERVAL = 2  # seconds
+    POLL_INTERVAL = 5  # seconds
     
     def __init__(self, client: IGClient, config: dict = None):
         """
@@ -82,12 +81,13 @@ class BaseStrategy(abc.ABC):
         """
         self.client = client
         self.config = config or {}
-        
-        # Build subscription list FIRST before using it
-        self._build_subscriptions()
-        
+        self.subscriptions = list(self.SUBSCRIPTIONS)
+
         # Create chart history managers for each chart subscription
         self.charts: dict[tuple[str, str], ChartHistory] = {}
+        # ChartSubscription is not hashable, cannot use one to key the dict
+        self._chart_indicators: dict[tuple[str, str], list[Indicator]] = {}
+
         for sub in self.subscriptions:
             if isinstance(sub, ChartSubscription):
                 key = (sub.epic, sub.period)
@@ -100,29 +100,93 @@ class BaseStrategy(abc.ABC):
         
         if not self.subscriptions:
             log.warning(
-                "%s has no subscriptions defined. Set SUBSCRIPTIONS or EPICS "
+                "%s has no subscriptions defined. Set SUBSCRIPTIONS "
                 "to specify which instruments to monitor.",
                 self.__class__.__name__
             )
     
-    def _build_subscriptions(self) -> None:
-        """Build subscription list from SUBSCRIPTIONS and legacy EPICS."""
-        self.subscriptions = list(self.SUBSCRIPTIONS)
-        
-        # Legacy support: convert EPICS to MarketSubscription
-        if self.EPICS and not self.SUBSCRIPTIONS:
-            log.debug(
-                "%s uses legacy EPICS attribute. Consider migrating to SUBSCRIPTIONS.",
-                self.__class__.__name__
-            )
-            self.subscriptions = [MarketSubscription(epic) for epic in self.EPICS]
-        
-        # Maintain legacy epics property for backward compatibility
-        self.epics = [
-            sub.epic for sub in self.subscriptions
-            if isinstance(sub, MarketSubscription)
-        ]
+    def _chart_key(self, sub: ChartSubscription) -> tuple[str, str]:
+        return (sub.epic, sub.period)
     
+    def register_indicator(self, sub: ChartSubscription, indicator: Indicator) -> None:
+        """
+        Register an indicator against a specific chart subscription.
+
+        This is used to compute required warmup candle counts and (later) to support
+        priming indicators with historical candles.
+        """
+        key = self._chart_key(sub)
+        self._chart_indicators.setdefault(key, []).append(indicator)
+
+    def required_warmup(self, sub: ChartSubscription) -> int:
+        """
+        Return the number of completed candles required to warm up all registered
+        indicators for the given chart subscription.
+        """
+        key = self._chart_key(sub)
+        indicators = self._chart_indicators.get(key, [])
+        return max((ind.warmup_periods() for ind in indicators), default=0)
+    
+    def chart_warmup_plan(self) -> dict[tuple[str, str], int]:
+        """
+        Build a warmup plan for chart subscriptions.
+
+        Returns:
+            A dict keyed by (epic, period) with the number of completed candles
+            required to warm up all registered indicators for that chart.
+        """
+        plan: dict[tuple[str, str], int] = {}
+
+        for sub in self.subscriptions:
+            if not isinstance(sub, ChartSubscription):
+                continue
+
+            key = (sub.epic, sub.period)
+            plan[key] = self.required_warmup(sub)
+
+        return plan
+    
+    def prime_chart(self, sub: ChartSubscription, candles: list[Candle]) -> None:
+        """
+        Prime chart history and registered indicators with historical candles.
+
+        Notes:
+        - Candles are assumed to be ordered oldest -> newest.
+        - This does NOT call on_candle_update(), so strategy trading logic is not triggered.
+        """
+        key = (sub.epic, sub.period)
+
+        chart = self.charts.get(key)
+        indicators = self._chart_indicators.get(key, [])
+
+        for candle in candles:
+            if chart is not None:
+                chart.add_candle(candle)
+
+            for ind in indicators:
+                ind.update(candle)
+
+    def warmup_from_history(self, history: dict[tuple[str, str], list[Candle]]) -> None:
+        """
+        Warm up chart histories and registered indicators from supplied historical candles.
+
+        Args:
+            history: Dict keyed by (epic, period) with candles ordered oldest -> newest.
+
+        Notes:
+            - Only chart subscriptions in chart_warmup_plan() are considered.
+            - Missing history entries are skipped silently.
+            - Extra history entries not present in subscriptions are ignored.
+            - This does NOT call on_candle_update().
+        """
+        for epic_period, _warmup in self.chart_warmup_plan().items():
+            candles = history.get(epic_period)
+            if not candles:
+                continue
+
+            epic, period = epic_period
+            self.prime_chart(ChartSubscription(epic, period), candles)
+
     @abc.abstractmethod
     async def on_price_update(
         self,
