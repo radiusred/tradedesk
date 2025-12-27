@@ -5,6 +5,7 @@ from collections import deque
 import logging
 
 from tradedesk import BaseStrategy, IGClient, run_strategies
+from tradedesk.subscriptions import MarketSubscription
 
 log = logging.getLogger(__name__)
 
@@ -22,9 +23,12 @@ class MomentumStrategy(BaseStrategy):
     Note: Uses legacy EPICS format for backward compatibility.
     """
     
-    # Declare which instruments to monitor (legacy format)
-    EPICS = ["CS.D.GBPUSD.TODAY.IP", "CS.D.EURUSD.TODAY.IP"]
-    
+    # Declare which instruments to monitor
+    SUBSCRIPTIONS = [
+        MarketSubscription("CS.D.GBPUSD.TODAY.IP"),
+        MarketSubscription("CS.D.EURUSD.TODAY.IP"),
+    ]
+
     def __init__(self, client: IGClient, config: dict = None, lookback: int = 10):
         """
         Initialize momentum strategy.
@@ -38,9 +42,9 @@ class MomentumStrategy(BaseStrategy):
         self.lookback = lookback
         
         # Track price history per EPIC
-        # Use self.epics which is populated by parent from EPICS
+        epics = [sub.epic for sub in self.SUBSCRIPTIONS]
         self.price_history: dict[str, deque] = {
-            epic: deque(maxlen=lookback) for epic in self.epics
+            epic: deque(maxlen=lookback) for epic in epics
         }
     
     async def on_price_update(

@@ -46,6 +46,17 @@ def configure_logging(level: str = "INFO", force: bool = False) -> None:
     handler.setFormatter(formatter)
     root_logger.addHandler(handler)
 
+def _epics_from_subscriptions(strategy: BaseStrategy) -> list[str]:
+    epics: list[str] = []
+    seen = set()
+
+    for sub in getattr(strategy, "subscriptions", []) or []:
+        epic = getattr(sub, "epic", None)
+        if epic and epic not in seen:
+            seen.add(epic)
+            epics.append(epic)
+
+    return epics
 
 async def _run_strategies_async(
     strategy_instances: list[BaseStrategy],
@@ -65,18 +76,21 @@ async def _run_strategies_async(
         
         # Log what we're running
         for strategy in strategy_instances:
+            epics = _epics_from_subscriptions(strategy)
             log.info(
                 "Loaded %s monitoring %d EPIC%s: %s",
                 strategy.__class__.__name__,
-                len(strategy.epics),
-                "s" if len(strategy.epics) != 1 else "",
-                ", ".join(strategy.epics) if strategy.epics else "(none)"
+                len(epics),
+                "s" if len(epics) != 1 else "",
+                ", ".join(epics) if epics else "(none)"
             )
+
         
         # Collect all unique EPICs across all strategies
         all_epics = set()
         for strategy in strategy_instances:
-            all_epics.update(strategy.epics)
+            all_epics.update(_epics_from_subscriptions(strategy))
+
         
         if all_epics:
             log.info("Total unique EPICs to monitor: %d", len(all_epics))

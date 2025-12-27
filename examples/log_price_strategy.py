@@ -41,8 +41,8 @@ class LogPriceStrategy(BaseStrategy):
     """
     
     # Declare which EPICs this strategy wants to monitor
-    EPICS = ["CS.D.GBPUSD.TODAY.IP"]
-    
+    SUBSCRIPTIONS = [MarketSubscription("CS.D.GBPUSD.TODAY.IP")]
+
     def __init__(self, client: IGClient):
         """
         Initialize the logging strategy.
