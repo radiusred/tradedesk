@@ -53,8 +53,8 @@ class TestBaseStrategy:
         
         strategy = TestStrategy(mock_client)
         
-        # Mock _is_lightstreamer_available to return False
-        with patch.object(strategy, '_is_lightstreamer_available', return_value=False):
+        # Mock _has_streamer() to return False
+        with patch.object(strategy, '_has_streamer', return_value=False):
             # Run for a short time then cancel
             task = asyncio.create_task(strategy.run())
             await asyncio.sleep(0.1)
@@ -91,7 +91,7 @@ class TestBaseStrategy:
             # The method should return True when all conditions are met
             # Note: The method returns the last condition (ls_xst) if all are truthy
             # Let's check the actual return value
-            result = strategy._is_lightstreamer_available()
+            result = strategy._has_streamer()
             assert result == True  
     
     @pytest.mark.asyncio

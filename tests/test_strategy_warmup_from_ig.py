@@ -22,7 +22,7 @@ class TestStrategyWarmupFromIG:
         wr = WilliamsR(period=14)
         strat.register_indicator(sub, wr)
 
-        await strat.warmup_from_ig()
+        await strat.warmup()
 
         assert len(strat.charts[("EPIC", "1MINUTE")]) == 14
         assert wr.ready() is True

@@ -186,14 +186,34 @@ class BaseStrategy(abc.ABC):
 
             epic, period = epic_period
             self.prime_chart(ChartSubscription(epic, period), candles)
+            
+    def _has_streamer(self) -> bool:
+        get_streamer = getattr(self.client, "get_streamer", None)
+        return callable(get_streamer)
 
-    # TODO: abstract provider
-    async def warmup_from_ig(self) -> None:
+    async def warmup(self) -> None:
         """
-        Fetch historical candles from IG REST to warm up chart history and indicators.
+        Provider-neutral warmup entrypoint.
+
+        Strategies may override this to implement custom warmup behaviour.
+        """
+        await self.warmup_from_provider()
+
+    async def warmup_from_provider(self) -> None:
+        """
+        Fetch historical candles (if supported by the provider client) to warm up
+        chart history and indicators.
+
+        Providers should implement `get_historical_candles(epic, period, num_points)`.
+        If the client does not support history, warmup is skipped.
         """
         enabled = self.config.get("warmup", {}).get("enabled", True)
         if not enabled:
+            return
+
+        get_hist = getattr(self.client, "get_historical_candles", None)
+        if not callable(get_hist):
+            log.debug("Client does not support historical candles; skipping warmup")
             return
 
         history: dict[tuple[str, str], list[Candle]] = {}
@@ -202,10 +222,14 @@ class BaseStrategy(abc.ABC):
             if warmup <= 0:
                 continue
             try:
-                candles = await self.client.get_historical_candles(epic, period, warmup)
+                candles = await get_hist(epic, period, warmup)
                 history[(epic, period)] = candles or []
             except Exception:
-                log.exception("Warmup fetch failed for %s %s; continuing without warmup", epic, period)
+                log.exception(
+                    "Warmup fetch failed for %s %s; continuing without warmup",
+                    epic,
+                    period,
+                )
 
         self.warmup_from_history(history)
 
@@ -253,7 +277,7 @@ class BaseStrategy(abc.ABC):
         key = (epic, period)
         if key in self.charts:
             self.charts[key].add_candle(candle)
-    
+
     async def run(self) -> None:
         """
         Start the strategy; runs until cancelled.
@@ -272,26 +296,16 @@ class BaseStrategy(abc.ABC):
         log.info("%s started for %s", self.__class__.__name__, ", ".join(sub_display))
 
         try:
-            await self.warmup_from_ig()
+            await self.warmup()
         except Exception:
             log.exception("Warmup failed; continuing without warmup")
 
         # Check if Lightstreamer is available
-        if self._is_lightstreamer_available():
+        if self._has_streamer():
             await self._run_streaming()
         else:
             log.info("Falling back to polling mode (Lightstreamer not available)")
             await self._run_polling()
-    
-    def _is_lightstreamer_available(self) -> bool:
-        """Check if all requirements for Lightstreamer are met."""
-        return bool(
-            LightstreamerClient is not None
-            and isinstance(getattr(self.client, "ls_url", None), str)
-            and getattr(self.client, "ls_url")
-            and getattr(self.client, "ls_cst", None)
-            and getattr(self.client, "ls_xst", None)
-        )
     
     async def _run_polling(self) -> None:
         """
