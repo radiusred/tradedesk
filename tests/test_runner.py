@@ -244,7 +244,7 @@ class TestRunner:
         mock_client = AsyncMock()
         mock_client.start = AsyncMock()
         
-        # We need to patch the IGClient import in the runner module
+        # We need to patch the Client import in the runner module
         with patch('tradedesk.runner.IGClient', return_value=mock_client):
             client, strategies = await _create_client_and_strategies([MockStrategy])
             

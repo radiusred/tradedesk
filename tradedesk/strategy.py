@@ -16,7 +16,11 @@ import asyncio
 import logging
 from datetime import datetime, timezone
 from typing import Any
-
+from .providers import Client
+from .config import settings
+from .subscriptions import MarketSubscription, ChartSubscription
+from .chartdata import Candle, ChartHistory
+from .indicators.base import Indicator
 
 # ----------------------------------------------------------------------
 # Lightstreamer import – optional for the production daemon.
@@ -26,12 +30,6 @@ try:
 except Exception:  # pragma: no cover – only triggered in the test env
     LightstreamerClient = None   # type: ignore
     Subscription = None           # type: ignore
-
-from .client import IGClient
-from .config import settings
-from .subscriptions import MarketSubscription, ChartSubscription
-from .chartdata import Candle, ChartHistory
-from .indicators.base import Indicator
 
 log = logging.getLogger(__name__)
 
@@ -72,7 +70,7 @@ class BaseStrategy(abc.ABC):
     POLL_INTERVAL = 5  # seconds
     
     # TODO: abstract provider
-    def __init__(self, client: IGClient, config: dict = None):
+    def __init__(self, client: Client, config: dict = None):
         """
         Initialize the strategy.
         

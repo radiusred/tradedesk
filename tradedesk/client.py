@@ -7,10 +7,11 @@ import aiohttp
 from datetime import datetime, timezone
 from .chartdata import Candle
 from .config import settings
+from .providers import Client
 
 log = logging.getLogger(__name__)
 
-class IGClient:
+class IGClient(Client):
     """Thin wrapper around IG's REST API – handles auth & simple GET/POST."""
 
     # ------------------------------------------------------------------

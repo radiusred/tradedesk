@@ -7,7 +7,8 @@ import asyncio
 import logging
 import sys
 
-from .client import IGClient
+from tradedesk.client import IGClient
+from .providers import Client
 from .config import settings
 from .strategy import BaseStrategy
 
@@ -60,7 +61,7 @@ def _epics_from_subscriptions(strategy: BaseStrategy) -> list[str]:
 
 async def _run_strategies_async(
     strategy_instances: list[BaseStrategy],
-    client: IGClient
+    client: Client
 ) -> None:
     """
     Run multiple strategies concurrently.
@@ -112,7 +113,7 @@ async def _run_strategies_async(
         await client.close()
 
 
-async def _create_client_and_strategies(strategy_specs: list) -> tuple[IGClient, list[BaseStrategy]]:
+async def _create_client_and_strategies(strategy_specs: list) -> tuple[Client, list[BaseStrategy]]:
     """
     Create authenticated client and instantiate strategies.
     
