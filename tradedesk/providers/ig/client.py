@@ -5,9 +5,9 @@ import time
 from typing import Any
 import aiohttp
 from datetime import datetime, timezone
-from .chartdata import Candle
-from .config import settings
-from .providers import Client
+from tradedesk.chartdata import Candle
+from tradedesk.config import settings
+from tradedesk.providers import Client
 
 log = logging.getLogger(__name__)
 
@@ -260,6 +260,10 @@ class IGClient(Client):
     # ------------------------------------------------------------------
     # Requests & Helpers
     # ------------------------------------------------------------------
+    def get_streamer(self):
+        from tradedesk.providers.ig.streamer import Lightstreamer
+        return Lightstreamer(self)
+
     async def _request(self, method: str, path: str, **kwargs) -> dict[str, Any]:
         url = f"{self.base_url}{path}"
         

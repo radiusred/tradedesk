@@ -16,11 +16,13 @@ Requirements:
     - tradedesk library installed
 """
 
+import asyncio
 import json
 import logging
 from typing import Any, Dict
 
-from tradedesk import BaseStrategy, IGClient, run_strategies
+from tradedesk import BaseStrategy, run_strategies
+from tradedesk.providers.ig.client import IGClient
 from tradedesk.subscriptions import MarketSubscription
 
 log = logging.getLogger(__name__)
@@ -85,8 +87,8 @@ class LogPriceStrategy(BaseStrategy):
             # Log as structured JSON for easy parsing
             log.warning("price_update %s", json.dumps(entry))
 
-
-# Example: Run this strategy directly
 if __name__ == "__main__":
-    # This is the minimal code needed to run a strategy
-    run_strategies([LogPriceStrategy])
+    run_strategies(
+        strategy_specs=[LogPriceStrategy],
+        client_factory=IGClient,
+    )

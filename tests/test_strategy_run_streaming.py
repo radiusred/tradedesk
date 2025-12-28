@@ -3,7 +3,7 @@ import pytest
 
 import tradedesk.strategy as strategy_module
 from tradedesk.subscriptions import MarketSubscription, ChartSubscription
-
+import tradedesk.providers.ig.streamer as ig_streamer
 
 class FakeUpdate:
     def __init__(self, item_name: str, values: dict[str, str | None]):
@@ -73,22 +73,24 @@ class TestRunStreaming:
             c = FakeLSClient(url, adapter)
             created["client"] = c
             return c
-
-        monkeypatch.setattr(strategy_module, "LightstreamerClient", ls_factory)
-        monkeypatch.setattr(strategy_module, "Subscription", FakeSubscription)
+        
+        monkeypatch.setattr(ig_streamer, "LightstreamerClient", ls_factory)
+        monkeypatch.setattr(ig_streamer, "Subscription", FakeSubscription)
 
         market_sub = MarketSubscription("EPIC.MKT")
         chart_sub = ChartSubscription("EPIC.CHT", "1MINUTE")
 
         Strat = DummyStrategy([market_sub, chart_sub])
 
-        strat = Strat(client=type("Client", (), {
+        ClientStub = type("Client", (), {
             "ls_url": "https://example",
             "ls_cst": "CST",
             "ls_xst": "XST",
             "client_id": "CID",
             "account_id": "AID",
-        })())
+            "get_streamer": lambda self: ig_streamer.Lightstreamer(self),
+        })
+        strat = Strat(client=ClientStub())
 
         seen_market = []
         seen_candles = []

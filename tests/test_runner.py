@@ -8,6 +8,7 @@ from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, Mock, patch, call
 import pytest
 from tradedesk.runner import run_strategies, configure_logging, _run_strategies_async
+from tradedesk.strategy import BaseStrategy
 
 class TestRunner:
     """Test the strategy runner."""
@@ -76,8 +77,6 @@ class TestRunner:
             await _run_strategies_async([], mock_client)
             
             mock_warning.assert_called_with("No strategies to run")
-            # Note: client.close is called in finally block, which should execute
-            mock_client.close.assert_awaited_once()
     
     @pytest.mark.asyncio
     async def test_run_strategies_async_single(self):
@@ -123,8 +122,6 @@ class TestRunner:
             
             # Verify strategy was run
             mock_strategy.run.assert_awaited_once()
-            # Client should be closed
-            mock_client.close.assert_awaited_once()
     
     @pytest.mark.asyncio
     async def test_run_strategies_async_multiple(self):
@@ -149,8 +146,6 @@ class TestRunner:
             # Both strategies should have been run
             mock_strategy1.run.assert_awaited_once()
             mock_strategy2.run.assert_awaited_once()
-            # Client should be closed
-            mock_client.close.assert_awaited_once()
             
             # Check logging - simpler approach
             call_strings = [str(call_obj) for call_obj in mock_info.call_args_list]
@@ -168,89 +163,68 @@ class TestRunner:
             assert found_strategy1, "Expected log for Strategy1 not found"
             assert found_strategy2, "Expected log for Strategy2 not found"
     
-    @pytest.mark.asyncio
-    async def test_run_strategies_async_cancellation(self):
-        """Test cancellation of running strategies."""
-        mock_strategy = MagicMock()
-        mock_strategy.epics = []
-        mock_strategy.run = AsyncMock(side_effect=asyncio.CancelledError())
-        
-        mock_client = AsyncMock()
-        mock_client.close = AsyncMock()
-        
-        await _run_strategies_async([mock_strategy], mock_client)
-        
-        # Client should be closed even on cancellation
-        mock_client.close.assert_awaited_once()
-    
     def test_run_strategies_invalid_config(self):
-        """Test run_strategies with invalid configuration."""
-        class MockStrategy:
-            EPICS = []
-        
-        # Mock settings.validate to raise an error
-        with patch('tradedesk.runner.settings.validate', side_effect=ValueError("Missing credentials")):
-            with patch('sys.exit') as mock_exit:
-                run_strategies([MockStrategy])
-                
-                # Should exit with error
-                mock_exit.assert_called_with(1)
-    
+        """Runner exits if a strategy fails to instantiate, and closes the client."""
+        class BoomStrategy(BaseStrategy):
+            def __init__(self, client, **kwargs):
+                super().__init__(client, **kwargs)
+                raise ValueError("Missing credentials")
+
+            async def on_price_update(self, epic, bid, offer, timestamp, raw_data):
+                pass
+
+        client = MagicMock()
+        client.start = AsyncMock()
+        client.close = AsyncMock()
+
+        with patch("sys.exit") as mock_exit:
+            run_strategies(
+                strategy_specs=[BoomStrategy],
+                client_factory=lambda: client,
+                setup_logging=False,
+            )
+
+            mock_exit.assert_called_with(1)
+            client.start.assert_awaited_once()
+            client.close.assert_awaited_once()
+
+
     def test_run_strategies_client_error(self):
-        """Test run_strategies when client creation fails."""
-        class MockStrategy:
-            EPICS = []
-        
-        # Mock settings.validate to pass
-        with patch('tradedesk.runner.settings.validate', return_value=None):
-            # Mock _create_client_and_strategies to raise an exception
-            with patch('tradedesk.runner._create_client_and_strategies', side_effect=Exception("Auth failed")):
-                with patch('sys.exit') as mock_exit:
-                    run_strategies([MockStrategy])
-                    
-                    # Should exit with error
-                    mock_exit.assert_called_with(1)
-    
+        """Runner exits if a strategy run task errors, and closes the client."""
+        class ErrorStrategy(BaseStrategy):
+            async def on_price_update(self, epic, bid, offer, timestamp, raw_data):
+                pass
+
+            async def run(self):
+                raise Exception("Auth failed")
+
+        client = MagicMock()
+        client.start = AsyncMock()
+        client.close = AsyncMock()
+
+        with patch("sys.exit") as mock_exit:
+            run_strategies(
+                strategy_specs=[ErrorStrategy],
+                client_factory=lambda: client,
+                setup_logging=False,
+            )
+
+            mock_exit.assert_called_with(1)
+            client.start.assert_awaited_once()
+            client.close.assert_awaited_once()
+
     def test_run_strategies_keyboard_interrupt(self):
         """Test graceful handling of KeyboardInterrupt."""
-        class MockStrategy:
-            EPICS = []
-        
-        # Mock settings.validate to pass
-        with patch('tradedesk.runner.settings.validate', return_value=None):
-            # Create a mock function that raises KeyboardInterrupt
-            def mock_asyncio_run(coro):
-                raise KeyboardInterrupt()
-            
-            with patch('asyncio.run', side_effect=mock_asyncio_run):
-                with patch('logging.Logger.info') as mock_info:
-                    run_strategies([MockStrategy])
-                    
-                    # Should log graceful shutdown
-                    mock_info.assert_any_call("Interrupted by user - shutting down gracefully")
-    
-    @pytest.mark.asyncio
-    async def test_create_client_and_strategies(self):
-        """Test client and strategy creation."""
-        from tradedesk.runner import _create_client_and_strategies
-        
-        class MockStrategy:
-            EPICS = ["CS.D.EURUSD.CFD.IP"]
-            
-            def __init__(self, client):
-                self.client = client
-        
-        # Mock IGClient to avoid real authentication
-        mock_client = AsyncMock()
-        mock_client.start = AsyncMock()
-        
-        # We need to patch the Client import in the runner module
-        with patch('tradedesk.runner.IGClient', return_value=mock_client):
-            client, strategies = await _create_client_and_strategies([MockStrategy])
-            
-            assert client == mock_client
-            assert len(strategies) == 1
-            assert isinstance(strategies[0], MockStrategy)
-            assert strategies[0].client == mock_client
-            
-            mock_client.start.assert_awaited_once()
+        class MockStrategy(BaseStrategy):
+            async def on_price_update(self, epic, bid, offer, timestamp, raw_data):
+                pass
+
+        client = MagicMock()
+        client.close = AsyncMock()
+
+        # Force asyncio.run(...) in runner to raise KeyboardInterrupt
+        with patch("asyncio.run", side_effect=KeyboardInterrupt()):
+            with patch("logging.Logger.info") as mock_info:
+                run_strategies(client, [MockStrategy], setup_logging=False)
+
+                mock_info.assert_any_call("Interrupted by user - shutting down gracefully")

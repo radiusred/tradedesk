@@ -15,21 +15,24 @@ Example:
     from tradedesk import BaseStrategy
     
     class MyStrategy(BaseStrategy):
-        EPICS = ["CS.D.GBPUSD.TODAY.IP"]
+        SUBSCRIPTIONS = [MarketSubscription("CS.D.GBPUSD.TODAY.IP")]
         
         async def on_price_update(self, epic, bid, offer, timestamp, raw_data):
             # Your trading logic here
             pass
     
     # main.py
+    import asyncio
+    from tradedesk.providers.ig.client import IGClient
     from tradedesk import run_strategies
     from my_strategies import MyStrategy
     
     if __name__ == "__main__":
-        run_strategies([MyStrategy])
+        client = IGClient()
+        await client.start()
+        run_strategies(client, [MyStrategy])
 """
 
-from .client import IGClient
 from .strategy import BaseStrategy
 from .runner import run_strategies
 from .config import settings, load_strategy_config
@@ -38,7 +41,6 @@ from .chartdata import Candle, ChartHistory
 
 __version__ = "0.1.0"
 __all__ = [
-    "IGClient",
     "BaseStrategy", 
     "run_strategies",
     "settings",

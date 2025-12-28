@@ -109,6 +109,7 @@ LOG_LEVEL=INFO
 
 ```python
 from tradedesk import BaseStrategy, run_strategies
+from tradedesk.providers.ig.client import IGClient
 from tradedesk.subscriptions import MarketSubscription
 
 class LogPriceStrategy(BaseStrategy):
@@ -123,7 +124,10 @@ class LogPriceStrategy(BaseStrategy):
         print(f"{timestamp}: {epic} = {mid:.5f}")
 
 if __name__ == "__main__":
-    run_strategies([LogPriceStrategy])
+    run_strategies(
+        strategy_specs=[LogPriceStrategy],
+        client_factory=IGClient,
+        )
 ```
 
 Run with:
@@ -334,7 +338,9 @@ run_strategies([
     StrategyA,
     StrategyB,
     (StrategyC, {"config": config_c}),
-])
+    ],
+    client_factory=IGClient,
+)
 ```
 
 Each strategy:

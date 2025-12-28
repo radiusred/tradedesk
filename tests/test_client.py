@@ -6,7 +6,7 @@ import asyncio
 import time
 from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
-from tradedesk.client import IGClient
+from tradedesk.providers.ig.client import IGClient
 
 class TestIGClient:
     """Test the IGClient class."""
@@ -24,7 +24,7 @@ class TestIGClient:
     @pytest.mark.asyncio
     async def test_initialization_live(self):
         """Test client initialization for LIVE environment."""
-        with patch('tradedesk.client.settings') as mock_settings:
+        with patch('tradedesk.providers.ig.client.settings') as mock_settings:
             mock_settings.environment = "LIVE"
             mock_settings.ig_api_key = "test-key"
             mock_settings.ig_username = "test-user"

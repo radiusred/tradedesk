@@ -15,12 +15,11 @@ sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')
 @pytest.fixture(autouse=True)
 def mock_settings():
     """Automatically mock settings for all tests."""
-    with patch('tradedesk.client.settings') as mock_client_settings, \
-         patch('tradedesk.strategy.settings') as mock_strategy_settings, \
-         patch('tradedesk.runner.settings') as mock_runner_settings:
+    with patch('tradedesk.providers.ig.client.settings') as mock_client_settings, \
+         patch('tradedesk.strategy.settings') as mock_strategy_settings:
         
         # Configure all mocked settings
-        for mock_setting in [mock_client_settings, mock_strategy_settings, mock_runner_settings]:
+        for mock_setting in [mock_client_settings, mock_strategy_settings]:
             mock_setting.ig_api_key = "test-api-key"
             mock_setting.ig_username = "test-username"
             mock_setting.ig_password = "test-password"
@@ -88,8 +87,8 @@ def mock_aiohttp_session(mock_http_response):
 @pytest.fixture
 def mock_lightstreamer():
     """Mock Lightstreamer client and subscription."""
-    with patch('tradedesk.strategy.LightstreamerClient') as mock_ls_client_class, \
-         patch('tradedesk.strategy.Subscription') as mock_subscription_class:
+    with patch('tradedesk.providers.ig.streamer.LightstreamerClient') as mock_ls_client_class, \
+         patch('tradedesk.providers.ig.streamer.Subscription') as mock_subscription_class:
         
         # Create mock LightstreamerClient instance
         mock_ls_client = MagicMock()

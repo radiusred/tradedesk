@@ -1,4 +1,3 @@
-# tradedesk/runner.py
 """
 Strategy orchestration and execution.
 """
@@ -6,11 +5,10 @@ Strategy orchestration and execution.
 import asyncio
 import logging
 import sys
+from collections.abc import Callable
 
-from tradedesk.client import IGClient
-from .providers import Client
-from .config import settings
-from .strategy import BaseStrategy
+from tradedesk.providers import Client
+from tradedesk.strategy import BaseStrategy
 
 log = logging.getLogger(__name__)
 
@@ -18,34 +16,33 @@ log = logging.getLogger(__name__)
 def configure_logging(level: str = "INFO", force: bool = False) -> None:
     """
     Configure root logger with console output.
-    
+
     By default, this is non-destructive: if the root logger already has handlers,
     it will do nothing (assuming the application has configured logging).
-    
+
     Args:
         level: Logging level (DEBUG, INFO, WARNING, ERROR)
         force: If True, clear existing handlers and force this configuration
     """
     root_logger = logging.getLogger()
-    
-    # If logging is already configured and we aren't forcing it, exit.
+
     if root_logger.hasHandlers() and not force:
         return
 
     root_logger.setLevel(level.upper())
-    
+
     if force:
         root_logger.handlers.clear()
-    
-    # Create console handler with formatting
+
     formatter = logging.Formatter(
         "%(asctime)s %(levelname)s %(message)s",
-        datefmt="%Y-%m-%d %H:%M:%S"
+        datefmt="%Y-%m-%d %H:%M:%S",
     )
-    
+
     handler = logging.StreamHandler(sys.stdout)
     handler.setFormatter(formatter)
     root_logger.addHandler(handler)
+
 
 def _epics_from_subscriptions(strategy: BaseStrategy) -> list[str]:
     epics: list[str] = []
@@ -59,74 +56,67 @@ def _epics_from_subscriptions(strategy: BaseStrategy) -> list[str]:
 
     return epics
 
-async def _run_strategies_async(
-    strategy_instances: list[BaseStrategy],
-    client: Client
-) -> None:
+async def _run_strategies_async(strategy_instances: list[BaseStrategy], client: Client) -> None:
     """
     Run multiple strategies concurrently.
-    
-    Args:
-        strategy_instances: List of instantiated strategy objects
-        client: IG client to be closed on shutdown
+
+    Notes:
+    - Task cancellation/cleanup is handled in a finally block so it runs on:
+      * normal completion
+      * CancelledError
+      * KeyboardInterrupt propagating through asyncio.run(main())
+      * any other exception
     """
+    if not strategy_instances:
+        log.warning("No strategies to run")
+        return
+
+    for strategy in strategy_instances:
+        epics = _epics_from_subscriptions(strategy)
+        log.info(
+            "Loaded %s monitoring %d EPIC%s: %s",
+            strategy.__class__.__name__,
+            len(epics),
+            "s" if len(epics) != 1 else "",
+            ", ".join(epics) if epics else "(none)",
+        )
+
+    all_epics = set()
+    for strategy in strategy_instances:
+        all_epics.update(_epics_from_subscriptions(strategy))
+
+    if all_epics:
+        log.info("Total unique EPICs to monitor: %d", len(all_epics))
+    else:
+        log.warning("No EPICs defined in any strategy - nothing to monitor")
+
+    tasks = [asyncio.create_task(strategy.run()) for strategy in strategy_instances]
+
     try:
-        if not strategy_instances:
-            log.warning("No strategies to run")
-            return
-        
-        # Log what we're running
-        for strategy in strategy_instances:
-            epics = _epics_from_subscriptions(strategy)
-            log.info(
-                "Loaded %s monitoring %d EPIC%s: %s",
-                strategy.__class__.__name__,
-                len(epics),
-                "s" if len(epics) != 1 else "",
-                ", ".join(epics) if epics else "(none)"
-            )
-
-        
-        # Collect all unique EPICs across all strategies
-        all_epics = set()
-        for strategy in strategy_instances:
-            all_epics.update(_epics_from_subscriptions(strategy))
-
-        
-        if all_epics:
-            log.info("Total unique EPICs to monitor: %d", len(all_epics))
-        else:
-            log.warning("No EPICs defined in any strategy - nothing to monitor")
-        
-        # Run all strategies concurrently
-        tasks = [asyncio.create_task(strategy.run()) for strategy in strategy_instances]
-        
-        try:
-            await asyncio.gather(*tasks)
-        except asyncio.CancelledError:
-            log.info("Strategies cancelled")
-            for task in tasks:
-                task.cancel()
-            await asyncio.gather(*tasks, return_exceptions=True)
+        await asyncio.gather(*tasks)
+    except asyncio.CancelledError:
+        # Ensure a friendly log line when cancellation is the reason.
+        log.info("Strategies cancelled")
+        raise
     finally:
-        # Ensure client is closed
-        await client.close()
+        # Always attempt to stop strategies cleanly.
+        for task in tasks:
+            if not task.done():
+                task.cancel()
 
+        # Drain tasks; swallow exceptions to avoid masking the original failure/cancel.
+        await asyncio.gather(*tasks, return_exceptions=True)
 
-async def _create_client_and_strategies(strategy_specs: list) -> tuple[Client, list[BaseStrategy]]:
+def _instantiate_strategies(client: Client, strategy_specs: list) -> list[BaseStrategy]:
     """
-    Create authenticated client and instantiate strategies.
-    
-    Args:
-        strategy_specs: List of either:
-            - BaseStrategy subclasses (old format)
-            - Tuples of (StrategyClass, kwargs_dict) (new format)
+    Instantiate strategies.
+
+    strategy_specs entries can be:
+      - a BaseStrategy subclass (old format)
+      - a tuple of (StrategyClass, kwargs_dict) (new format)
     """
-    log.info("Authenticating with IG...")
-    client = IGClient()
-    await client.start()
-    
-    strategy_instances = []
+    strategy_instances: list[BaseStrategy] = []
+
     for spec in strategy_specs:
         if isinstance(spec, tuple):
             strategy_class, kwargs = spec
@@ -134,81 +124,95 @@ async def _create_client_and_strategies(strategy_specs: list) -> tuple[Client, l
         else:
             strategy_class = spec
             instance = strategy_class(client)
-        
+
         strategy_instances.append(instance)
-    
-    return client, strategy_instances
+
+    return strategy_instances
+
+async def _async_run_strategies(
+    client: Client,
+    strategy_specs: list,
+    log_level: str | None = None,
+    setup_logging: bool = True,
+) -> None:
+    if setup_logging:
+        configure_logging(log_level or "INFO")
+
+    log.info("=" * 70)
+    log.info("Tradedesk Strategy Runner")
+    log.info("=" * 70)
+
+    try:
+        strategy_instances = _instantiate_strategies(client, strategy_specs)
+
+        log.info("Starting strategies...")
+        log.info("-" * 70)
+
+        await _run_strategies_async(strategy_instances, client)
+
+    finally:
+        # Always close the client even if strategy instantiation fails.
+        await client.close()
+
+
+async def _async_run_with_client_factory(
+    client_factory: Callable[[], Client],
+    strategy_specs: list,
+    log_level: str | None = None,
+    setup_logging: bool = True,
+) -> None:
+    client = client_factory()
+    await client.start()
+    await _async_run_strategies(
+        client,
+        strategy_specs,
+        log_level=log_level,
+        setup_logging=setup_logging,
+    )
 
 
 def run_strategies(
     strategy_specs: list,
+    client_factory: Callable[[], Client],
     log_level: str | None = None,
-    setup_logging: bool = True
+    setup_logging: bool = True,
 ) -> None:
     """
-    Main entry point for running trading strategies.
-    
-    Args:
-        strategy_specs: List of strategy specifications. Each can be:
-            - A BaseStrategy subclass (e.g., MyStrategy)
-            - A tuple of (StrategyClass, kwargs_dict)
-        log_level: Optional log level override
-        setup_logging: If True, configure basic logging
-    
-    Examples:
-        run_strategies([MyStrategy, AnotherStrategy])
-        
-        run_strategies([
-            (MyStrategy, {"config_path": "config1.yaml"}),
-            (MyStrategy, {"config_path": "config2.yaml"}),
-        ])
+    Public synchronous entry point.
+
+    The framework:
+      - constructs the provider client via client_factory()
+      - awaits client.start()
+      - runs strategies until cancelled/errored
+      - awaits client.close() on exit
+
+    User code remains synchronous.
     """
-    # Configure logging
-    if setup_logging:
-        level = log_level or settings.log_level
-        configure_logging(level)
-    
-    log.info("=" * 70)
-    log.info("Tradedesk Strategy Runner")
-    log.info("=" * 70)
-    log.info("Environment: %s", settings.environment)
-    
-    # Validate configuration
+    exit_code = 0
+
     try:
-        settings.validate()
-    except ValueError as e:
-        log.error("Configuration error: %s", e)
-        sys.exit(1)
-    
-    async def main():
-        client = None
-        try:
-            client, strategy_instances = await _create_client_and_strategies(strategy_specs)
-            
-            # Run strategies
-            log.info("Starting strategies...")
-            log.info("-" * 70)
-            
-            await _run_strategies_async(strategy_instances, client)
-        except Exception as e:
-            log.exception("Fatal error: %s", e)
-            raise
-        finally:
-            # Ensure client is closed even if there's an error
-            if client:
-                await client.close()
-    
-    # Run strategies
-    try:
-        asyncio.run(main())
+        asyncio.run(
+            _async_run_with_client_factory(
+                client_factory=client_factory,
+                strategy_specs=strategy_specs,
+                log_level=log_level,
+                setup_logging=setup_logging,
+            )
+        )
+
     except KeyboardInterrupt:
         log.info("")
         log.info("-" * 70)
         log.info("Interrupted by user - shutting down gracefully")
+
     except Exception as e:
         log.exception("Fatal error in strategy runner: %s", e)
-        sys.exit(1)
+        exit_code = 1
+
     finally:
         log.info("=" * 70)
         log.info("Tradedesk shut down complete")
         log.info("=" * 70)
+
+    if exit_code:
+        sys.exit(exit_code)

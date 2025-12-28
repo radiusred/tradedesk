@@ -4,8 +4,9 @@ from typing import Any
 from collections import deque
 import logging
 
-from tradedesk import BaseStrategy, IGClient, run_strategies
+from tradedesk import BaseStrategy, run_strategies
 from tradedesk.subscriptions import MarketSubscription
+from tradedesk.providers.ig.client import IGClient
 
 log = logging.getLogger(__name__)
 
@@ -86,5 +87,8 @@ class MomentumStrategy(BaseStrategy):
             log.info("🔴 %s momentum DOWN: %.5f", epic, momentum)
             # await self.client.place_market_order(epic, "SELL", size=1.0)
 
-if __name__ == "__main__":    
-    run_strategies([MomentumStrategy])
+if __name__ == "__main__":
+    run_strategies(
+        strategy_specs=[MomentumStrategy],
+        client_factory=IGClient,
+    )

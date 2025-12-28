@@ -1,6 +1,6 @@
 import pytest
 
-from tradedesk.client import IGClient
+from tradedesk.providers.ig.client import IGClient
 from tradedesk.chartdata import Candle
 
 

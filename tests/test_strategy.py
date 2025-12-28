@@ -189,36 +189,45 @@ class TestBaseStrategy:
         mock_client.ls_cst = "CST_TOKEN"
         mock_client.ls_xst = "XST_TOKEN"
         mock_client.client_id = "CLIENT123"
-        
+        mock_client.account_id = "ACCOUNT123"  # fallback path used in streamer
+
+        # Provide the streamer via the new client API
+        import tradedesk.providers.ig.streamer as ig_streamer
+
+        mock_client.get_streamer = lambda: ig_streamer.Lightstreamer(mock_client)
+
         class TestStrategy(BaseStrategy):
             SUBSCRIPTIONS = [MarketSubscription("CS.D.EURUSD.CFD.IP")]
-            
+
             async def on_price_update(self, epic, bid, offer, timestamp, raw_data):
                 pass
-        
+
         strategy = TestStrategy(mock_client)
-        
-        # Mock the Lightstreamer setup
+
         mock_ls_info = mock_lightstreamer
-        
+
+        # Patch the Lightstreamer module (not tradedesk.strategy)
+        ig_streamer.LightstreamerClient = lambda *args, **kwargs: mock_ls_info["client"]
+        ig_streamer.Subscription = lambda *args, **kwargs: mock_ls_info["subscription"]
+
         # Run streaming for a moment then cancel
         task = asyncio.create_task(strategy._run_streaming())
         await asyncio.sleep(0.1)
         task.cancel()
-        
+
         try:
             await task
         except asyncio.CancelledError:
             pass
-        
+
         # Verify Lightstreamer client was configured
-        mock_ls_info['client'].connectionDetails.setUser.assert_called_with("CLIENT123")
-        mock_ls_info['client'].connectionDetails.setPassword.assert_called_with(
+        mock_ls_info["client"].connectionDetails.setUser.assert_called_with("CLIENT123")
+        mock_ls_info["client"].connectionDetails.setPassword.assert_called_with(
             "CST-CST_TOKEN|XST-XST_TOKEN"
         )
-        mock_ls_info['client'].connect.assert_called_once()
-        mock_ls_info['subscription'].addListener.assert_called_once()
-        mock_ls_info['client'].subscribe.assert_called_once()
+        mock_ls_info["client"].connect.assert_called_once()
+        mock_ls_info["subscription"].addListener.assert_called_once()
+        mock_ls_info["client"].subscribe.assert_called_once()
     
     def test_abstract_method_required(self):
         """Test that BaseStrategy cannot be instantiated without on_price_update."""
