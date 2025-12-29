@@ -5,6 +5,8 @@ from collections import deque
 import logging
 
 from tradedesk import BaseStrategy, run_strategies
+from tradedesk.providers.backtest.client import BacktestClient
+from tradedesk.providers.base import Client
 from tradedesk.subscriptions import MarketSubscription
 from tradedesk.providers.ig.client import IGClient
 
@@ -29,12 +31,12 @@ class MomentumStrategy(BaseStrategy):
         MarketSubscription("CS.D.EURUSD.TODAY.IP"),
     ]
 
-    def __init__(self, client: IGClient, config: dict = None, lookback: int = 10):
+    def __init__(self, client: Client, config: dict = None, lookback: int = 10):
         """
         Initialize momentum strategy.
         
         Args:
-            client: Authenticated IG client
+            client: Authenticated IG client or Backtest client
             config: Optional configuration dict
             lookback: Number of price updates to track for momentum
         """
@@ -87,7 +89,16 @@ class MomentumStrategy(BaseStrategy):
             # await self.client.place_market_order(epic, "SELL", size=1.0)
 
 if __name__ == "__main__":
+    # choose which client to run the strategy via..
+
+    cf = IGClient
+    # cf = lambda: BacktestClient.from_market_csvs({
+    #         "CS.D.GBPUSD.TODAY.IP": "gbpusd_ticks.csv",
+    #         "CS.D.EURUSD.TODAY.IP": "eurusd_ticks.csv",
+    #     })
+    
     run_strategies(
         strategy_specs=[MomentumStrategy],
-        client_factory=IGClient,
+        client_factory=cf,
+        log_level="DEBUG",
     )
