@@ -13,6 +13,15 @@ from typing import Any, Optional
 import numpy as np
 
 
+@dataclass(frozen=True)
+class MarketData:
+    """Represents a tick-level market update."""
+    epic: str
+    bid: float
+    offer: float
+    timestamp: str
+    raw: dict[str, Any]
+
 @dataclass
 class Candle:
     """
@@ -61,6 +70,12 @@ class Candle:
             f"V={self.volume:.0f})"
         )
 
+@dataclass(frozen=True)
+class CandleClose:
+    """Represents a completed OHLCV candle."""
+    epic: str
+    period: str
+    candle: Candle
 
 class ChartHistory:
     """
@@ -163,21 +178,3 @@ class ChartHistory:
             f"ChartHistory(epic={self.epic}, period={self.period}, "
             f"candles={len(self)}/{self.max_length})"
         )
-
-
-@dataclass(frozen=True)
-class MarketData:
-    """Represents a tick-level market update."""
-    epic: str
-    bid: float
-    offer: float
-    timestamp: str
-    raw: dict[str, Any]
-
-
-@dataclass(frozen=True)
-class CandleClose:
-    """Represents a completed OHLCV candle."""
-    epic: str
-    period: str
-    candle: Candle
