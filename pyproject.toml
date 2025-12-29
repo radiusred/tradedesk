@@ -5,7 +5,7 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "tradedesk"
 version = "0.1.0"
-description = "Trading infrastructure library for IG Markets"
+description = "Trading infrastructure library with backtesting"
 readme = "README.md"
 requires-python = ">=3.10"
 authors = [
@@ -17,7 +17,6 @@ dependencies = [
     "lightstreamer-client-lib>=2.0",
     "python-dotenv>=1.0",
     "numpy>=2.4.0",
-    "pyyaml>=6.0",
 ]
 
 [project.optional-dependencies]

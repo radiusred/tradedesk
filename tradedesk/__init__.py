@@ -36,14 +36,16 @@ Example:
 from .strategy import BaseStrategy
 from .runner import run_strategies
 from .subscriptions import MarketSubscription, ChartSubscription
-from .marketdata import Candle, ChartHistory
+from .marketdata import MarketData, Candle, CandleClose, ChartHistory
 
 __version__ = "0.1.0"
 __all__ = [
     "BaseStrategy", 
     "run_strategies",
+    "MarketData",
     "MarketSubscription",
     "ChartSubscription",
     "Candle",
+    "CandleClose",
     "ChartHistory",
 ]
