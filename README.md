@@ -80,25 +80,23 @@ pytest
 
 ## Configuration
 
-`tradedesk` is configured via environment variables (or a `.env` file):
+`tradedesk` itself is configured via environment variables (or a `.env` file) for the **provider layer** (IG):
 
 ```bash
 export IG_API_KEY="your_api_key"
 export IG_USERNAME="your_username"
 export IG_PASSWORD="your_password"
 export IG_ENVIRONMENT="DEMO"  # or LIVE
-export LOG_LEVEL="INFO"       # DEBUG, INFO, WARNING, ERROR
 ```
 
 **Strongly recommended:** start with `IG_ENVIRONMENT=DEMO`.
 
-Example `.env` file:
+Alternate example `.env` file:
 ```env
-IG_API_KEY=your_api_key_here
+IG_API_KEY=your_api_key
 IG_USERNAME=your_username
 IG_PASSWORD=your_password
 IG_ENVIRONMENT=DEMO
-LOG_LEVEL=INFO
 ```
 
 ---
@@ -114,11 +112,11 @@ from tradedesk.subscriptions import MarketSubscription
 
 class LogPriceStrategy(BaseStrategy):
     """Logs every price update for GBP/USD."""
-    
+
     SUBSCRIPTIONS = [
         MarketSubscription("CS.D.GBPUSD.TODAY.IP")
     ]
-    
+
     async def on_price_update(self, epic, bid, offer, timestamp, raw_data):
         mid = (bid + offer) / 2
         print(f"{timestamp}: {epic} = {mid:.5f}")
@@ -127,13 +125,10 @@ if __name__ == "__main__":
     run_strategies(
         strategy_specs=[LogPriceStrategy],
         client_factory=IGClient,
-        )
+    )
 ```
 
-Run with:
-```bash
-python my_strategy.py
-```
+For more complex strategies, subscriptions are typically constructed dynamically inside `__init__`.
 
 ---
 
@@ -143,17 +138,28 @@ python my_strategy.py
 
 A strategy is a Python class that:
 - Subclasses `BaseStrategy`
-- Declares which instruments and data types to subscribe to via `SUBSCRIPTIONS`
+- Declares which instruments and data types to subscribe to
 - Responds to live price updates and/or completed candles
 
-Each strategy runs independently and receives streaming data.
+Strategies may declare subscriptions in two ways:
+
+- **Static strategies** define a class-level `SUBSCRIPTIONS` list.
+- **Configured strategies** build subscriptions dynamically inside `__init__` and pass them to `BaseStrategy`.
+
+The strategy `__init__` method is treated as the **strategy configuration block**.
+
+If `subscriptions` are passed to `BaseStrategy.__init__`, they override the class-level `SUBSCRIPTIONS`.
+
+---
 
 ### Subscriptions
 
-Strategies declare their data needs using subscription objects:
+Strategies declare their data needs using subscription objects.
 
 #### MarketSubscription
+
 Subscribe to tick-level bid/offer updates:
+
 ```python
 from tradedesk.subscriptions import MarketSubscription
 
@@ -167,7 +173,9 @@ async def on_price_update(self, epic, bid, offer, timestamp, raw_data):
 ```
 
 #### ChartSubscription
+
 Subscribe to completed OHLCV candles:
+
 ```python
 from tradedesk.subscriptions import ChartSubscription
 
@@ -177,18 +185,38 @@ SUBSCRIPTIONS = [
 ]
 
 async def on_candle_update(self, epic, period, candle):
-    # Called when candle completes
     print(f"Close: {candle.close}, Volume: {candle.volume}")
 ```
 
-Supported periods: `"1MINUTE"`, `"5MINUTE"`, `"15MINUTE"`, `"30MINUTE"`, `"HOUR"`, `"4HOUR"`, `"DAY"`, `"WEEK"`
+Supported periods:
+`"1MINUTE"`, `"5MINUTE"`, `"15MINUTE"`, `"30MINUTE"`, `"HOUR"`, `"4HOUR"`, `"DAY"`, `"WEEK"`
+
+#### Dynamic subscription example
+
+```python
+class MultiMarketStrategy(BaseStrategy):
+    def __init__(self, client):
+        epics = ["CS.D.GBPUSD.TODAY.IP", "CS.D.EURUSD.TODAY.IP"]
+        timeframe = "5MINUTE"
+
+        subs = []
+        for epic in epics:
+            subs.append(MarketSubscription(epic))
+            subs.append(ChartSubscription(epic, timeframe))
+
+        super().__init__(client, subscriptions=subs)
+```
+
+---
 
 ### Data Streaming
 
-- **Primary mode**: Lightstreamer real-time streaming (production)
-- **Fallback mode**: REST API polling (testing/demo)
+- **Primary mode**: Lightstreamer (IG) or other real-time streaming
+- **Fallback mode**: REST API polling
 
 The framework automatically selects the appropriate mode based on authentication type.
+
+---
 
 ### Technical Indicators
 
@@ -201,144 +229,79 @@ class IndicatorStrategy(BaseStrategy):
     SUBSCRIPTIONS = [
         ChartSubscription("CS.D.GBPUSD.TODAY.IP", "5MINUTE")
     ]
-    
-    def __init__(self, client, config=None):
-        super().__init__(client, config)
-        
-        # Create indicators
+
+    def __init__(self, client):
+        super().__init__(client)
+
         self.wr = WilliamsR(period=14)
         self.mfi = MFI(period=14)
         self.macd = MACD(fast=12, slow=26, signal=9)
-        
-        # Register for automatic warmup
+
         sub = self.SUBSCRIPTIONS[0]
         self.register_indicator(sub, self.wr)
         self.register_indicator(sub, self.mfi)
         self.register_indicator(sub, self.macd)
-    
-    async def on_candle_update(self, epic, period, candle):
-        await super().on_candle_update(epic, period, candle)
-        
-        # Update indicators
-        wr_value = self.wr.update(candle)
-        mfi_value = self.mfi.update(candle)
-        macd_values = self.macd.update(candle)
-        
-        # Only trade when indicators are ready
-        if not self.wr.ready():
-            return
-        
-        if wr_value < -80:
-            print(f"Oversold: Williams %R = {wr_value}")
 ```
 
 **Available indicators:**
-- `WilliamsR` - Williams %R momentum (range: -100 to 0)
-- `MFI` - Money Flow Index volume-weighted momentum (range: 0 to 100)
-- `MACD` - Moving Average Convergence Divergence
+- `WilliamsR`
+- `MFI`
+- `MACD`
+
+More indicators will be added in future framework versions.
+---
 
 ### Chart History
 
-For each `ChartSubscription`, the framework maintains a rolling history:
+For each `ChartSubscription`, the framework maintains a rolling history of the **most recent 200 candles**.
 
 ```python
-# Access chart history
 chart = self.charts[("CS.D.GBPUSD.TODAY.IP", "5MINUTE")]
 
-# Get recent candles
-recent_candles = chart.get_candles(count=20)  # Last 20 candles
-
-# Get price arrays for calculations
-closes = chart.get_closes()
-highs = chart.get_highs(count=50)
-volumes = chart.get_volumes()
-
-# Get latest candle
+recent_candles = chart.get_candles(count=20)
 latest = chart.latest
 ```
 
-Configure history length in your strategy config YAML:
-```yaml
-chart:
-  history_length: 200  # Number of candles to retain
-```
+The history length is currently fixed in the framework.
+
+---
 
 ### Indicator Warmup
 
-Indicators need historical data before producing valid signals. The framework handles this automatically:
+Indicators require historical data before producing valid signals. The framework handles this automatically:
 
-```python
-def __init__(self, client, config=None):
-    super().__init__(client, config)
-    
-    sub = ChartSubscription("CS.D.GBPUSD.TODAY.IP", "5MINUTE")
-    indicator = WilliamsR(period=14)
-    
-    # Register indicator - framework will fetch 14 historical candles
-    self.register_indicator(sub, indicator)
-```
-
-**How it works:**
-1. Each indicator declares `warmup_periods()` - number of candles needed
-2. Framework calculates required history per subscription
-3. Historical candles are fetched from IG at startup
-4. Indicators are "primed" before live data starts flowing
-5. Your `on_candle_update()` only receives live candles
+- Indicators declare how many periods they require
+- The framework fetches sufficient historical candles at startup
+- Indicators are warmed up before live candles are delivered
 
 Check indicator readiness:
+
 ```python
 if self.wr.ready():
     value = self.wr.update(candle)
-    # Now safe to use value for trading decisions
 ```
 
 ---
 
-## Strategy Configuration
+## Strategy Configuration Model
 
-Strategies can accept YAML configuration files:
+`tradedesk` does **not** load strategy configuration files.
 
-```python
-from tradedesk import load_strategy_config, run_strategies
+Strategies are configured directly in Python code, typically inside `__init__`.  
+If you wish to use configuration files (YAML, JSON, etc.), you should load them yourself inside the strategy.
 
-class ConfigurableStrategy(BaseStrategy):
-    SUBSCRIPTIONS = [
-        MarketSubscription("CS.D.GBPUSD.TODAY.IP")
-    ]
-    
-    def __init__(self, client, config=None):
-        super().__init__(client, config)
-        self.threshold = config.get('threshold', 0.001)
-
-# Load and run with config
-config = load_strategy_config("my_strategy.yaml")
-run_strategies([
-    (ConfigurableStrategy, {"config": config})
-])
-```
-
-Example `my_strategy.yaml`:
-```yaml
-chart:
-  history_length: 200
-
-threshold: 0.002
-stop_loss_pips: 20
-take_profit_pips: 40
-```
+This design is intentional:
+- Keeps the framework minimal and explicit
+- Avoids opinionated configuration formats
+- Gives strategy authors full control
 
 ---
 
 ## Running Multiple Strategies
 
-Run multiple strategies concurrently:
-
 ```python
-run_strategies([
-    StrategyA,
-    StrategyB,
-    (StrategyC, {"config": config_c}),
-    ],
+run_strategies(
+    [StrategyA, StrategyB, StrategyC],
     client_factory=IGClient,
 )
 ```
@@ -510,9 +473,9 @@ Please open an issue before starting major work.
 - ✅ Technical indicators (3 implemented)
 - ✅ Chart history management
 - ✅ Indicator warmup with historical data
+- ✅ Backtesting engine
 
 ### Planned
-- [ ] Backtesting engine
 - [ ] Historical data replay
 - [ ] More technical indicators (RSI, Bollinger Bands, etc.)
 - [ ] Strategy lifecycle hooks (`on_start`, `on_stop`, `on_error`)
@@ -523,7 +486,7 @@ None of these APIs should be considered stable at this time.
 
 ## License
 
-MIT License - see [LICENSE.md](LICENSE.md)
+MIT License — see [LICENSE.md](LICENSE.md)
 
 **THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND.**
 
