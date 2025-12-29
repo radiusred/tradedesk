@@ -23,17 +23,8 @@ from tradedesk.indicators.base import Indicator
 from tradedesk.providers import Client
 from tradedesk.providers.events import MarketData, CandleClose
 
-# ----------------------------------------------------------------------
-# Lightstreamer import – optional for the production daemon.
-# ----------------------------------------------------------------------
-try:
-    from lightstreamer.client import LightstreamerClient, Subscription
-except Exception:  # pragma: no cover – only triggered in the test env
-    LightstreamerClient = None   # type: ignore
-    Subscription = None           # type: ignore
 
 log = logging.getLogger(__name__)
-
 
 # ----------------------------------------------------------------------
 # Abstract base class for all strategies.
@@ -67,10 +58,9 @@ class BaseStrategy(abc.ABC):
     # Subclasses should define which data streams they want
     SUBSCRIPTIONS: list[MarketSubscription | ChartSubscription] = []
     
-    # Default polling interval when Lightstreamer is unavailable
+    # Default polling interval when streamer is unavailable
     POLL_INTERVAL = 5  # seconds
     
-    # TODO: abstract provider
     def __init__(self, client: Client, config: dict = None):
         """
         Initialize the strategy.
@@ -117,79 +107,6 @@ class BaseStrategy(abc.ABC):
         """
         key = self._chart_key(sub)
         self._chart_indicators.setdefault(key, []).append(indicator)
-
-    def required_warmup(self, sub: ChartSubscription) -> int:
-        """
-        Return the number of completed candles required to warm up all registered
-        indicators for the given chart subscription.
-        """
-        key = self._chart_key(sub)
-        indicators = self._chart_indicators.get(key, [])
-        return max((ind.warmup_periods() for ind in indicators), default=0)
-    
-    def chart_warmup_plan(self) -> dict[tuple[str, str], int]:
-        """
-        Build a warmup plan for chart subscriptions.
-
-        Returns:
-            A dict keyed by (epic, period) with the number of completed candles
-            required to warm up all registered indicators for that chart.
-        """
-        plan: dict[tuple[str, str], int] = {}
-
-        for sub in self.subscriptions:
-            if not isinstance(sub, ChartSubscription):
-                continue
-
-            key = (sub.epic, sub.period)
-            plan[key] = self.required_warmup(sub)
-
-        return plan
-    
-    def prime_chart(self, sub: ChartSubscription, candles: list[Candle]) -> None:
-        """
-        Prime chart history and registered indicators with historical candles.
-
-        Notes:
-        - Candles are assumed to be ordered oldest -> newest.
-        - This does NOT call on_candle_update(), so strategy trading logic is not triggered.
-        """
-        key = (sub.epic, sub.period)
-
-        chart = self.charts.get(key)
-        indicators = self._chart_indicators.get(key, [])
-
-        for candle in candles:
-            if chart is not None:
-                chart.add_candle(candle)
-
-            for ind in indicators:
-                ind.update(candle)
-
-    def warmup_from_history(self, history: dict[tuple[str, str], list[Candle]]) -> None:
-        """
-        Warm up chart histories and registered indicators from supplied historical candles.
-
-        Args:
-            history: Dict keyed by (epic, period) with candles ordered oldest -> newest.
-
-        Notes:
-            - Only chart subscriptions in chart_warmup_plan() are considered.
-            - Missing history entries are skipped silently.
-            - Extra history entries not present in subscriptions are ignored.
-            - This does NOT call on_candle_update().
-        """
-        for epic_period, _warmup in self.chart_warmup_plan().items():
-            candles = history.get(epic_period)
-            if not candles:
-                continue
-
-            epic, period = epic_period
-            self.prime_chart(ChartSubscription(epic, period), candles)
-            
-    def _has_streamer(self) -> bool:
-        get_streamer = getattr(self.client, "get_streamer", None)
-        return callable(get_streamer)
 
     async def warmup(self) -> None:
         """
@@ -240,8 +157,80 @@ class BaseStrategy(abc.ABC):
                 )
 
         self.warmup_from_history(history)
+            
+    def warmup_from_history(self, history: dict[tuple[str, str], list[Candle]]) -> None:
+        """
+        Warm up chart histories and registered indicators from supplied historical candles.
 
-    @abc.abstractmethod
+        Args:
+            history: Dict keyed by (epic, period) with candles ordered oldest -> newest.
+
+        Notes:
+            - Only chart subscriptions in chart_warmup_plan() are considered.
+            - Missing history entries are skipped silently.
+            - Extra history entries not present in subscriptions are ignored.
+            - This does NOT call on_candle_update().
+        """
+        for epic_period, _warmup in self.chart_warmup_plan().items():
+            candles = history.get(epic_period)
+            if not candles:
+                continue
+
+            epic, period = epic_period
+            self.prime_chart(ChartSubscription(epic, period), candles)
+
+    def chart_warmup_plan(self) -> dict[tuple[str, str], int]:
+        """
+        Build a warmup plan for chart subscriptions.
+
+        Returns:
+            A dict keyed by (epic, period) with the number of completed candles
+            required to warm up all registered indicators for that chart.
+        """
+        plan: dict[tuple[str, str], int] = {}
+
+        for sub in self.subscriptions:
+            if not isinstance(sub, ChartSubscription):
+                continue
+
+            key = (sub.epic, sub.period)
+            plan[key] = self.required_warmup(sub)
+
+        return plan
+    
+    def required_warmup(self, sub: ChartSubscription) -> int:
+        """
+        Return the number of completed candles required to warm up all registered
+        indicators for the given chart subscription.
+        """
+        key = self._chart_key(sub)
+        indicators = self._chart_indicators.get(key, [])
+        return max((ind.warmup_periods() for ind in indicators), default=0)
+    
+    def prime_chart(self, sub: ChartSubscription, candles: list[Candle]) -> None:
+        """
+        Prime chart history and registered indicators with historical candles.
+
+        Notes:
+        - Candles are assumed to be ordered oldest -> newest.
+        - This does NOT call on_candle_update(), so strategy trading logic is not triggered.
+        """
+        key = (sub.epic, sub.period)
+
+        chart = self.charts.get(key)
+        indicators = self._chart_indicators.get(key, [])
+
+        for candle in candles:
+            if chart is not None:
+                chart.add_candle(candle)
+
+            for ind in indicators:
+                ind.update(candle)
+
+    def _has_streamer(self) -> bool:
+        get_streamer = getattr(self.client, "get_streamer", None)
+        return callable(get_streamer)
+
     async def on_price_update(
         self,
         epic: str,
@@ -262,7 +251,7 @@ class BaseStrategy(abc.ABC):
             timestamp: ISO 8601 timestamp of the update
             raw_data: Full raw data from the price feed (varies by mode)
         """
-        ...
+        pass
     
     async def on_candle_update(
         self,
@@ -353,6 +342,10 @@ class BaseStrategy(abc.ABC):
                     log.exception("Failed to fetch market snapshot for %s", epic)
             
             await asyncio.sleep(self.POLL_INTERVAL)
+
+    async def _run_streaming(self) -> None:
+        streamer = self.client.get_streamer()
+        await streamer.run(self)
     
     async def _handle_event(self, event: MarketData | CandleClose) -> None:
         """
@@ -384,8 +377,3 @@ class BaseStrategy(abc.ABC):
 
         # Defensive: should never happen unless someone extends events incorrectly.
         raise TypeError(f"Unsupported event type: {type(event)!r}")
-
-    async def _run_streaming(self) -> None:
-        streamer = self.client.get_streamer()
-        await streamer.run(self)
-

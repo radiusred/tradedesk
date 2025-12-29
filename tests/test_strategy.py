@@ -71,29 +71,6 @@ class TestBaseStrategy:
             # Should have received updates
             assert len(strategy.updates) > 0
     
-    def test_lightstreamer_available_check(self):
-        """Test Lightstreamer availability check."""
-        mock_client = MagicMock()
-        
-        class TestStrategy(BaseStrategy):
-            async def on_price_update(self, epic, bid, offer, timestamp, raw_data):
-                pass
-        
-        strategy = TestStrategy(mock_client)
-        
-        # Test with all requirements met
-        mock_client.ls_url = "https://example.com"
-        mock_client.ls_cst = "CST_TOKEN"
-        mock_client.ls_xst = "XST_TOKEN"
-        
-        # Mock LightstreamerClient availability
-        with patch('tradedesk.strategy.LightstreamerClient', MagicMock()):
-            # The method should return True when all conditions are met
-            # Note: The method returns the last condition (ls_xst) if all are truthy
-            # Let's check the actual return value
-            result = strategy._has_streamer()
-            assert result == True  
-    
     @pytest.mark.asyncio
     @patch('tradedesk.strategy.settings')
     async def test_polling_mode(self, mock_settings):
@@ -228,14 +205,6 @@ class TestBaseStrategy:
         mock_ls_info["client"].connect.assert_called_once()
         mock_ls_info["subscription"].addListener.assert_called_once()
         mock_ls_info["client"].subscribe.assert_called_once()
-    
-    def test_abstract_method_required(self):
-        """Test that BaseStrategy cannot be instantiated without on_price_update."""
-        mock_client = MagicMock()
-        
-        # Should raise TypeError when trying to instantiate abstract class
-        with pytest.raises(TypeError):
-            BaseStrategy(mock_client)
 
 class TestConcreteStrategy:
     """Test with a concrete strategy implementation."""
