@@ -1,6 +1,6 @@
 # tradedesk
 
-`tradedesk` is a **very early-stage Python library for running automated trading strategies against IG Markets**, with a focus on:
+👋 `tradedesk` is a **very early-stage Python library for running automated trading strategies against IG Markets**, with a focus on:
 
 - Real-time price streaming via Lightstreamer
 - OHLCV candle data with historical warmup
@@ -101,7 +101,7 @@ IG_ENVIRONMENT=DEMO
 
 ---
 
-## Quick Start
+## ⏩ Quick Start
 
 ### Simple Price Logging Strategy
 
@@ -132,7 +132,7 @@ For more complex strategies, subscriptions are typically constructed dynamically
 
 ---
 
-## Core Concepts
+## 📑 Core Concepts
 
 ### Strategies
 

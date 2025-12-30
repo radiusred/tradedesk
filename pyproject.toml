@@ -5,12 +5,18 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "tradedesk"
 version = "0.1.0"
-description = "Trading infrastructure library with backtesting"
-readme = "README.md"
-requires-python = ">=3.10"
 authors = [
     {name = "Darren Davison", email = "darren@davisononline.org"}
 ]
+description = "Trading infrastructure library with backtesting"
+readme = "README.md"
+requires-python = ">=3.10"
+classifiers = [
+    "Programming Language :: Python :: 3",
+    "Operating System :: OS Independent",
+]
+license = "MIT"
+license-files = ["LICEN[CS]E*"]
 dependencies = [
     "aiohttp>=3.9.0",
     "requests>=2.31",
@@ -18,6 +24,10 @@ dependencies = [
     "python-dotenv>=1.0",
     "numpy>=2.4.0",
 ]
+
+[project.urls]
+Homepage = "https://github.com/davison/tradedesk"
+Issues = "https://github.com/davison/tradedesk/issues"
 
 [project.optional-dependencies]
 dev = [
