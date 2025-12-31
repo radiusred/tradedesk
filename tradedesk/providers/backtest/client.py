@@ -54,6 +54,7 @@ class BacktestClient(Client):
         self.trades: list[Trade] = []
         self.positions: dict[str, Position] = {}
         self.realised_pnl: float = 0.0
+        self._current_timestamp: str | None = None
 
     @classmethod
     def from_history(cls, history: dict[tuple[str, str], list[Candle]]) -> "BacktestClient":
@@ -268,6 +269,9 @@ class BacktestClient(Client):
 
     def get_streamer(self):
         return BacktestStreamer(self, self._candle_series, self._market_series)
+    
+    def _set_current_timestamp(self, ts: str) -> None:
+        self._current_timestamp = ts
 
     def _set_mark_price(self, epic: str, price: float) -> None:
         self._mark_price[epic] = float(price)
@@ -310,7 +314,15 @@ class BacktestClient(Client):
             raise ValueError("direction must be BUY or SELL")
 
         price = self._get_mark_price(epic)
-        self.trades.append(Trade(epic=epic, direction=direction, size=float(size), price=price))
+        self.trades.append(
+            Trade(
+                epic=epic, 
+                direction=direction, 
+                size=float(size), 
+                price=price,
+                timestamp=self._current_timestamp,
+            )
+        )
 
         # Very simple netting model:
         # - BUY opens/increases LONG, SELL opens/increases SHORT

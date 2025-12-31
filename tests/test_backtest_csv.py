@@ -1,6 +1,8 @@
 from pathlib import Path
 from unittest.mock import patch
 
+import pytest
+
 from tradedesk import run_strategies
 from tradedesk.marketdata import CandleClose, MarketData
 from tradedesk.providers.backtest.client import BacktestClient
@@ -20,6 +22,19 @@ def test_parse_ts_accepts_iso_z():
 def test_parse_ts_accepts_space_and_z():
     dt = _parse_ts("2025-12-04 19:20:00Z")
     assert dt.isoformat() == "2025-12-04T19:20:00+00:00"
+    
+@pytest.mark.asyncio
+async def test_backtest_trade_has_timestamp():
+    epic = "EPIC"
+    client = BacktestClient(candle_series=[], market_series=[])
+    await client.start()
+
+    client._set_mark_price(epic, 100.0)
+    client._set_current_timestamp("2025-01-01T00:00:00Z")
+
+    await client.place_market_order(epic, "BUY", 1.0)
+
+    assert client.trades[0].timestamp == "2025-01-01T00:00:00Z"
 
 def test_backtest_from_csv_replays_and_trades(tmp_path: Path):
     csv_path = tmp_path / "candles.csv"

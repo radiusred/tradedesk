@@ -72,12 +72,14 @@ class BacktestStreamer(Streamer):
         for s in self._candle_series:
             for c in s.candles:
                 ts = _parse_ts(c.timestamp)
+                self._client._set_current_timestamp(ts.isoformat())
                 stream.append((ts, CandleClose(epic=s.epic, period=s.period, candle=c)))
 
         # Market events
         for s in self._market_series:
             for t in s.ticks:
                 ts = _parse_ts(t.timestamp)
+                self._client._set_current_timestamp(ts.isoformat())
                 stream.append((ts, t))
 
         stream.sort(key=lambda x: x[0])
