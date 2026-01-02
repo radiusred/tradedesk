@@ -33,8 +33,8 @@ class TestIGClient:
             client = IGClient()
             
             assert client.base_url == "https://api.ig.com/gateway/deal"
-            assert client.ls_url == "https://push.lightstreamer.com"
-            assert client.headers["VERSION"] == "3"
+            assert client.ls_url == "https://apd.marketdatasystems.com"
+            assert client.headers["VERSION"] == "2"
     
     @pytest.mark.asyncio
     async def test_start_and_close(self, mock_aiohttp_session):

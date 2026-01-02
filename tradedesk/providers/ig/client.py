@@ -22,7 +22,7 @@ class IGClient(Client):
 
     # Lightstreamer hosts (used by the strategy)
     DEMO_LS = "https://demo-apd.marketdatasystems.com"
-    LIVE_LS = "https://push.lightstreamer.com"
+    LIVE_LS = "https://apd.marketdatasystems.com"
 
     def __init__(self):
         # Choose the correct base URL for the selected environment
@@ -32,7 +32,7 @@ class IGClient(Client):
         # VERSION 2 returns CST/X-SECURITY-TOKEN (works with Lightstreamer)
         # VERSION 3 returns OAuth tokens (doesn't work with Lightstreamer)
         # For demo with Lightstreamer support, use VERSION 2
-        self.api_version = "2" if settings.ig_environment == "DEMO" else "3"
+        self.api_version = "2" #if settings.ig_environment == "DEMO" else "3"
         
         # Store headers for session creation
         self.headers = {
