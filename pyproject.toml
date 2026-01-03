@@ -1,6 +1,6 @@
 [build-system]
-requires = ["setuptools>=61.0", "wheel"]
-build-backend = "setuptools.build_meta"
+requires = ["hatchling>=1.25"]
+build-backend = "hatchling.build"
 
 [project]
 name = "tradedesk"
@@ -16,11 +16,10 @@ readme = "README.md"
 requires-python = ">=3.10"
 classifiers = [
     "Programming Language :: Python :: 3",
-    "License :: OSI Approved :: Apache Software License",
     "Operating System :: OS Independent",
 ]
 license = "Apache-2.0"
-license-files = ["LICEN[CS]E*"]
+license-files = ["LICEN[CS]E*", "NOTICE*"]
 dependencies = [
     "aiohttp>=3.9.0",
     "requests>=2.31",
@@ -34,7 +33,7 @@ dev = [
     "pytest>=8.0",
     "responses>=0.25",
     "pytest-asyncio>=0.23",
-    "pytest-cov>=7.13.0",
+    "pytest-cov>=7.0",
 ]
 
 [project.urls]
@@ -63,7 +62,5 @@ exclude_lines = [
     "@(abc\\.)?abstractmethod",
 ]
 
-[tool.setuptools.packages.find]
-where = ["."]
-include = ["tradedesk*"]
-exclude = ["tests*", "examples*"]
+[tool.hatch.build.targets.wheel]
+packages = ["tradedesk"]
