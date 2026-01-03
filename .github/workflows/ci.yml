@@ -2,9 +2,14 @@ name: CI
 
 on:
   pull_request:
+    paths-ignore:
+      - '**/*.md'
+      - 'docs/**'
+      - '.github/ISSUE_TEMPLATE/**'
+      - 'LICENSE'
+      - 'NOTICE'
   push:
     branches: [ main ]
-
 jobs:
   test:
     runs-on: ubuntu-latest
