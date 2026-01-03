@@ -1,6 +1,7 @@
 # tradedesk/__init__.py
 """
 Tradedesk - Trading infrastructure library for IG Markets.
+Copyright 2026 Radius Red Ltd.
 
 Provides authenticated API access, Lightstreamer streaming, and a base
 framework for implementing trading strategies.
