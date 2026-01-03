@@ -521,3 +521,6 @@ If you are not comfortable with these risks, **do not use this library for live 
 - **Discussions**: [GitHub Discussions](https://github.com/davison/tradedesk/discussions)
 
 This is an open-source project maintained by volunteers. No official support is provided.
+
+## License
+Licensed under the Apache License, Version 2.0

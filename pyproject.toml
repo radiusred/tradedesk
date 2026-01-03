@@ -6,16 +6,20 @@ build-backend = "setuptools.build_meta"
 name = "tradedesk"
 version = "0.1.0"
 authors = [
-    {name = "Darren Davison", email = "darren@davisononline.org"}
+  { name = "Radius Red Ltd.", email = "opensource@radiusred.co.uk" }
+]
+maintainers = [
+  { name = "Radius Red Ltd.", email = "opensource@radiusred.co.uk" }
 ]
 description = "Trading infrastructure library with backtesting"
 readme = "README.md"
 requires-python = ">=3.10"
 classifiers = [
     "Programming Language :: Python :: 3",
+    "License :: OSI Approved :: Apache 2.0 License",
     "Operating System :: OS Independent",
 ]
-license = "MIT"
+license = "Apache-2.0"
 license-files = ["LICEN[CS]E*"]
 dependencies = [
     "aiohttp>=3.9.0",
@@ -25,10 +29,6 @@ dependencies = [
     "numpy>=2.4.0",
 ]
 
-[project.urls]
-Homepage = "https://github.com/davison/tradedesk"
-Issues = "https://github.com/davison/tradedesk/issues"
-
 [project.optional-dependencies]
 dev = [
     "pytest>=8.0",
@@ -36,6 +36,11 @@ dev = [
     "pytest-asyncio>=0.23",
     "pytest-cov>=7.13.0",
 ]
+
+[project.urls]
+Homepage = "https://github.com/radiusred"
+Repository = "https://github.com/radiusred/tradedesk"
+Issues = "https://github.com/radiusred/tradedesk/issues"
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
