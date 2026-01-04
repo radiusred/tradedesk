@@ -1,210 +1,225 @@
-# Technical Indicators in TradeDesk<!-- omit from toc -->
+# TradeDesk Indicators Reference
 
-This document provides a brief, practical description of each technical indicator implemented in `tradedesk`.  
-All indicators are **stateful**, **incrementally updated per candle**, and expose:
+This document provides a concise description of each technical indicator implemented in `tradedesk`, followed by a minimal example showing how to **configure and register** the indicator against a `ChartSubscription`.
 
-- `update(candle)` → value (or structured value) / `None`
-- `ready()` → whether the indicator is usable
-- `reset()` → clear internal state
-- `warmup_periods()` → minimum candles required
+The focus here is purely on *what the indicator is* and *how it is wired into a strategy*.  
+No guidance is given on when or why to use any particular indicator.
+
+All indicators are:
+
+- Stateful
+- Updated candle-by-candle via `update(candle)`
+- Warmup-aware via `warmup_periods()`
+- Resettable via `reset()`
+
+---
+
+## Common registration pattern
+
+```python
+from tradedesk.subscriptions import ChartSubscription
+from tradedesk.strategy import BaseStrategy
+
+class MyStrategy(BaseStrategy):
+    def __init__(self, client):
+        sub = ChartSubscription("CS.D.EURUSD.TODAY.IP", "5MINUTE")
+        super().__init__(client, subscriptions=[sub])
+
+        # Register indicator instances
+        # self.register_indicator(sub, <indicator instance>)
+```
 
 ---
 
 ## ADX — Average Directional Index
 
-**Purpose:** Trend strength (not direction)  
-**Type:** Trend strength
+**Description:**  
+Measures trend strength using Wilder-smoothed directional movement. Produces the ADX value along with positive and negative directional indicators.
 
-Quantifies how strong a trend is, regardless of direction.
+**Update output:**  
+`{"adx": float | None, "plus_di": float | None, "minus_di": float | None}`
 
-**Outputs**
-- `adx`
-- `plus_di`
-- `minus_di`
-
-**Notes**
-- ADX > ~20–25 indicates a trending market
-- Useful as a regime filter
+```python
+from tradedesk.indicators import ADX
+self.register_indicator(sub, ADX(period=14))
+```
 
 ---
 
 ## ATR — Average True Range
 
-**Purpose:** Volatility measurement  
-**Type:** Volatility
+**Description:**  
+Measures market volatility using true range and Wilder smoothing.
 
-Measures average price range using true range and Wilder smoothing.
+**Update output:**  
+`float | None`
 
-**Notes**
-- Direction-agnostic
-- Commonly used for position sizing and stop placement
+```python
+from tradedesk.indicators import ATR
+self.register_indicator(sub, ATR(period=14))
+```
 
 ---
 
 ## Bollinger Bands
 
-**Purpose:** Volatility expansion / contraction  
-**Type:** Volatility / mean reversion
+**Description:**  
+Calculates a simple moving average with upper and lower bands derived from population standard deviation.
 
-Bands plotted at a multiple of standard deviation around a moving average.
+**Update output:**  
+`{"middle": float | None, "upper": float | None, "lower": float | None, "std": float | None}`
 
-**Outputs**
-- `middle` (SMA)
-- `upper`
-- `lower`
-- `std`
-
-**Notes**
-- Bands widen during high volatility
-- Often combined with mean-reversion logic
+```python
+from tradedesk.indicators import BollingerBands
+self.register_indicator(sub, BollingerBands(period=20, k=2.0))
+```
 
 ---
 
 ## CCI — Commodity Channel Index
 
-**Purpose:** Mean reversion and momentum extremes  
-**Type:** Momentum / mean reversion
+**Description:**  
+Measures deviation of typical price from its moving average using mean deviation.
 
-Measures deviation of typical price from its moving average.
+**Update output:**  
+`float | None`
 
-**Notes**
-- Uses mean deviation (not standard deviation)
-- Common thresholds: ±100
+```python
+from tradedesk.indicators import CCI
+self.register_indicator(sub, CCI(period=20))
+```
 
 ---
 
 ## EMA — Exponential Moving Average
 
-**Purpose:** Faster trend detection  
-**Type:** Trend / momentum
+**Description:**  
+Exponentially weighted moving average of closing prices.
 
-Like SMA, but weights recent prices more heavily using exponential smoothing.
+**Update output:**  
+`float | None`
 
-**Notes**
-- More responsive than SMA
-- Commonly used in trend-following systems
+```python
+from tradedesk.indicators import EMA
+self.register_indicator(sub, EMA(period=14))
+```
 
 ---
 
 ## MACD — Moving Average Convergence Divergence
 
-**Purpose:** Momentum and trend changes  
-**Type:** Momentum / trend
+**Description:**  
+Computed from the difference between fast and slow EMAs, with a signal line and histogram.
 
-Computed from the difference between fast and slow EMAs, plus a signal line.
+**Update output:**  
+`{"macd": float | None, "signal": float | None, "histogram": float | None}`
 
-**Outputs**
-- `macd`
-- `signal`
-- `histogram`
-
-**Notes**
-- Captures momentum shifts
-- Sensitive to parameter choice
+```python
+from tradedesk.indicators import MACD
+self.register_indicator(sub, MACD(fast=12, slow=26, signal=9))
+```
 
 ---
 
 ## MFI — Money Flow Index
 
-**Purpose:** Volume-weighted momentum  
-**Type:** Momentum / volume
+**Description:**  
+Volume-weighted oscillator derived from typical price and money flow.
 
-RSI-like oscillator that incorporates volume.
+**Update output:**  
+`float | None`
 
-**Range:** 0–100  
-
-**Notes**
-- Highlights volume-confirmed overbought/oversold conditions
+```python
+from tradedesk.indicators import MFI
+self.register_indicator(sub, MFI(period=14))
+```
 
 ---
 
 ## OBV — On-Balance Volume
 
-**Purpose:** Volume trend confirmation  
-**Type:** Volume / momentum
+**Description:**  
+Cumulative volume series adjusted based on changes in closing price.
 
-Cumulates volume based on whether price closes up or down.
+**Update output:**  
+`float | None`
 
-**Notes**
-- Directional volume indicator
-- Often used for divergence analysis
+```python
+from tradedesk.indicators import OBV
+self.register_indicator(sub, OBV())
+```
 
 ---
 
 ## RSI — Relative Strength Index
 
-**Purpose:** Overbought / oversold detection  
-**Type:** Momentum / mean reversion
+**Description:**  
+Wilder-smoothed ratio of average gains to average losses, mapped to a 0–100 scale.
 
-Measures the ratio of recent gains to recent losses using Wilder smoothing.
+**Update output:**  
+`float | None`
 
-**Range:** 0–100  
-**Typical levels:** 30 (oversold), 70 (overbought)
+```python
+from tradedesk.indicators import RSI
+self.register_indicator(sub, RSI(period=14))
+```
 
 ---
 
 ## SMA — Simple Moving Average
 
-**Purpose:** Trend direction and smoothing  
-**Type:** Trend / baseline
+**Description:**  
+Arithmetic mean of closing prices over a rolling window.
 
-Calculates the arithmetic mean of closing prices over a rolling window.
+**Update output:**  
+`float | None`
 
-**Notes**
-- Slow to react to price changes
-- Often used as a baseline or trend filter
+```python
+from tradedesk.indicators import SMA
+self.register_indicator(sub, SMA(period=20))
+```
 
 ---
 
 ## Stochastic Oscillator
 
-**Purpose:** Momentum and turning points  
-**Type:** Momentum
+**Description:**  
+Compares the closing price to the recent high–low range and applies smoothing.
 
-Compares the closing price to the recent high–low range.
+**Update output:**  
+`{"k": float | None, "d": float | None}`
 
-**Outputs**
-- `%K` (fast line)
-- `%D` (smoothed signal)
-
-**Notes**
-- Good for timing entries
-- Noisy in strong trends
+```python
+from tradedesk.indicators import Stochastic
+self.register_indicator(sub, Stochastic(k_period=14, d_period=3))
+```
 
 ---
 
 ## VWAP — Volume Weighted Average Price
 
-**Purpose:** Intraday fair value  
-**Type:** Volume / price
+**Description:**  
+Cumulative volume-weighted average price, optionally resetting at UTC day boundaries.
 
-Calculates the average price weighted by traded volume.
+**Update output:**  
+`float | None`
 
-**Notes**
-- Resets daily (UTC) by default
-- Commonly used as a dynamic support/resistance reference
+```python
+from tradedesk.indicators import VWAP
+self.register_indicator(sub, VWAP(use_typical_price=True, reset_daily_utc=True))
+```
 
 ---
 
 ## Williams %R
 
-**Purpose:** Overbought / oversold (price location)  
-**Type:** Momentum
+**Description:**  
+Measures the position of the close relative to the recent high–low range.
 
-Shows where the close sits relative to the recent high–low range.
+**Update output:**  
+`float | None`
 
-**Range:** -100 to 0  
-
-**Notes**
-- Similar to stochastic %K
-- Very responsive
-
----
-
-## Usage Notes
-
-- All indicators are **purely candle-driven** (no lookahead).
-- Warmup semantics are explicit via `warmup_periods()`.
-- Indicators are designed to be composed cleanly in strategies.
-
-For examples, see the strategy and indicator tests in the repository.
+```python
+from tradedesk.indicators import WilliamsR
+self.register_indicator(sub, WilliamsR(period=14))
+```
