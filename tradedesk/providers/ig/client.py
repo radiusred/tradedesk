@@ -266,25 +266,36 @@ class IGClient(Client):
 
     async def _request(self, method: str, path: str, **kwargs) -> dict[str, Any]:
         url = f"{self.base_url}{path}"
-        
+
         if not self._session:
             self._session = aiohttp.ClientSession(headers=self.headers)
-        
-        # OAuth Expiry Check
+
+        # OAuth Expiry Check (kept for completeness; V2 is used for LS)
         if self.uses_oauth:
             time_since_auth = time.time() - self.last_auth_attempt
             if time_since_auth > 25 and not self._is_token_valid():
                 log.debug("OAuth token expired – re-authenticating")
                 await self._authenticate()
-        
+
         try:
             async with self._session.request(method, url, **kwargs) as resp:
-                # Automatic Retry on 401/403
+                # Automatic Retry on 401/403 (auth/session issues)
                 if resp.status in (401, 403):
                     await self._handle_retry_logic(resp, method, url, **kwargs)
-                
-                resp.raise_for_status()
+
+                # Surface error body on non-2xx
+                if resp.status >= 400:
+                    try:
+                        err_body = await resp.json()
+                    except Exception:
+                        err_body = await resp.text()
+
+                    log.error("HTTP %s for %s %s: %s", resp.status, method, url, err_body)
+                    raise RuntimeError(f"IG request failed: HTTP {resp.status}: {err_body}")
+
+                # Normal JSON response
                 return await resp.json()
+
         except aiohttp.ClientError as e:
             log.error("Request failed: %s %s - %s", method, url, e)
             raise
@@ -349,20 +360,107 @@ class IGClient(Client):
         epic: str,
         direction: str,
         size: float,
-        currency: str = "USD",
-        force_open: bool = True,
+        *,
+        expiry: str = "-",
+        currency: str = "GBP",
+        force_open: bool = False,
+        time_in_force: str = "FILL_OR_KILL",
+        guaranteed_stop: bool = False,
     ) -> dict[str, Any]:
-        """Submit a simple market order."""
+        """
+        Submit a simple OTC market order.
+
+        Spread betting + netting defaults:
+          - currencyCode: GBP
+          - forceOpen: False (avoid hedging)
+
+        Some IG markets validate guaranteedStop as non-null, so we always send it.
+        """
         order = {
             "epic": epic,
+            "expiry": expiry,
             "direction": direction.upper(),
             "size": size,
             "orderType": "MARKET",
+            "timeInForce": time_in_force,
             "currencyCode": currency,
             "forceOpen": force_open,
+            "guaranteedStop": guaranteed_stop,
         }
         return await self._request("POST", "/positions/otc", json=order)
-   
+
+    async def confirm_deal(
+        self,
+        deal_reference: str,
+        *,
+        timeout_s: float = 10.0,
+        poll_s: float = 0.25,
+    ) -> dict[str, Any]:
+        """
+        Poll /confirms/{dealReference} until dealStatus is no longer PENDING.
+
+        IG DEMO occasionally returns transient HTTP 500s for confirms; treat those
+        as retryable until timeout.
+        """
+        deadline = time.monotonic() + timeout_s
+        last_err: Exception | None = None
+
+        while True:
+            try:
+                payload = await self._request("GET", f"/confirms/{deal_reference}")
+                status = (payload.get("dealStatus") or "").upper()
+
+                if status and status != "PENDING":
+                    return payload
+
+            except RuntimeError as e:
+                # Only treat confirms-500 as transient; re-raise anything else.
+                msg = str(e)
+                if "HTTP 500" in msg:
+                    last_err = e
+                    log.warning("Transient error confirming deal %s: %s", deal_reference, msg)
+                else:
+                    raise
+
+            if time.monotonic() >= deadline:
+                if last_err:
+                    raise TimeoutError(
+                        f"Timed out waiting for deal confirm (last error: {last_err})"
+                    ) from last_err
+                raise TimeoutError(f"Timed out waiting for deal confirm: {deal_reference}")
+
+            await asyncio.sleep(poll_s)
+
+    async def place_market_order_confirmed(
+        self,
+        *,
+        epic: str,
+        direction: str,
+        size: float,
+        expiry: str = "-",
+        currency: str = "GBP",
+        force_open: bool = False,
+        time_in_force: str = "FILL_OR_KILL",
+        guaranteed_stop: bool = False,
+        confirm_timeout_s: float = 10.0,
+        confirm_poll_s: float = 0.25,
+    ) -> dict[str, Any]:
+        res = await self.place_market_order(
+            epic=epic,
+            direction=direction,
+            size=size,
+            expiry=expiry,
+            currency=currency,
+            force_open=force_open,
+            time_in_force=time_in_force,
+            guaranteed_stop=guaranteed_stop,
+        )
+        deal_ref = res.get("dealReference")
+        if not deal_ref:
+            raise RuntimeError(f"Expected dealReference from place_market_order, got: {res}")
+
+        return await self.confirm_deal(deal_ref, timeout_s=confirm_timeout_s, poll_s=confirm_poll_s)
+
     async def get_historical_candles(self, epic: str, period: str, num_points: int) -> list[Candle]:
         """
         Fetch the most recent `num_points` candles for (epic, period) via IG REST /prices.

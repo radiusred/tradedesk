@@ -3,6 +3,7 @@ import pytest
 from tradedesk.indicators.macd import MACD
 from tradedesk.indicators.mfi import MFI
 from tradedesk.indicators.williams_r import WilliamsR
+from tradedesk.indicators.sma import SMA
 
 
 class TestIndicatorWarmupPeriods:
@@ -12,6 +13,7 @@ class TestIndicatorWarmupPeriods:
             (WilliamsR(period=14), 14),
             (MFI(period=14), 15),
             (MACD(fast=12, slow=26, signal=9), 26 + 9 - 1),
+            (SMA(period=14), 14),
         ],
     )
     def test_warmup_periods_returns_expected(self, indicator, expected):

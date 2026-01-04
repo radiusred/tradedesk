@@ -4,8 +4,7 @@ import math
 import pytest
 
 from tradedesk.marketdata import Candle
-from tradedesk.indicators import MACD, MFI, WilliamsR
-
+from tradedesk.indicators import MACD, MFI, WilliamsR, SMA
 
 def candle(
     open_: float,
