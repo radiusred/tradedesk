@@ -56,7 +56,7 @@ The CSV format is intentionally simple and compatible with tools like
 
 A strategy typically follows this lifecycle:
 
-1. Initialise indicators and subscriptions
+1. Initialise [indicators](./docs/indicator_guide.md) and subscriptions
 2. Warm up using historical data
 3. React to market events (ticks, candles)
 4. Place and manage orders
@@ -65,7 +65,7 @@ A strategy typically follows this lifecycle:
 The framework enforces a clear separation between **signal generation**
 and **execution mechanics**.
 
-Take a look at some basic [examples](./docs/examples/) to see how to wire up to the framework, and have a read of the more comprehensive [strategy writing guide](./docs/STRATEGY_GUIDE.md) for more information.
+Take a look at some basic [examples](./docs/examples/) to see how to wire up to the framework, and have a read of the more comprehensive [strategy writing guide](./docs/strategy_guide.md) for more information.
 
 ---
 
@@ -76,7 +76,7 @@ Indicators are:
 - Warmed up deterministically
 - Isolated per chart / timeframe
 
-The framework ensures indicators are never used before they are ready.
+The framework ensures [indicators](./docs/indicator_guide.md) are never used before they are ready.
 
 ---
 
@@ -85,7 +85,7 @@ The framework ensures indicators are never used before they are ready.
 Backtests in `tradedesk` are:
 - Event-driven (ticks or candles)
 - Deterministic and reproducible
-- Fast enough for iterative strategy development
+- Fast enough for iterative [strategy](./docs/strategy_guide.md) development
 
 Backtests produce:
 - Trade lists
@@ -108,7 +108,7 @@ A common workflow using the `tradedesk` ecosystem:
 
 ## Design principles
 
-- **Separation of concerns**: data, indicators, strategy logic, execution
+- **Separation of concerns**: data, [indicators](./docs/indicator_guide.md), [strategy](./docs/strategy_guide.md) logic, execution
 - **Determinism**: identical inputs produce identical outputs
 - **Explicitness**: no hidden global state
 - **Testability**: core logic is unit-testable without live services
