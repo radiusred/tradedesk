@@ -178,7 +178,6 @@ class IGClient(Client):
         Handles Version 2 Authentication (CST / X-SECURITY-TOKEN).
         Required for Lightstreamer streaming.
         """
-        # Extract Tokens (Check headers first, then body)
         cst = headers.get("CST") or body.get("cst")
         x_sec = headers.get("X-SECURITY-TOKEN") or body.get("x-security-token")
 
@@ -186,16 +185,24 @@ class IGClient(Client):
             log.error("Missing V2 tokens. Headers: %s, Body: %s", headers, body)
             raise RuntimeError("CST and X-SECURITY-TOKEN not found in IG response.")
 
-        # Update State
         self.ls_cst = cst
         self.ls_xst = x_sec
         self.client_id = body.get("clientId")
         self.account_id = body.get("currentAccountId") or body.get("accountId")
         self.uses_oauth = False
 
-        # Apply to Session
-        self._apply_session_headers({"CST": cst, "X-SECURITY-TOKEN": x_sec})
-        
+        if not self.account_id:
+            log.error("Missing account id in V2 auth body: %s", body)
+            raise RuntimeError("IG account id not found in IG response.")
+
+        self._apply_session_headers(
+            {
+                "CST": cst,
+                "X-SECURITY-TOKEN": x_sec,
+                "IG-ACCOUNT-ID": self.account_id,
+            }
+        )
+
         log.info("Authenticated (V2) – Streaming enabled.")
 
     async def _handle_v3_auth(self, body: dict[str, Any]) -> None:
@@ -263,27 +270,32 @@ class IGClient(Client):
     def get_streamer(self):
         from tradedesk.providers.ig.streamer import Lightstreamer
         return Lightstreamer(self)
-
-    async def _request(self, method: str, path: str, **kwargs) -> dict[str, Any]:
+    
+    async def _request(self, method: str, path: str, *, api_version: str | None = None, **kwargs) -> dict[str, Any]:
         url = f"{self.base_url}{path}"
 
         if not self._session:
             self._session = aiohttp.ClientSession(headers=self.headers)
 
-        # OAuth Expiry Check (kept for completeness; V2 is used for LS)
         if self.uses_oauth:
             time_since_auth = time.time() - self.last_auth_attempt
             if time_since_auth > 25 and not self._is_token_valid():
                 log.debug("OAuth token expired – re-authenticating")
                 await self._authenticate()
 
-        try:
-            async with self._session.request(method, url, **kwargs) as resp:
-                # Automatic Retry on 401/403 (auth/session issues)
-                if resp.status in (401, 403):
-                    await self._handle_retry_logic(resp, method, url, **kwargs)
+        # Merge headers, allow per-request VERSION override
+        req_headers: dict[str, str] = dict(self._session.headers)
+        caller_headers = kwargs.pop("headers", None)
+        if caller_headers:
+            req_headers.update(dict(caller_headers))
+        if api_version is not None:
+            req_headers["VERSION"] = str(api_version)
 
-                # Surface error body on non-2xx
+        try:
+            async with self._session.request(method, url, headers=req_headers, **kwargs) as resp:
+                if resp.status in (401, 403):
+                    await self._handle_retry_logic(resp, method, url, headers=req_headers, **kwargs)
+
                 if resp.status >= 400:
                     try:
                         err_body = await resp.json()
@@ -293,7 +305,6 @@ class IGClient(Client):
                     log.error("HTTP %s for %s %s: %s", resp.status, method, url, err_body)
                     raise RuntimeError(f"IG request failed: HTTP {resp.status}: {err_body}")
 
-                # Normal JSON response
                 return await resp.json()
 
         except aiohttp.ClientError as e:
@@ -346,7 +357,35 @@ class IGClient(Client):
             "HOUR_4": "HOUR_4",
         }
         return mapping.get(p, p)
+    
+    async def _get_accounts(self) -> dict[str, Any]:
+        # /accounts is typically VERSION 1
+        return await self._request("GET", "/accounts", api_version="1")
 
+    async def _ensure_account_type(self) -> str | None:
+        """
+        Determine the current account's type (e.g. SPREADBET / CFD) once per session.
+        Cached on self._account_type.
+        """
+        if hasattr(self, "_account_type") and self._account_type:
+            return self._account_type
+
+        if not self.account_id:
+            return None
+
+        payload = await self._get_accounts()
+        accounts = payload.get("accounts") or []
+        current = next((a for a in accounts if a.get("accountId") == self.account_id), None)
+        self._account_type = (current or {}).get("accountType")
+        return self._account_type
+
+    async def _dealing_path_for_current_account(self) -> str:
+        """
+        IG uses /positions/otc for both CFD and spreadbet dealing.
+        Product semantics are driven by account type + payload fields (not URL path).
+        """
+        return "/positions/otc"
+    
     async def get_market_snapshot(self, epic: str) -> dict[str, Any]:
         """Return the latest market snapshot for the given EPIC."""
         return await self._request("GET", f"/markets/{epic}")
@@ -370,24 +409,31 @@ class IGClient(Client):
         """
         Submit a simple OTC market order.
 
-        Spread betting + netting defaults:
-          - currencyCode: GBP
-          - forceOpen: False (avoid hedging)
-
-        Some IG markets validate guaranteedStop as non-null, so we always send it.
+        IG uses POST /positions/otc for both CFD and Spreadbet.
+        For SPREADBET accounts, expiry must typically be 'DFB' (not '-').
         """
-        order = {
+        acct_type = (await self._ensure_account_type() or "").upper()
+
+        eff_expiry = expiry
+        if acct_type == "SPREADBET" and (expiry is None or expiry.strip() == "-" or expiry.strip() == ""):
+            eff_expiry = "DFB"
+
+        order: dict[str, Any] = {
             "epic": epic,
-            "expiry": expiry,
+            "expiry": eff_expiry,
             "direction": direction.upper(),
             "size": size,
             "orderType": "MARKET",
             "timeInForce": time_in_force,
-            "currencyCode": currency,
             "forceOpen": force_open,
             "guaranteedStop": guaranteed_stop,
+            # Keep currencyCode: many IG setups accept/expect it for OTC dealing.
+            "currencyCode": currency,
         }
-        return await self._request("POST", "/positions/otc", json=order)
+
+        # Dealing endpoints are generally VERSION 1 (more consistent across IG)
+        path = await self._dealing_path_for_current_account()
+        return await self._request("POST", path, json=order, api_version="1")
 
     async def confirm_deal(
         self,
@@ -407,7 +453,7 @@ class IGClient(Client):
 
         while True:
             try:
-                payload = await self._request("GET", f"/confirms/{deal_reference}")
+                payload = await self._request("GET", f"/confirms/{deal_reference}", api_version="1")
                 status = (payload.get("dealStatus") or "").upper()
 
                 if status and status != "PENDING":
