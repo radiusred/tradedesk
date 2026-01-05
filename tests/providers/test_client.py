@@ -56,6 +56,31 @@ class TestIGClient:
             assert body["expiry"] == "-"
             assert body["timeInForce"] == "FILL_OR_KILL"
             assert body["guaranteedStop"] is False
+            
+    @pytest.mark.asyncio
+    async def test_place_market_order_sets_dfb_expiry_on_spreadbet_account(self, mock_aiohttp_session):
+        mock_response = MagicMock()
+        mock_response.status = 200
+        mock_response.json = AsyncMock(return_value={"dealReference": "REF123"})
+        mock_response.__aenter__ = AsyncMock(return_value=mock_response)
+        mock_response.__aexit__ = AsyncMock(return_value=None)
+
+        mock_aiohttp_session.request.return_value = mock_response
+
+        with patch("aiohttp.ClientSession", return_value=mock_aiohttp_session):
+            client = IGClient()
+            client._session = mock_aiohttp_session
+
+            # Force SPREADBET behaviour without calling /accounts
+            client._ensure_account_type = AsyncMock(return_value="SPREADBET")  # type: ignore[method-assign]
+
+            await client.place_market_order(epic="CS.D.EURUSD.TODAY.IP", direction="BUY", size=1.0)
+
+            (_, url), kwargs = mock_aiohttp_session.request.call_args
+            assert url.endswith("/positions/otc")
+
+            body = kwargs["json"]
+            assert body["expiry"] == "DFB"
 
     @pytest.mark.asyncio
     async def test_confirm_deal_polls_until_not_pending(self, mock_aiohttp_session):
