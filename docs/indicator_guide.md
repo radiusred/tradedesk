@@ -1,225 +1,535 @@
-# TradeDesk Indicators Reference
-
-This document provides a concise description of each technical indicator implemented in `tradedesk`, followed by a minimal example showing how to **configure and register** the indicator against a `ChartSubscription`.
-
-The focus here is purely on *what the indicator is* and *how it is wired into a strategy*.  
-No guidance is given on when or why to use any particular indicator.
-
-All indicators are:
-
-- Stateful
-- Updated candle-by-candle via `update(candle)`
-- Warmup-aware via `warmup_periods()`
-- Resettable via `reset()`
+# Indicators in tradedesk
 
 ---
 
-## Common registration pattern
+## Purpose of this document
 
-```python
-from tradedesk.subscriptions import ChartSubscription
-from tradedesk.strategy import BaseStrategy
+This guide explains what indicators are within the `tradedesk` framework, how they are expected to behave, and the mathematical intuition behind the indicators commonly used by strategies.
 
-class MyStrategy(BaseStrategy):
-    def __init__(self, client):
-        sub = ChartSubscription("CS.D.EURUSD.TODAY.IP", "5MINUTE")
-        super().__init__(client, subscriptions=[sub])
+The goal is not to provide trading advice, but to ensure that indicator usage is:
 
-        # Register indicator instances
-        # self.register_indicator(sub, <indicator instance>)
-```
+* conceptually correct,
+* mathematically understood,
+* and operationally sound when used in both backtests and live execution.
 
 ---
 
-## ADX — Average Directional Index
+## What an indicator is (in tradedesk)
 
-**Description:**  
-Measures trend strength using Wilder-smoothed directional movement. Produces the ADX value along with positive and negative directional indicators.
+In `tradedesk`, an *indicator* is a **stateful transformation of market data**. Indicators:
 
-**Update output:**  
-`{"adx": float | None, "plus_di": float | None, "minus_di": float | None}`
+* Consume a stream of prices, candles, or volumes
+* Maintain internal state across updates
+* Produce derived values (not trading decisions)
 
-```python
-from tradedesk.indicators import ADX
-self.register_indicator(sub, ADX(period=14))
-```
+Indicators do **not**:
 
----
+* Place orders
+* Know about positions
+* Encode strategy logic
 
-## ATR — Average True Range
-
-**Description:**  
-Measures market volatility using true range and Wilder smoothing.
-
-**Update output:**  
-`float | None`
-
-```python
-from tradedesk.indicators import ATR
-self.register_indicator(sub, ATR(period=14))
-```
+They are deliberately isolated from execution concerns.
 
 ---
 
-## Bollinger Bands
+## Indicator lifecycle
 
-**Description:**  
-Calculates a simple moving average with upper and lower bands derived from population standard deviation.
+All indicators follow the same conceptual lifecycle:
 
-**Update output:**  
-`{"middle": float | None, "upper": float | None, "lower": float | None, "std": float | None}`
+1. **Construction** – parameters are fixed (e.g. lookback periods)
+2. **Warmup** – insufficient data to produce reliable output
+3. **Ready** – outputs are mathematically meaningful
+4. **Steady-state update** – one update per tick or candle
 
-```python
-from tradedesk.indicators import BollingerBands
-self.register_indicator(sub, BollingerBands(period=20, k=2.0))
-```
+### Warmup and readiness
 
----
+Most indicators require a minimum amount of historical data before their output stabilises. During warmup:
 
-## CCI — Commodity Channel Index
+* Values may be undefined or misleading
+* Strategies must assume indicators are *not ready*
 
-**Description:**  
-Measures deviation of typical price from its moving average using mean deviation.
-
-**Update output:**  
-`float | None`
-
-```python
-from tradedesk.indicators import CCI
-self.register_indicator(sub, CCI(period=20))
-```
+In `tradedesk`, readiness is the responsibility of the strategy or its state container (e.g. `EpicState`), not the framework itself.
 
 ---
 
-## EMA — Exponential Moving Average
+## Tick-driven vs candle-driven indicators
 
-**Description:**  
-Exponentially weighted moving average of closing prices.
+Indicators differ in how frequently they should be updated:
 
-**Update output:**  
-`float | None`
+### Tick-driven indicators
 
-```python
-from tradedesk.indicators import EMA
-self.register_indicator(sub, EMA(period=14))
-```
+* Updated on every price change
+* Capture short-term momentum and microstructure
+* Sensitive to noise
 
----
+Example: MACD (as used in `ig_trader`)
 
-## MACD — Moving Average Convergence Divergence
+### Candle-driven indicators
 
-**Description:**  
-Computed from the difference between fast and slow EMAs, with a signal line and histogram.
+* Updated once per completed candle
+* Capture higher-level structure
+* Less sensitive to noise
 
-**Update output:**  
-`{"macd": float | None, "signal": float | None, "histogram": float | None}`
+Examples: ATR, MFI, Williams %R
 
-```python
-from tradedesk.indicators import MACD
-self.register_indicator(sub, MACD(fast=12, slow=26, signal=9))
-```
+A strategy may legitimately combine both, but must do so with a clear understanding of update ordering and lag.
 
 ---
 
-## MFI — Money Flow Index
+## Mathematical foundations
 
-**Description:**  
-Volume-weighted oscillator derived from typical price and money flow.
+This section introduces the indicators commonly used in `tradedesk` strategies. Each indicator is described in three layers:
 
-**Update output:**  
-`float | None`
-
-```python
-from tradedesk.indicators import MFI
-self.register_indicator(sub, MFI(period=14))
-```
+1. Conceptual meaning
+2. Mathematical definition
+3. Practical implementation considerations
 
 ---
 
-## OBV — On-Balance Volume
+## Average True Range (ATR)
 
-**Description:**  
-Cumulative volume series adjusted based on changes in closing price.
+### What ATR measures
 
-**Update output:**  
-`float | None`
+ATR measures **price volatility**, not direction. It answers the question:
 
-```python
-from tradedesk.indicators import OBV
-self.register_indicator(sub, OBV())
+> “How much does this market typically move per period?”
+
+ATR is commonly used for:
+
+* Position sizing
+* Stop distance calculation
+* Volatility regime detection
+
+### Mathematical definition
+
+For each candle *t*, the *true range* (TR) is defined as:
+
+* High(t) − Low(t)
+* |High(t) − Close(t−1)|
+* |Low(t) − Close(t−1)|
+
+The true range is the maximum of these three values.
+
+ATR is then calculated as a moving average of TR over *N* periods (typically using an exponential or Wilder-style smoothing).
+
+### Interpretation
+
+* High ATR → volatile market
+* Low ATR → compressed or ranging market
+
+ATR has **no directional bias**.
+
+### Implementation notes in tradedesk
+
+* ATR is candle-driven
+* ATR must be fully warmed up before being used for stops
+* Strategies should treat a missing or zero ATR as “not ready”
+
+ATR is often used to derive a stop level:
+
 ```
+stop_distance = atr * multiplier
+```
+
+The choice of multiplier is a strategy parameter, not an indicator concern.
 
 ---
 
-## RSI — Relative Strength Index
+## Moving Average Convergence Divergence (MACD)
 
-**Description:**  
-Wilder-smoothed ratio of average gains to average losses, mapped to a 0–100 scale.
+### Conceptual overview
 
-**Update output:**  
-`float | None`
+MACD measures **momentum** by comparing two exponential moving averages (EMAs) of price.
 
-```python
-from tradedesk.indicators import RSI
-self.register_indicator(sub, RSI(period=14))
-```
+It captures:
 
----
+* Directional bias
+* Momentum acceleration and deceleration
 
-## SMA — Simple Moving Average
+### Mathematical definition
 
-**Description:**  
-Arithmetic mean of closing prices over a rolling window.
+Let:
 
-**Update output:**  
-`float | None`
+* EMA_fast = EMA(price, fast_period)
+* EMA_slow = EMA(price, slow_period)
 
-```python
-from tradedesk.indicators import SMA
-self.register_indicator(sub, SMA(period=20))
-```
+Then:
 
----
+* MACD line = EMA_fast − EMA_slow
+* Signal line = EMA(MACD line, signal_period)
+* Histogram = MACD line − Signal line
 
-## Stochastic Oscillator
+### Interpretation
 
-**Description:**  
-Compares the closing price to the recent high–low range and applies smoothing.
+* Positive histogram → bullish momentum
+* Negative histogram → bearish momentum
+* Histogram crossing zero → momentum regime change
 
-**Update output:**  
-`{"k": float | None, "d": float | None}`
+### Implementation notes in tradedesk
 
-```python
-from tradedesk.indicators import Stochastic
-self.register_indicator(sub, Stochastic(k_period=14, d_period=3))
-```
+* MACD is treated as **tick-driven** in `ig_trader`
+* Candle closes may be fed as synthetic ticks during backtests
+* MACD requires substantial warmup to stabilise
+
+MACD signals are particularly sensitive to:
+
+* Update frequency
+* Price source (mid vs bid/offer)
 
 ---
 
-## VWAP — Volume Weighted Average Price
+## Money Flow Index (MFI)
 
-**Description:**  
-Cumulative volume-weighted average price, optionally resetting at UTC day boundaries.
+### Conceptual overview
 
-**Update output:**  
-`float | None`
+MFI is a **volume-weighted momentum oscillator**.
 
-```python
-from tradedesk.indicators import VWAP
-self.register_indicator(sub, VWAP(use_typical_price=True, reset_daily_utc=True))
-```
+It attempts to detect:
+
+* Accumulation
+* Distribution
+* Overbought and oversold conditions
+
+### Mathematical definition (high-level)
+
+1. Compute typical price per candle
+2. Multiply by volume to obtain raw money flow
+3. Separate positive and negative flows
+4. Compute the ratio over *N* periods
+
+The final MFI value is normalised to a 0–100 range.
+
+### Interpretation
+
+* MFI > 80 → overbought
+* MFI < 20 → oversold
+
+Exact thresholds are strategy-dependent.
+
+### Implementation notes in tradedesk
+
+* MFI is candle-driven
+* Volume quality matters
+* MFI is undefined until fully warmed up
 
 ---
 
 ## Williams %R
 
-**Description:**  
-Measures the position of the close relative to the recent high–low range.
+### Conceptual overview
 
-**Update output:**  
-`float | None`
+Williams %R measures where the current close sits within the recent high–low range.
 
-```python
-from tradedesk.indicators import WilliamsR
-self.register_indicator(sub, WilliamsR(period=14))
+It answers:
+
+> “Is price closing near the top or bottom of its recent range?”
+
+### Mathematical definition
+
+For a lookback window of *N* periods:
+
 ```
+%R = (HighestHigh − Close) / (HighestHigh − LowestLow) * −100
+```
+
+Values range from −100 to 0.
+
+### Interpretation
+
+* Near 0 → price closing near recent highs
+* Near −100 → price closing near recent lows
+
+### Implementation notes in tradedesk
+
+* Candle-driven
+* Sensitive to lookback choice
+* Often used in conjunction with MFI or trend filters
+
+---
+
+## Indicator interactions
+
+Combining indicators introduces non-obvious effects:
+
+* Lag compounds across indicators
+* Agreement can occur *after* the move
+* Disagreement may still be informative
+
+Strategies should be designed to tolerate disagreement and delayed confirmation.
+
+---
+
+## Practical considerations
+
+### Lookback selection
+
+Longer lookbacks:
+
+* Reduce noise
+* Increase lag
+
+Shorter lookbacks:
+
+* Increase responsiveness
+* Increase false signals
+
+### Timeframe effects
+
+Indicators behave differently across timeframes. A strategy should not assume that parameters transfer cleanly from one timeframe to another.
+
+### Readiness checks
+
+Strategies should explicitly guard against using indicators before they are ready. A missing or unstable indicator value should prevent entries, not merely degrade signal quality.
+
+---
+
+## Exponential Moving Average (EMA)
+
+### Conceptual overview
+
+An Exponential Moving Average (EMA) is a smoothed average of price that places greater weight on more recent observations.
+
+Compared to a simple moving average, an EMA responds more quickly to recent price changes, making it more suitable for momentum-sensitive indicators.
+
+### Mathematical definition
+
+For a period length *N*, the smoothing factor α is defined as:
+
+```
+α = 2 / (N + 1)
+```
+
+The EMA is then updated recursively:
+
+```
+EMA(t) = α × Price(t) + (1 − α) × EMA(t−1)
+```
+
+### Interpretation
+
+* EMA tracks the prevailing price direction
+* Shorter periods increase responsiveness but amplify noise
+* Longer periods reduce noise but increase lag
+
+### Implementation notes in tradedesk
+
+* EMA is tick-driven or candle-driven depending on usage
+* EMA requires warmup equal to its period length
+* EMA is commonly used as a building block for MACD
+
+---
+
+## Simple Moving Average (SMA)
+
+### Conceptual overview
+
+A Simple Moving Average (SMA) is the arithmetic mean of the last *N* prices.
+
+It provides a baseline view of trend direction with maximal smoothing and lag.
+
+### Mathematical definition
+
+```
+SMA(t) = (P(t) + P(t−1) + … + P(t−N+1)) / N
+```
+
+### Interpretation
+
+* SMA smooths price but reacts slowly to change
+* Crossovers are often used as trend filters
+
+### Implementation notes in tradedesk
+
+* SMA is candle-driven in most use cases
+* SMA must be fully warmed before use
+
+---
+
+## Relative Strength Index (RSI)
+
+### Conceptual overview
+
+RSI is a momentum oscillator that measures the speed and magnitude of recent price changes.
+
+It is commonly used to identify overbought and oversold conditions.
+
+### Mathematical definition
+
+RSI compares average gains to average losses over *N* periods and normalises the result to a 0–100 scale.
+
+### Interpretation
+
+* RSI > 70 → overbought
+* RSI < 30 → oversold
+
+Thresholds are context-dependent and should not be treated as absolute.
+
+### Implementation notes in tradedesk
+
+* RSI is candle-driven
+* RSI requires sufficient warmup to stabilise averages
+
+---
+
+## Average Directional Index (ADX)
+
+### Conceptual overview
+
+ADX measures **trend strength**, not direction.
+
+It is often used as a filter to determine whether trend-following signals are likely to be effective.
+
+### Mathematical definition
+
+ADX is derived from the directional movement indicators (+DI and −DI), which are based on directional price changes.
+
+### Interpretation
+
+* Low ADX → weak or ranging market
+* High ADX → strong trend (direction determined elsewhere)
+
+### Implementation notes in tradedesk
+
+* ADX is candle-driven
+* ADX is often used as a gating condition rather than a signal
+
+---
+
+## Bollinger Bands
+
+### Conceptual overview
+
+Bollinger Bands describe price volatility relative to a moving average.
+
+They consist of:
+
+* a middle moving average
+* an upper and lower band offset by standard deviation
+
+### Mathematical definition
+
+```
+Upper = MA + (k × σ)
+Lower = MA − (k × σ)
+```
+
+where σ is the standard deviation over the lookback window.
+
+### Interpretation
+
+* Band expansion → increasing volatility
+* Band contraction → volatility compression
+
+### Implementation notes in tradedesk
+
+* Bollinger Bands are candle-driven
+* Interpretation depends heavily on parameter selection
+
+---
+
+## Commodity Channel Index (CCI)
+
+### Conceptual overview
+
+CCI measures deviation of price from its statistical mean.
+
+It is often used to identify cyclical turning points.
+
+### Mathematical definition
+
+CCI compares typical price to its moving average, scaled by mean deviation.
+
+### Interpretation
+
+* High positive CCI → price above historical norm
+* High negative CCI → price below historical norm
+
+### Implementation notes in tradedesk
+
+* CCI is candle-driven
+* Sensitive to outliers
+
+---
+
+## Stochastic Oscillator
+
+### Conceptual overview
+
+The stochastic oscillator compares the current close to the recent high–low range.
+
+It assumes momentum precedes price.
+
+### Mathematical definition
+
+```
+%K = (Close − LowestLow) / (HighestHigh − LowestLow)
+```
+
+### Interpretation
+
+* Values near extremes indicate potential reversals
+
+### Implementation notes in tradedesk
+
+* Candle-driven
+* Often smoothed with a moving average
+
+---
+
+## On-Balance Volume (OBV)
+
+### Conceptual overview
+
+OBV accumulates volume based on price direction.
+
+It attempts to detect accumulation and distribution.
+
+### Mathematical definition
+
+* If price closes up → add volume
+* If price closes down → subtract volume
+
+### Interpretation
+
+* Rising OBV supports bullish price action
+* Divergence may indicate weakening trends
+
+### Implementation notes in tradedesk
+
+* Candle-driven
+* Volume quality is critical
+
+---
+
+## Volume Weighted Average Price (VWAP)
+
+### Conceptual overview
+
+VWAP represents the average price traded, weighted by volume.
+
+It is commonly used as an institutional benchmark.
+
+### Mathematical definition
+
+```
+VWAP = Σ(price × volume) / Σ(volume)
+```
+
+### Interpretation
+
+* Price above VWAP → bullish bias
+* Price below VWAP → bearish bias
+
+### Implementation notes in tradedesk
+
+* VWAP is session-dependent
+* Requires careful reset semantics
+
+---
+
+## License
+
+Licensed under the Apache License, Version 2.0.
+See: [https://www.apache.org/licenses/LICENSE-2.0](https://www.apache.org/licenses/LICENSE-2.0)
+
+Copyright 2026 [Radius Red Ltd.](https://github.com/radiusred)

@@ -1,127 +1,113 @@
 # tradedesk
 
-A lightweight Python framework for building, running, and backtesting systematic trading strategies.
 
-`tradedesk` provides the **infrastructure layer** for trading systems: data handling,
-indicator management, strategy lifecycle orchestration, and backtesting.
-It is intentionally opinionated about *structure*, but unopinionated about *strategy logic*.
+## What tradedesk is
 
-This repository is designed to be reused across multiple trading projects.
+`tradedesk` is a lightweight Python framework for developing, backtesting, and running systematic trading strategies across multiple data providers and execution environments.
 
----
+It provides:
 
-## What tradedesk is (and is not)
+* A consistent strategy lifecycle
+* Explicit separation between market data, strategy logic, and execution
+* Deterministic [backtesting](./docs/backtesting_guide.md) with identical strategy code
+* Live and DEMO execution via provider-specific clients
 
-**tradedesk is:**
-- A framework for wiring together strategies, indicators, and data feeds
-- A backtesting engine for candle- and tick-driven strategies
-- A foundation for both live trading and historical simulation
+It is designed for research, validation, and controlled deployment of trading strategies rather than high-frequency or ultra-low-latency trading.
 
-**tradedesk is not:**
-- A turnkey trading strategy
-- A data downloader (see `tradedesk-dukascopy` for that)
-- A broker-specific SDK
+## What tradedesk is not
 
----
+`tradedesk` is intentionally *not*:
 
-## Quick start
+* A portfolio management system
+* A signal marketplace
+* A turnkey trading bot
+* A performance-optimised HFT engine
 
-Install:
+It REQUIRES the user to accept responsibility for strategy design, risk management, and operational controls.
 
-```bash
-pip install tradedesk
-```
+## High-level architecture
 
-Run a backtest from CSV candle data:
+At a high level, `tradedesk` consists of four layers:
 
-```python
-from tradedesk.backtest import backtest_from_csv
+1. **Providers** – Interfaces to external data/execution sources (e.g. IG, historical backtest data)
+2. **Clients** – Concrete implementations that fetch data and place orders
+3. **Strategies** – User-defined trading logic responding to market events
+4. **Runner** – Orchestrates lifecycle, subscriptions, warmup, and shutdown
 
-results = backtest_from_csv(
-    csv_path="EURUSD_5MIN.csv",
-    strategy_cls=MyStrategy,
-)
-
-print(results.metrics)
-```
-
-The CSV format is intentionally simple and compatible with tools like
-`tradedesk-dukascopy`.
-
----
+Market data flows from the provider into the strategy, which emits execution decisions back through the client.
 
 ## Core concepts
 
 ### Strategy lifecycle
 
-A strategy typically follows this lifecycle:
+A strategy progresses through the following phases:
 
-1. Initialise [indicators](./docs/indicator_guide.md) and subscriptions
-2. Warm up using historical data
-3. React to market events (ticks, candles)
-4. Place and manage orders
-5. Exit cleanly and report metrics
+1. Construction
+2. Subscription registration
+3. Warmup (optional but strongly recommended)
+4. Live or replayed market data handling
+5. Order execution
+6. Graceful shutdown
 
-The framework enforces a clear separation between **signal generation**
-and **execution mechanics**.
+### Subscriptions
 
-Take a look at some basic [examples](./docs/examples/) to see how to wire up to the framework, and have a read of the more comprehensive [strategy writing guide](./docs/strategy_guide.md) for more information.
+Strategies explicitly declare their required data via subscriptions:
 
----
+* **MarketSubscription** – Tick-level price updates (bid/offer)
+* **ChartSubscription** – Aggregated candle data for a given timeframe
 
-### Indicators
+Only subscribed data is delivered to the strategy.
 
-Indicators are:
-- Explicitly registered by strategies
-- Warmed up deterministically
-- Isolated per chart / timeframe
+### Warmup
 
-The framework ensures [indicators](./docs/indicator_guide.md) are never used before they are ready.
+Warmup allows a strategy to request historical data before live execution begins in order to initialise indicator state and internal windows.
 
----
+A strategy that does not warm up must be robust to partially initialised indicators and delayed signal readiness.
 
-### Backtesting
+### Backtest vs live execution
 
-Backtests in `tradedesk` are:
-- Event-driven (ticks or candles)
-- Deterministic and reproducible
-- Fast enough for iterative [strategy](./docs/strategy_guide.md) development
+The same strategy code can be run against:
 
-Backtests produce:
-- Trade lists
-- Equity curves
-- Summary metrics (win rate, drawdown, expectancy, etc.)
+* A live or DEMO provider
+* A deterministic [backtest](./docs/backtesting_guide.md) client that replays historical data
 
----
+Differences between environments are isolated to the client layer.
 
-## Typical workflow
+## Supported providers
 
-A common workflow using the `tradedesk` ecosystem:
+* **IG** – Live and DEMO trading via REST and streaming APIs
+* **BacktestClient** – Deterministic replay of historical data
 
-1. Export historical data using `tradedesk-dukascopy`
-2. Commit or archive the CSV + metadata
-3. Develop and test strategies locally using `tradedesk`
-4. Iterate rapidly using backtests
-5. (Optionally) deploy the same strategy code live
+Historical data acquisition is handled by a companion project:
 
----
+* `tradedesk-dukascopy`
 
-## Design principles
+## Quick start
 
-- **Separation of concerns**: data, [indicators](./docs/indicator_guide.md), [strategy](./docs/strategy_guide.md) logic, execution
-- **Determinism**: identical inputs produce identical outputs
-- **Explicitness**: no hidden global state
-- **Testability**: core logic is unit-testable without live services
+1. Install dependencies
+2. Write or select a strategy
+3. Choose a client ([backtest](./docs/backtesting_guide.md) or live)
+4. Run via the `tradedesk` runner
 
----
+Detailed tutorials are provided in the documentation guides listed below.
 
-## Requirements
+## Project status and guarantees
 
-- Python 3.11+
-- pandas, numpy (transitive dependencies)
+* APIs may evolve as the framework matures
+* Backwards compatibility is maintained on a best-effort basis
+* The framework prioritises correctness and clarity over performance
+
+## Further reading
+
+* `docs/indicators.md` – Indicator concepts and mathematical foundations
+* `docs/strategy_writing_guide.md` – Step-by-step strategy tutorial
+* `docs/backtesting_guide.md` – Methodology for rigorous backtesting
 
 ---
 
 ## License
 
-Apache 2.0. See `LICENSE` and `NOTICE` for details.
+Licensed under the Apache License, Version 2.0.
+See: [https://www.apache.org/licenses/LICENSE-2.0](https://www.apache.org/licenses/LICENSE-2.0)
+
+Copyright 2026 [Radius Red Ltd.](https://github.com/radiusred)
