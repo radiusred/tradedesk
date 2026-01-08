@@ -209,12 +209,12 @@ class Lightstreamer(Streamer):
                 delta = (datetime.now(timezone.utc) - strategy.last_update).total_seconds()
                 if delta > strategy.watchdog_threshold:
                     log.warning(
-                        "⚠️ HEARTBEAT ALERT: No updates for %s in %.1fs. Connection may be stale.",
+                        "⚠  Heartbeat Alert: no updates for %s in %.1fs. Connection may be stale.",
                         strategy.__class__.__name__,
                         delta,
                     )
                 else:
-                    log.debug("Heartbeat OK: Last update %.1fs ago", delta)
+                    log.debug("❤  OK: Last update %.1fs ago", delta)
 
         async def market_consumer():
             while True:
