@@ -1,5 +1,6 @@
 # tradedesk
 
+![CI Build](https://github.com/radiusred/tradedesk/actions/workflows/ci.yml/badge.svg)
 
 ## What tradedesk is
 
