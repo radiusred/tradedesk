@@ -38,3 +38,16 @@ async def test_handle_retry_logic_reauths_on_401_403_non_rate_limit():
     await c._handle_retry_logic(resp, "GET", "url")  # type: ignore[arg-type]
 
     c._authenticate.assert_awaited_once()
+
+@pytest.mark.asyncio
+async def test_confirm_deal_retries_404_deal_not_found_then_succeeds():
+    c = IGClient()
+
+    c._request = AsyncMock(side_effect=[
+        RuntimeError("IG request failed: HTTP 404: {'errorCode': 'error.confirms.deal-not-found'}"),
+        {"dealStatus": "ACCEPTED"},
+    ])
+
+    res = await c.confirm_deal("ABC", timeout_s=1.0, poll_s=0.0)
+    assert res["dealStatus"] == "ACCEPTED"
+    assert c._request.await_count == 2
