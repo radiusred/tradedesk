@@ -445,8 +445,10 @@ class IGClient(Client):
         """
         Poll /confirms/{dealReference} until dealStatus is no longer PENDING.
 
-        IG DEMO occasionally returns transient HTTP 500s for confirms; treat those
-        as retryable until timeout.
+        IG DEMO can return transient:
+        - HTTP 500s for confirms
+        - HTTP 404 error.confirms.deal-not-found briefly after placement
+        Treat those as retryable until timeout.
         """
         deadline = time.monotonic() + timeout_s
         last_err: Exception | None = None
@@ -460,9 +462,12 @@ class IGClient(Client):
                     return payload
 
             except RuntimeError as e:
-                # Only treat confirms-500 as transient; re-raise anything else.
                 msg = str(e)
-                if "HTTP 500" in msg:
+                retryable = (
+                    ("HTTP 500" in msg)
+                    or ("HTTP 404" in msg and "error.confirms.deal-not-found" in msg)
+                )
+                if retryable:
                     last_err = e
                     log.warning("Transient error confirming deal %s: %s", deal_reference, msg)
                 else:
@@ -477,6 +482,7 @@ class IGClient(Client):
 
             await asyncio.sleep(poll_s)
 
+            
     async def place_market_order_confirmed(
         self,
         *,
