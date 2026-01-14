@@ -143,3 +143,45 @@ async def test_lightstreamer_emits_marketdata_and_candleclose_and_disconnects():
 
     ls_client.disconnect.assert_called()
     assert task.done()
+
+@pytest.mark.asyncio
+async def test_heartbeat_threshold_tuned_for_chart_only():
+    # Patch Subscription class used by streamer
+    ig_streamer.Subscription = FakeSubscription  # type: ignore[assignment]
+
+    ls_client = MagicMock()
+    ls_client.connectionDetails = MagicMock()
+
+    subscribed = []
+    ls_client.subscribe.side_effect = lambda sub: subscribed.append(sub)
+
+    ig_streamer.LightstreamerClient = lambda *a, **k: ls_client  # type: ignore[assignment]
+
+    client = MagicMock()
+    client.ls_url = "https://example"
+    client.ls_cst = "CST"
+    client.ls_xst = "XST"
+    client.client_id = "CID"
+    client.account_id = "AID"
+
+    class ChartOnlyStrategy(BaseStrategy):
+        SUBSCRIPTIONS = [
+            ChartSubscription("CS.D.EURUSD.CFD.IP", "5MINUTE"),
+        ]
+
+        async def on_price_update(self, epic, bid, offer, timestamp, raw_data):
+            pass
+
+    strat = ChartOnlyStrategy(client)
+    assert strat.watchdog_threshold == 60
+
+    streamer = ig_streamer.Lightstreamer(client)
+    task = asyncio.create_task(streamer.run(strat))
+
+    await asyncio.sleep(0.05)
+
+    # For chart-only streams, threshold should be raised to at least one bar (5 minutes)
+    assert strat.watchdog_threshold >= 300
+
+    task.cancel()
+    await task

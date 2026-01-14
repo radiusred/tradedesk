@@ -29,6 +29,7 @@ class Lightstreamer(Streamer):
     def __init__(self, client: Any):
         self.client = client
         self._ls_client = None
+        self.heartbeat_sleep = 10
 
     async def connect(self) -> None:
         # Connection is established inside run() to preserve the existing flow.
@@ -203,17 +204,42 @@ class Lightstreamer(Streamer):
 
         log.info("Lightstreamer subscriptions active")
 
+        def _period_seconds(period: str) -> int:
+            p = period.strip().upper()
+            if p == "SECOND":
+                return 1
+            if p == "HOUR":
+                return 60 * 60
+            if p.endswith("MINUTE"):
+                n = int(p[:-6])  # strip "MINUTE"
+                return n * 60
+            raise ValueError(f"Unsupported period for heartbeat: {period!r}")
+
+        # Heartbeat tuning: candle subscriptions can legitimately be silent for up to one bar.
+        # If we are chart-only (no tick/market updates), raise the watchdog threshold based
+        # on the smallest subscribed bar to avoid false positives.
+        if chart_subs and not market_subs:
+            min_bar_s = min(_period_seconds(s.period) for s in chart_subs)
+            tuned = max(float(strategy.watchdog_threshold), float(min_bar_s) * 1.2)
+            if tuned != strategy.watchdog_threshold:
+                strategy.watchdog_threshold = tuned
+                log.info(
+                    "Heartbeat tuned for chart-only stream: threshold=%.1fs (min_bar=%ds)",
+                    strategy.watchdog_threshold,
+                    min_bar_s,
+                )
+
         async def _heartbeat_monitor():
             while True:
-                await asyncio.sleep(10)
+                await asyncio.sleep(self.heartbeat_sleep)
                 delta = (datetime.now(timezone.utc) - strategy.last_update).total_seconds()
                 if delta > strategy.watchdog_threshold:
                     log.warning(
-                        "⚠  Heartbeat Alert: no updates for %s in %.1fs. Connection may be stale.",
+                        "❤  Heartbeat Alert: no updates for %s in %.1fs. Connection may be stale.",
                         strategy.__class__.__name__,
                         delta,
                     )
-                else:
+                elif delta < self.heartbeat_sleep:
                     log.debug("❤  OK: Last update %.1fs ago", delta)
 
         async def market_consumer():
