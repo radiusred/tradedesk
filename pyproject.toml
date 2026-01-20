@@ -6,10 +6,10 @@ build-backend = "hatchling.build"
 name = "tradedesk"
 version = "0.1.0"
 authors = [
-  { name = "Radius Red Ltd.", email = "opensource@radiusred.co.uk" }
+  { name = "Radius Red Ltd.", email = "opensource@radiusred.uk" }
 ]
 maintainers = [
-  { name = "Radius Red Ltd.", email = "opensource@radiusred.co.uk" }
+  { name = "Radius Red Ltd.", email = "opensource@radiusred.uk" }
 ]
 description = "Trading infrastructure library with backtesting"
 readme = "README.md"
