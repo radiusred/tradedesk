@@ -8,5 +8,6 @@ __pycache__
 *.egg
 .eggs/
 build
+dist/
 .vscode
 .local
