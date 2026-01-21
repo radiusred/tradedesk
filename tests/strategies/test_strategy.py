@@ -42,13 +42,13 @@ class TestBaseStrategy:
         
         class TestStrategy(BaseStrategy):
             SUBSCRIPTIONS = [MarketSubscription("CS.D.EURUSD.CFD.IP")]
-            
+
             def __init__(self, client):
                 super().__init__(client)
                 self.updates = []
-            
-            async def on_price_update(self, epic, bid, offer, timestamp, raw_data):
-                self.updates.append((epic, bid, offer))
+
+            async def on_price_update(self, market_data):
+                self.updates.append((market_data.epic, market_data.bid, market_data.offer))
         
         strategy = TestStrategy(mock_client)
         
@@ -79,12 +79,12 @@ class TestBaseStrategy:
         
         class TestStrategy(BaseStrategy):
             SUBSCRIPTIONS = [MarketSubscription("CS.D.EURUSD.CFD.IP"), MarketSubscription("CS.D.GBPUSD.CFD.IP")]
-            
-            async def on_price_update(self, epic, bid, offer, timestamp, raw_data):
+
+            async def on_price_update(self, market_data):
                 updates.append({
-                    'epic': epic,
-                    'bid': bid,
-                    'offer': offer
+                    'epic': market_data.epic,
+                    'bid': market_data.bid,
+                    'offer': market_data.offer
                 })
         
         strategy = TestStrategy(mock_client)
@@ -126,8 +126,8 @@ class TestBaseStrategy:
         
         class TestStrategy(BaseStrategy):
             SUBSCRIPTIONS = [MarketSubscription("CS.D.EURUSD.CFD.IP")]
-            
-            async def on_price_update(self, epic, bid, offer, timestamp, raw_data):
+
+            async def on_price_update(self, market_data):
                 updates.append('update')
         
         strategy = TestStrategy(mock_client)
