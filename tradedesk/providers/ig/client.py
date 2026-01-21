@@ -24,7 +24,7 @@ class IGClient(Client):
     DEMO_LS = "https://demo-apd.marketdatasystems.com"
     LIVE_LS = "https://apd.marketdatasystems.com"
 
-    def __init__(self):
+    def __init__(self) -> None:
         # Choose the correct base URL for the selected environment
         self.base_url = self.DEMO_BASE if settings.ig_environment == "DEMO" else self.LIVE_BASE
         self.ls_url   = self.DEMO_LS   if settings.ig_environment == "DEMO" else self.LIVE_LS
@@ -61,13 +61,14 @@ class IGClient(Client):
         self.min_auth_interval: float = 5.0  # Minimum 5 seconds between auth attempts
         self._auth_lock = asyncio.Lock()  # Prevent concurrent authentication
         self._session: aiohttp.ClientSession | None = None
+        self._account_type: str | None = None
 
-    async def __aenter__(self):
+    async def __aenter__(self) -> "IGClient":
         """Async context manager entry."""
         await self.start()
         return self
     
-    async def __aexit__(self, exc_type, exc_val, exc_tb):
+    async def __aexit__(self, exc_type: Any, exc_val: Any, exc_tb: Any) -> None:
         """Async context manager exit."""
         await self.close()
     
@@ -267,11 +268,11 @@ class IGClient(Client):
     # ------------------------------------------------------------------
     # Requests & Helpers
     # ------------------------------------------------------------------
-    def get_streamer(self):
+    def get_streamer(self) -> Any:
         from tradedesk.providers.ig.streamer import Lightstreamer
         return Lightstreamer(self)
     
-    async def _request(self, method: str, path: str, *, api_version: str | None = None, **kwargs) -> dict[str, Any]:
+    async def _request(self, method: str, path: str, *, api_version: str | None = None, **kwargs: Any) -> dict[str, Any]:
         url = f"{self.base_url}{path}"
 
         if not self._session:
@@ -305,13 +306,14 @@ class IGClient(Client):
                     log.error("HTTP %s for %s %s: %s", resp.status, method, url, err_body)
                     raise RuntimeError(f"IG request failed: HTTP {resp.status}: {err_body}")
 
-                return await resp.json()
+                result: dict[str, Any] = await resp.json()
+                return result
 
         except aiohttp.ClientError as e:
             log.error("Request failed: %s %s - %s", method, url, e)
             raise
 
-    async def _handle_retry_logic(self, resp, method, url, **kwargs):
+    async def _handle_retry_logic(self, resp: Any, method: str, url: str, **kwargs: Any) -> None:
         """Attempts to re-authenticate and retry the request once."""
         # 1. Check if it's a rate limit (unrecoverable)
         try:
@@ -399,10 +401,9 @@ class IGClient(Client):
         epic: str,
         direction: str,
         size: float,
-        *,
-        expiry: str = "-",
         currency: str = "GBP",
         force_open: bool = False,
+        expiry: str = "-",
         time_in_force: str = "FILL_OR_KILL",
         guaranteed_stop: bool = False,
     ) -> dict[str, Any]:
@@ -528,7 +529,7 @@ class IGClient(Client):
         prices = payload.get("prices") or []
         candles: list[Candle] = []
 
-        def mid(price_obj) -> float | None:
+        def mid(price_obj: Any) -> float | None:
             if not isinstance(price_obj, dict):
                 return None
             bid = price_obj.get("bid")

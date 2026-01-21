@@ -75,6 +75,7 @@ class ADX(Indicator):
         )
 
         # DM
+        assert self._prev_high is not None and self._prev_low is not None
         up_move = high - self._prev_high
         down_move = self._prev_low - low
 

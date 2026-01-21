@@ -12,10 +12,10 @@ log = logging.getLogger(__name__)
 
 # Optional import
 try:
-    from lightstreamer.client import LightstreamerClient, Subscription
+    from lightstreamer.client import LightstreamerClient, Subscription  # type: ignore[import-untyped]
 except Exception:  # pragma: no cover
-    LightstreamerClient = None  # type: ignore
-    Subscription = None  # type: ignore
+    LightstreamerClient = None
+    Subscription = None
 
 
 class Lightstreamer(Streamer):
@@ -42,7 +42,7 @@ class Lightstreamer(Streamer):
             except Exception:
                 log.exception("Lightstreamer disconnect failed")
 
-    async def run(self, strategy) -> None:
+    async def run(self, strategy: Any) -> None:
         if LightstreamerClient is None or Subscription is None:
             raise RuntimeError("Lightstreamer client library not available")
 
@@ -74,7 +74,7 @@ class Lightstreamer(Streamer):
             )
 
             class MarketListener:
-                def onItemUpdate(self, update):
+                def onItemUpdate(self, update: Any) -> None:
                     try:
                         bid_str = update.getValue("BID")
                         offer_str = update.getValue("OFFER")
@@ -103,13 +103,13 @@ class Lightstreamer(Streamer):
                     except Exception as e:
                         log.exception("Error processing market update: %s", e)
 
-                def onSubscriptionError(self, code, message):
+                def onSubscriptionError(self, code: Any, message: Any) -> None:
                     log.error("Market subscription error: %s - %s", code, message)
 
-                def onSubscription(self):
+                def onSubscription(self) -> None:
                     log.info("Market subscription active")
 
-                def onUnsubscription(self):
+                def onUnsubscription(self) -> None:
                     log.info("Market unsubscribed")
 
             market_sub.addListener(MarketListener())
@@ -124,9 +124,9 @@ class Lightstreamer(Streamer):
                     fields=chart_sub.get_fields(),
                 )
 
-                def make_chart_listener(sub):
+                def make_chart_listener(sub: ChartSubscription) -> Any:
                     class ChartListener:
-                        def onItemUpdate(self, update):
+                        def onItemUpdate(self, update: Any) -> None:
                             try:
                                 cons_end = update.getValue("CONS_END")
                                 if cons_end != "1":
@@ -175,13 +175,13 @@ class Lightstreamer(Streamer):
                             except Exception as e:
                                 log.exception("Error processing chart update: %s", e)
 
-                        def onSubscriptionError(self, code, message):
+                        def onSubscriptionError(self, code: Any, message: Any) -> None:
                             log.error("Chart subscription error for %s: %s - %s", sub.epic, code, message)
 
-                        def onSubscription(self):
+                        def onSubscription(self) -> None:
                             log.info("Chart subscription active for %s %s", sub.epic, sub.period)
 
-                        def onUnsubscription(self):
+                        def onUnsubscription(self) -> None:
                             log.info("Chart unsubscribed for %s %s", sub.epic, sub.period)
 
                     return ChartListener()
@@ -190,10 +190,10 @@ class Lightstreamer(Streamer):
                 subscriptions.append(ls_sub)
 
         class ConnectionListener:
-            def onStatusChange(self, status):
+            def onStatusChange(self, status: Any) -> None:
                 log.info("Lightstreamer connection status: %s", status)
 
-            def onServerError(self, code, message):
+            def onServerError(self, code: Any, message: Any) -> None:
                 log.error("Lightstreamer server error: %s - %s", code, message)
 
         ls_client.addListener(ConnectionListener())
@@ -229,7 +229,7 @@ class Lightstreamer(Streamer):
                     min_bar_s,
                 )
 
-        async def _heartbeat_monitor():
+        async def _heartbeat_monitor() -> None:
             while True:
                 await asyncio.sleep(self.heartbeat_sleep)
                 delta = (datetime.now(timezone.utc) - strategy.last_update).total_seconds()
@@ -242,7 +242,7 @@ class Lightstreamer(Streamer):
                 elif delta < self.heartbeat_sleep:
                     log.debug("❤  OK: Last update %.1fs ago", delta)
 
-        async def market_consumer():
+        async def market_consumer() -> None:
             while True:
                 payload = await market_queue.get()
                 try:
@@ -257,7 +257,7 @@ class Lightstreamer(Streamer):
                 except Exception:
                     log.exception("Unhandled exception in market_consumer for %s", payload.get("epic"))
                     
-        async def chart_consumer():
+        async def chart_consumer() -> None:
             while True:
                 payload = await chart_queue.get()
                 try:

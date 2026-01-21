@@ -67,9 +67,9 @@ class ChartSubscription(Subscription):
         ]
     """
     period: str
-    fields: list[str] = field(default=None)
-    
-    def __post_init__(self):
+    fields: list[str] | None = field(default=None)
+
+    def __post_init__(self) -> None:
         """Set default fields if not provided."""
         if self.fields is None:
             # Standard OHLCV fields plus metadata
@@ -98,4 +98,5 @@ class ChartSubscription(Subscription):
     
     def get_fields(self) -> list[str]:
         """Returns Lightstreamer fields to subscribe to."""
+        assert self.fields is not None  # Set in __post_init__
         return self.fields

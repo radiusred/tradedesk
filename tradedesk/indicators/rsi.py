@@ -62,6 +62,7 @@ class RSI(Indicator):
             return self._compute_rsi(self._avg_gain, self._avg_loss)
 
         # Wilder smoothing phase
+        assert self._avg_loss is not None  # Both set together in seeding phase
         self._avg_gain = (self._avg_gain * (self.period - 1) + gain) / self.period
         self._avg_loss = (self._avg_loss * (self.period - 1) + loss) / self.period
 

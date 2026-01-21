@@ -18,7 +18,7 @@ class OBV(Indicator):
       - Thereafter returns current OBV as float
     """
 
-    def __init__(self):
+    def __init__(self) -> None:
         self._prev_close: float | None = None
         self._obv: float = 0.0
 

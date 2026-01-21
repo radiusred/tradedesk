@@ -1,7 +1,7 @@
 import logging
 from dataclasses import dataclass
 from datetime import datetime
-from typing import Iterable
+from typing import Any, Iterable
 
 from tradedesk.marketdata import Candle, MarketData
 from tradedesk.providers.base import Streamer
@@ -51,7 +51,7 @@ class BacktestStreamer(Streamer):
     series, calling `strategy._handle_event(...)`.
     """
 
-    def __init__(self, client, candle_series: Iterable[CandleSeries], market_series: Iterable[MarketSeries]):
+    def __init__(self, client: Any, candle_series: Iterable[CandleSeries], market_series: Iterable[MarketSeries]) -> None:
         self._client = client
         self._candle_series = list(candle_series)
         self._market_series = list(market_series)
@@ -63,21 +63,21 @@ class BacktestStreamer(Streamer):
     async def disconnect(self) -> None:
         self._connected = False
 
-    async def run(self, strategy) -> None:
+    async def run(self, strategy: Any) -> None:
         await self.connect()
 
         stream: list[tuple[datetime, object]] = []
 
         # Candle events
-        for s in self._candle_series:
-            for c in s.candles:
+        for cseries in self._candle_series:
+            for c in cseries.candles:
                 ts = _parse_ts(c.timestamp)
                 self._client._set_current_timestamp(ts.isoformat())
-                stream.append((ts, CandleClose(epic=s.epic, period=s.period, candle=c)))
+                stream.append((ts, CandleClose(epic=cseries.epic, period=cseries.period, candle=c)))
 
         # Market events
-        for s in self._market_series:
-            for t in s.ticks:
+        for mseries in self._market_series:
+            for t in mseries.ticks:
                 ts = _parse_ts(t.timestamp)
                 self._client._set_current_timestamp(ts.isoformat())
                 stream.append((ts, t))
@@ -95,12 +95,12 @@ class BacktestStreamer(Streamer):
                     self._client._set_mark_price(event.epic, event.candle.close)
 
                 # Normalise to a stable ISO string with Z
-                s = event_ts.strip()
-                if s.endswith("Z"):
-                    ts_iso = s
+                ts_str = event_ts.strip()
+                if ts_str.endswith("Z"):
+                    ts_iso = ts_str
                 else:
                     # if already has +00:00 etc, keep it
-                    ts_iso = s.replace("+00:00", "Z")
+                    ts_iso = ts_str.replace("+00:00", "Z")
 
                 self._client._set_current_timestamp(ts_iso)
                 
