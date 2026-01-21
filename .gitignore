@@ -11,3 +11,5 @@ build
 dist/
 .vscode
 .local
+.mypy_cache
+.claude

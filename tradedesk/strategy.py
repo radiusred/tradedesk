@@ -298,8 +298,8 @@ class BaseStrategy(abc.ABC):
             await asyncio.Future()  # Wait forever
             return
         
-        last_prices = {epic: None for epic in market_epics}
-        
+        last_prices: dict[str, float | None] = {epic: None for epic in market_epics}
+
         while True:
             for epic in market_epics:
                 try:
@@ -307,12 +307,13 @@ class BaseStrategy(abc.ABC):
                     bid = float(snapshot["snapshot"]["bid"])
                     offer = float(snapshot["snapshot"]["offer"])
                     mid = (bid + offer) / 2
-                    
+
                     # Only notify on price changes
                     if last_prices[epic] != mid:
                         last_prices[epic] = mid
                         timestamp = datetime.now(timezone.utc).isoformat(timespec="seconds") + "Z"
-                        await self.on_price_update(epic, bid, offer, timestamp, snapshot)
+                        market_data = MarketData(epic=epic, bid=bid, offer=offer, timestamp=timestamp, raw=snapshot)
+                        await self.on_price_update(market_data)
                         
                 except Exception:
                     log.exception("Failed to fetch market snapshot for %s", epic)

@@ -9,7 +9,7 @@ class Indicator(abc.ABC):
     """Abstract base class for all technical indicators."""
 
     @abc.abstractmethod
-    def update(self, candle: Candle):
+    def update(self, candle: Candle) -> float | dict[str, float | None] | None:
         """Update indicator state with a new candle and return the latest value(s)."""
         raise NotImplementedError
 

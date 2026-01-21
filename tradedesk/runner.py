@@ -6,6 +6,7 @@ import asyncio
 import logging
 import sys
 from collections.abc import Callable
+from typing import Any
 
 from tradedesk.providers import Client
 from tradedesk.strategy import BaseStrategy
@@ -107,7 +108,7 @@ async def _run_strategies_async(strategy_instances: list[BaseStrategy], client: 
         # Drain tasks; swallow exceptions to avoid masking the original failure/cancel.
         await asyncio.gather(*tasks, return_exceptions=True)
 
-def _instantiate_strategies(client: Client, strategy_specs: list) -> list[BaseStrategy]:
+def _instantiate_strategies(client: Client, strategy_specs: list[Any]) -> list[BaseStrategy]:
     """
     Instantiate strategies.
 
@@ -132,7 +133,7 @@ def _instantiate_strategies(client: Client, strategy_specs: list) -> list[BaseSt
 
 async def _async_run_strategies(
     client: Client,
-    strategy_specs: list,
+    strategy_specs: list[Any],
     log_level: str | None = None,
     setup_logging: bool = True,
 ) -> None:
@@ -158,7 +159,7 @@ async def _async_run_strategies(
 
 async def _async_run_with_client_factory(
     client_factory: Callable[[], Client],
-    strategy_specs: list,
+    strategy_specs: list[Any],
     log_level: str | None = None,
     setup_logging: bool = True,
 ) -> None:
@@ -173,7 +174,7 @@ async def _async_run_with_client_factory(
 
 
 def run_strategies(
-    strategy_specs: list,
+    strategy_specs: list[Any],
     client_factory: Callable[[], Client],
     log_level: str | None = None,
     setup_logging: bool = True,
