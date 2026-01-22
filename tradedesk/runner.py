@@ -14,6 +14,7 @@ from tradedesk.strategy import BaseStrategy
 
 log = logging.getLogger(__name__)
 
+
 def configure_logging(level: str = "INFO", force: bool = False) -> None:
     """
     Configure root logger with console output.
@@ -57,7 +58,10 @@ def _epics_from_subscriptions(strategy: BaseStrategy) -> list[str]:
 
     return epics
 
-async def _run_strategies_async(strategy_instances: list[BaseStrategy], client: Client) -> None:
+
+async def _run_strategies_async(
+    strategy_instances: list[BaseStrategy], client: Client
+) -> None:
     """
     Run multiple strategies concurrently.
 
@@ -108,7 +112,10 @@ async def _run_strategies_async(strategy_instances: list[BaseStrategy], client: 
         # Drain tasks; swallow exceptions to avoid masking the original failure/cancel.
         await asyncio.gather(*tasks, return_exceptions=True)
 
-def _instantiate_strategies(client: Client, strategy_specs: list[Any]) -> list[BaseStrategy]:
+
+def _instantiate_strategies(
+    client: Client, strategy_specs: list[Any]
+) -> list[BaseStrategy]:
     """
     Instantiate strategies.
 
@@ -130,6 +137,7 @@ def _instantiate_strategies(client: Client, strategy_specs: list[Any]) -> list[B
         strategy_instances.append(instance)
 
     return strategy_instances
+
 
 async def _async_run_strategies(
     client: Client,

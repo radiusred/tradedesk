@@ -10,6 +10,7 @@ from tradedesk.marketdata import CandleClose
 
 log = logging.getLogger(__name__)
 
+
 def _parse_ts(ts: str) -> datetime:
     # Normalise common variants to something datetime.fromisoformat understands.
     # Accepts:
@@ -31,11 +32,13 @@ def _parse_ts(ts: str) -> datetime:
 
     return datetime.fromisoformat(s)
 
+
 @dataclass(frozen=True)
 class CandleSeries:
     epic: str
     period: str
     candles: list[Candle]
+
 
 @dataclass(frozen=True)
 class MarketSeries:
@@ -51,7 +54,12 @@ class BacktestStreamer(Streamer):
     series, calling `strategy._handle_event(...)`.
     """
 
-    def __init__(self, client: Any, candle_series: Iterable[CandleSeries], market_series: Iterable[MarketSeries]) -> None:
+    def __init__(
+        self,
+        client: Any,
+        candle_series: Iterable[CandleSeries],
+        market_series: Iterable[MarketSeries],
+    ) -> None:
         self._client = client
         self._candle_series = list(candle_series)
         self._market_series = list(market_series)
@@ -73,7 +81,12 @@ class BacktestStreamer(Streamer):
             for c in cseries.candles:
                 ts = _parse_ts(c.timestamp)
                 self._client._set_current_timestamp(ts.isoformat())
-                stream.append((ts, CandleClose(epic=cseries.epic, period=cseries.period, candle=c)))
+                stream.append(
+                    (
+                        ts,
+                        CandleClose(epic=cseries.epic, period=cseries.period, candle=c),
+                    )
+                )
 
         # Market events
         for mseries in self._market_series:
@@ -89,7 +102,9 @@ class BacktestStreamer(Streamer):
                 if isinstance(event, MarketData):
                     event_ts = event.timestamp
                     # Mark-to-market uses mid price by default
-                    self._client._set_mark_price(event.epic, (event.bid + event.offer) / 2)
+                    self._client._set_mark_price(
+                        event.epic, (event.bid + event.offer) / 2
+                    )
                 elif isinstance(event, CandleClose):
                     event_ts = event.candle.timestamp
                     self._client._set_mark_price(event.epic, event.candle.close)
@@ -103,7 +118,7 @@ class BacktestStreamer(Streamer):
                     ts_iso = ts_str.replace("+00:00", "Z")
 
                 self._client._set_current_timestamp(ts_iso)
-                
+
                 await strategy._handle_event(event)
         finally:
             await self.disconnect()

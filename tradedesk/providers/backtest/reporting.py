@@ -9,7 +9,9 @@ def compute_unrealised_pnl(client: BacktestClient) -> float:
     for epic, pos in client.positions.items():
         mark = client.get_mark_price(epic)
         if mark is None:
-            raise RuntimeError(f"No mark price available for {epic} (no data replayed yet)")
+            raise RuntimeError(
+                f"No mark price available for {epic} (no data replayed yet)"
+            )
 
         if pos.direction == "LONG":
             unreal += (mark - pos.entry_price) * pos.size
@@ -20,9 +22,11 @@ def compute_unrealised_pnl(client: BacktestClient) -> float:
 
     return float(unreal)
 
+
 def compute_equity(client: BacktestClient) -> float:
     """Equity = realised PnL + unrealised PnL."""
     return float(client.realised_pnl + compute_unrealised_pnl(client))
+
 
 @dataclass(frozen=True)
 class EquityPoint:

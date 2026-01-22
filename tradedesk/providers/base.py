@@ -9,8 +9,10 @@ we encapsulate streaming and implement backtesting.
 import abc
 from typing import Any, TYPE_CHECKING
 from tradedesk.marketdata import Candle
+
 if TYPE_CHECKING:
     from tradedesk.strategy import BaseStrategy
+
 
 class Streamer(abc.ABC):
     """Abstract base for a real-time (or replay) market data stream."""
@@ -24,7 +26,7 @@ class Streamer(abc.ABC):
     async def disconnect(self) -> None:
         """Tear down the underlying connection and unsubscribe."""
         raise NotImplementedError
-    
+
     @abc.abstractmethod
     async def run(self, strategy: "BaseStrategy") -> None:
         """Run the stream and dispatch events into the supplied strategy."""
@@ -49,7 +51,9 @@ class Client(abc.ABC):
         raise NotImplementedError
 
     @abc.abstractmethod
-    async def get_historical_candles(self, epic: str, period: str, num_points: int) -> list[Candle]:
+    async def get_historical_candles(
+        self, epic: str, period: str, num_points: int
+    ) -> list[Candle]:
         raise NotImplementedError
 
     @abc.abstractmethod

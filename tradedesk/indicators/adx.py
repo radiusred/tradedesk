@@ -129,7 +129,9 @@ class ADX(Indicator):
             return 0.0
         return 100.0 * abs(plus_di - minus_di) / denom
 
-    def _update_adx(self, dx: float, plus_di: float, minus_di: float) -> dict[str, float | None]:
+    def _update_adx(
+        self, dx: float, plus_di: float, minus_di: float
+    ) -> dict[str, float | None]:
         # Seed ADX with SMA of first `period` DX values
         if self._adx is None:
             self._dx_seed_sum += dx

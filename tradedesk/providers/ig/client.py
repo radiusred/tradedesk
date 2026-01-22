@@ -5,12 +5,12 @@ import time
 from typing import Any
 import aiohttp
 from decimal import Decimal, ROUND_DOWN
-from datetime import datetime, timezone
 from tradedesk.marketdata import Candle
 from tradedesk.providers import Client
 from tradedesk.providers.ig.settings import settings
 
 log = logging.getLogger(__name__)
+
 
 class IGClient(Client):
     """Thin wrapper around IG's REST API – handles auth & simple GET/POST."""
@@ -27,14 +27,18 @@ class IGClient(Client):
 
     def __init__(self) -> None:
         # Choose the correct base URL for the selected environment
-        self.base_url = self.DEMO_BASE if settings.ig_environment == "DEMO" else self.LIVE_BASE
-        self.ls_url   = self.DEMO_LS   if settings.ig_environment == "DEMO" else self.LIVE_LS
+        self.base_url = (
+            self.DEMO_BASE if settings.ig_environment == "DEMO" else self.LIVE_BASE
+        )
+        self.ls_url = (
+            self.DEMO_LS if settings.ig_environment == "DEMO" else self.LIVE_LS
+        )
 
         # VERSION 2 returns CST/X-SECURITY-TOKEN (works with Lightstreamer)
         # VERSION 3 returns OAuth tokens (doesn't work with Lightstreamer)
         # For demo with Lightstreamer support, use VERSION 2
-        self.api_version = "2" #if settings.ig_environment == "DEMO" else "3"
-        
+        self.api_version = "2"  # if settings.ig_environment == "DEMO" else "3"
+
         # Store headers for session creation
         self.headers = {
             "Accept": "application/json",
@@ -48,15 +52,15 @@ class IGClient(Client):
         self.oauth_access_token: str | None = None
         self.oauth_refresh_token: str | None = None
         self.oauth_expires_at: float = 0  # Unix timestamp
-        
+
         # Identity / Session info
         self.account_id: str | None = None
         self.client_id: str | None = None
-        
+
         # Lightstreamer authentication tokens (different from OAuth!)
         self.ls_cst: str | None = None
         self.ls_xst: str | None = None
-        
+
         # Rate limiting and concurrency control
         self.last_auth_attempt: float = 0
         self.min_auth_interval: float = 5.0  # Minimum 5 seconds between auth attempts
@@ -71,11 +75,11 @@ class IGClient(Client):
         """Async context manager entry."""
         await self.start()
         return self
-    
+
     async def __aexit__(self, exc_type: Any, exc_val: Any, exc_tb: Any) -> None:
         """Async context manager exit."""
         await self.close()
-    
+
     async def start(self) -> None:
         """Initialize the client and authenticate."""
         if self._session is None:
@@ -99,7 +103,7 @@ class IGClient(Client):
         async with self._auth_lock:
             # 1. Rate Limiting
             await self._enforce_rate_limit()
-            
+
             # 2. Perform Request
             resp_headers, resp_body = await self._perform_auth_request()
 
@@ -113,12 +117,15 @@ class IGClient(Client):
         """Wait if we are authenticating too frequently."""
         now = time.time()
         time_since_last = now - self.last_auth_attempt
-        
+
         if time_since_last < self.min_auth_interval:
             wait_time = self.min_auth_interval - time_since_last
-            log.debug("Rate limiting: waiting %.1f seconds before re-authentication", wait_time)
+            log.debug(
+                "Rate limiting: waiting %.1f seconds before re-authentication",
+                wait_time,
+            )
             await asyncio.sleep(wait_time)
-        
+
         self.last_auth_attempt = time.time()
 
     async def _perform_auth_request(self) -> tuple[dict[str, Any], dict[str, Any]]:
@@ -133,7 +140,7 @@ class IGClient(Client):
         }
 
         log.debug("POST %s – authenticating with IG (v%s)", url, self.api_version)
-        
+
         if not self._session:
             self._session = aiohttp.ClientSession(headers=self.headers)
 
@@ -142,13 +149,13 @@ class IGClient(Client):
                 # Handle non-200 responses
                 if resp.status != 200:
                     await self._handle_auth_error(resp)
-                
+
                 # Parse Success Body
                 try:
                     body = await resp.json()
                 except Exception:
                     body = {}
-                
+
                 return dict(resp.headers), body
 
         except aiohttp.ClientError as e:
@@ -219,18 +226,16 @@ class IGClient(Client):
         access_token = oauth_token.get("access_token")
 
         if not access_token:
-            # Fallback: Sometimes V3 endpoints might still return CST in headers? 
+            # Fallback: Sometimes V3 endpoints might still return CST in headers?
             # If so, we might need to fallback, but for now strict V3 expects OAuth.
             log.error("Missing OAuth token in V3 response: %s", body)
             raise RuntimeError("OAuth access_token not found in IG response.")
 
         # Store OAuth details
         await self._store_oauth_token(
-            oauth_token, 
-            body.get("accountId", ""), 
-            body.get("clientId", "")
+            oauth_token, body.get("accountId", ""), body.get("clientId", "")
         )
-        
+
         log.warning(
             "Authenticated (V3 OAuth) – Streaming NOT available. "
             "System will use REST polling."
@@ -245,22 +250,26 @@ class IGClient(Client):
     # ------------------------------------------------------------------
     # OAuth Management
     # ------------------------------------------------------------------
-    async def _store_oauth_token(self, oauth_token: dict[str, Any], account_id: str, client_id: str) -> None:
+    async def _store_oauth_token(
+        self, oauth_token: dict[str, Any], account_id: str, client_id: str
+    ) -> None:
         """Store OAuth credentials and calculate expiry time."""
         self.oauth_access_token = oauth_token["access_token"]
         self.oauth_refresh_token = oauth_token.get("refresh_token")
         self.account_id = account_id
         self.client_id = client_id
-        
+
         # Calculate expiry (buffer 5s)
         expires_in = int(oauth_token.get("expires_in", 30))
         self.oauth_expires_at = time.time() + expires_in - 5
-        
+
         # Apply Headers
-        self._apply_session_headers({
-            "Authorization": f"Bearer {self.oauth_access_token}",
-            "IG-ACCOUNT-ID": account_id
-        })
+        self._apply_session_headers(
+            {
+                "Authorization": f"Bearer {self.oauth_access_token}",
+                "IG-ACCOUNT-ID": account_id,
+            }
+        )
         self.uses_oauth = True
 
     def _is_token_valid(self) -> bool:
@@ -274,9 +283,12 @@ class IGClient(Client):
     # ------------------------------------------------------------------
     def get_streamer(self) -> Any:
         from tradedesk.providers.ig.streamer import Lightstreamer
+
         return Lightstreamer(self)
-    
-    async def _request(self, method: str, path: str, *, api_version: str | None = None, **kwargs: Any) -> dict[str, Any]:
+
+    async def _request(
+        self, method: str, path: str, *, api_version: str | None = None, **kwargs: Any
+    ) -> dict[str, Any]:
         url = f"{self.base_url}{path}"
 
         if not self._session:
@@ -297,9 +309,13 @@ class IGClient(Client):
             req_headers["VERSION"] = str(api_version)
 
         try:
-            async with self._session.request(method, url, headers=req_headers, **kwargs) as resp:
+            async with self._session.request(
+                method, url, headers=req_headers, **kwargs
+            ) as resp:
                 if resp.status in (401, 403):
-                    await self._handle_retry_logic(resp, method, url, headers=req_headers, **kwargs)
+                    await self._handle_retry_logic(
+                        resp, method, url, headers=req_headers, **kwargs
+                    )
 
                 if resp.status >= 400:
                     try:
@@ -307,8 +323,12 @@ class IGClient(Client):
                     except Exception:
                         err_body = await resp.text()
 
-                    log.error("HTTP %s for %s %s: %s", resp.status, method, url, err_body)
-                    raise RuntimeError(f"IG request failed: HTTP {resp.status}: {err_body}")
+                    log.error(
+                        "HTTP %s for %s %s: %s", resp.status, method, url, err_body
+                    )
+                    raise RuntimeError(
+                        f"IG request failed: HTTP {resp.status}: {err_body}"
+                    )
 
                 result: dict[str, Any] = await resp.json()
                 return result
@@ -317,7 +337,9 @@ class IGClient(Client):
             log.error("Request failed: %s %s - %s", method, url, e)
             raise
 
-    async def _handle_retry_logic(self, resp: Any, method: str, url: str, **kwargs: Any) -> None:
+    async def _handle_retry_logic(
+        self, resp: Any, method: str, url: str, **kwargs: Any
+    ) -> None:
         """Attempts to re-authenticate and retry the request once."""
         # 1. Check if it's a rate limit (unrecoverable)
         try:
@@ -333,10 +355,10 @@ class IGClient(Client):
 
         # 3. Retry
         # Note: In a robust system, we would return the new response here.
-        # However, due to the structure of the original _request wrapper, 
-        # we can just let the caller retry or recurse. 
+        # However, due to the structure of the original _request wrapper,
+        # we can just let the caller retry or recurse.
         # For this refactor, we just re-auth. The original code did a manual retry here.
-        pass 
+        pass
 
     def _period_to_rest_resolution(self, period: str) -> str:
         """
@@ -353,17 +375,15 @@ class IGClient(Client):
             "4HOUR": "HOUR_4",
             "DAY": "DAY",
             "WEEK": "WEEK",
-
-            # Allow passing IG formats through
+            # Allow passing additional IG formats through
             "MINUTE": "MINUTE",
             "MINUTE_5": "MINUTE_5",
             "MINUTE_15": "MINUTE_15",
             "MINUTE_30": "MINUTE_30",
-            "HOUR": "HOUR",
             "HOUR_4": "HOUR_4",
         }
         return mapping.get(p, p)
-    
+
     async def _get_accounts(self) -> dict[str, Any]:
         # /accounts is typically VERSION 1
         return await self._request("GET", "/accounts", api_version="1")
@@ -381,7 +401,9 @@ class IGClient(Client):
 
         payload = await self._get_accounts()
         accounts = payload.get("accounts") or []
-        current = next((a for a in accounts if a.get("accountId") == self.account_id), None)
+        current = next(
+            (a for a in accounts if a.get("accountId") == self.account_id), None
+        )
         self._account_type = (current or {}).get("accountType")
         return self._account_type
 
@@ -391,12 +413,14 @@ class IGClient(Client):
         Product semantics are driven by account type + payload fields (not URL path).
         """
         return "/positions/otc"
-    
+
     async def get_market_snapshot(self, epic: str) -> dict[str, Any]:
         """Return the latest market snapshot for the given EPIC."""
         return await self._request("GET", f"/markets/{epic}")
 
-    async def get_instrument_metadata(self, epic: str, *, force_refresh: bool = False) -> dict[str, Any]:
+    async def get_instrument_metadata(
+        self, epic: str, *, force_refresh: bool = False
+    ) -> dict[str, Any]:
         """
         Fetch and cache instrument metadata (dealing rules) for the given EPIC.
 
@@ -454,7 +478,10 @@ class IGClient(Client):
         if quantised != size:
             log.debug(
                 "Quantised size for %s: %.10f -> %.10f (step=%.10f)",
-                epic, size, quantised, step
+                epic,
+                size,
+                quantised,
+                step,
             )
 
         return quantised
@@ -483,7 +510,9 @@ class IGClient(Client):
         acct_type = (await self._ensure_account_type() or "").upper()
 
         eff_expiry = expiry
-        if acct_type == "SPREADBET" and (expiry is None or expiry.strip() == "-" or expiry.strip() == ""):
+        if acct_type == "SPREADBET" and (
+            expiry is None or expiry.strip() == "-" or expiry.strip() == ""
+        ):
             eff_expiry = "DFB"
 
         order: dict[str, Any] = {
@@ -523,7 +552,9 @@ class IGClient(Client):
 
         while True:
             try:
-                payload = await self._request("GET", f"/confirms/{deal_reference}", api_version="1")
+                payload = await self._request(
+                    "GET", f"/confirms/{deal_reference}", api_version="1"
+                )
                 status = (payload.get("dealStatus") or "").upper()
 
                 if status and status != "PENDING":
@@ -531,13 +562,14 @@ class IGClient(Client):
 
             except RuntimeError as e:
                 msg = str(e)
-                retryable = (
-                    ("HTTP 500" in msg)
-                    or ("HTTP 404" in msg and "error.confirms.deal-not-found" in msg)
+                retryable = ("HTTP 500" in msg) or (
+                    "HTTP 404" in msg and "error.confirms.deal-not-found" in msg
                 )
                 if retryable:
                     last_err = e
-                    log.warning("Transient error confirming deal %s: %s", deal_reference, msg)
+                    log.warning(
+                        "Transient error confirming deal %s: %s", deal_reference, msg
+                    )
                 else:
                     raise
 
@@ -546,11 +578,12 @@ class IGClient(Client):
                     raise TimeoutError(
                         f"Timed out waiting for deal confirm (last error: {last_err})"
                     ) from last_err
-                raise TimeoutError(f"Timed out waiting for deal confirm: {deal_reference}")
+                raise TimeoutError(
+                    f"Timed out waiting for deal confirm: {deal_reference}"
+                )
 
             await asyncio.sleep(poll_s)
 
-            
     async def place_market_order_confirmed(
         self,
         *,
@@ -577,11 +610,17 @@ class IGClient(Client):
         )
         deal_ref = res.get("dealReference")
         if not deal_ref:
-            raise RuntimeError(f"Expected dealReference from place_market_order, got: {res}")
+            raise RuntimeError(
+                f"Expected dealReference from place_market_order, got: {res}"
+            )
 
-        return await self.confirm_deal(deal_ref, timeout_s=confirm_timeout_s, poll_s=confirm_poll_s)
+        return await self.confirm_deal(
+            deal_ref, timeout_s=confirm_timeout_s, poll_s=confirm_poll_s
+        )
 
-    async def get_historical_candles(self, epic: str, period: str, num_points: int) -> list[Candle]:
+    async def get_historical_candles(
+        self, epic: str, period: str, num_points: int
+    ) -> list[Candle]:
         """
         Fetch the most recent `num_points` candles for (epic, period) via IG REST /prices.
 
@@ -591,7 +630,9 @@ class IGClient(Client):
             return []
 
         resolution = self._period_to_rest_resolution(period)
-        payload = await self._request("GET", f"/prices/{epic}/{resolution}/{num_points}")
+        payload = await self._request(
+            "GET", f"/prices/{epic}/{resolution}/{num_points}"
+        )
 
         prices = payload.get("prices") or []
         candles: list[Candle] = []

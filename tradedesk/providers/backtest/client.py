@@ -7,7 +7,11 @@ from pathlib import Path
 from tradedesk.marketdata import Candle
 from tradedesk.providers.base import Client
 from tradedesk.marketdata import MarketData
-from tradedesk.providers.backtest.streamer import BacktestStreamer, CandleSeries, MarketSeries
+from tradedesk.providers.backtest.streamer import (
+    BacktestStreamer,
+    CandleSeries,
+    MarketSeries,
+)
 
 
 @dataclass
@@ -39,7 +43,11 @@ class BacktestClient(Client):
 
     _deal_counter = itertools.count(1)
 
-    def __init__(self, candle_series: list[CandleSeries], market_series: list[MarketSeries] | None = None):
+    def __init__(
+        self,
+        candle_series: list[CandleSeries],
+        market_series: list[MarketSeries] | None = None,
+    ):
         self._candle_series = candle_series
         self._market_series = market_series or []
 
@@ -57,12 +65,14 @@ class BacktestClient(Client):
         self._current_timestamp: str | None = None
 
     @classmethod
-    def from_history(cls, history: dict[tuple[str, str], list[Candle]]) -> "BacktestClient":
+    def from_history(
+        cls, history: dict[tuple[str, str], list[Candle]]
+    ) -> "BacktestClient":
         series: list[CandleSeries] = []
         for (epic, period), candles in history.items():
             series.append(CandleSeries(epic=epic, period=period, candles=list(candles)))
         return cls(series, [])
-    
+
     @classmethod
     def from_market_csv(
         cls,
@@ -72,7 +82,6 @@ class BacktestClient(Client):
         delimiter: str = ",",
     ) -> "BacktestClient":
         return cls.from_market_csvs({epic: path}, delimiter=delimiter)
-
 
     @classmethod
     def from_market_csvs(
@@ -89,6 +98,7 @@ class BacktestClient(Client):
         - bid
         - offer
         """
+
         def norm(s: str) -> str:
             return s.strip().lower()
 
@@ -107,13 +117,25 @@ class BacktestClient(Client):
 
                 header_map = {norm(h): h for h in reader.fieldnames if h is not None}
 
-                ts_key = next((header_map[a] for a in ts_aliases if a in header_map), None)
+                ts_key = next(
+                    (header_map[a] for a in ts_aliases if a in header_map), None
+                )
                 bid_key = header_map.get("bid")
                 offer_key = header_map.get("offer")
 
-                missing = [name for name, k in [("timestamp", ts_key), ("bid", bid_key), ("offer", offer_key)] if k is None]
+                missing = [
+                    name
+                    for name, k in [
+                        ("timestamp", ts_key),
+                        ("bid", bid_key),
+                        ("offer", offer_key),
+                    ]
+                    if k is None
+                ]
                 if missing:
-                    raise ValueError(f"CSV missing required columns: {', '.join(missing)}")
+                    raise ValueError(
+                        f"CSV missing required columns: {', '.join(missing)}"
+                    )
 
                 assert ts_key and bid_key and offer_key
 
@@ -146,7 +168,6 @@ class BacktestClient(Client):
 
         # No candle history for tick-only backtest (for now)
         return cls(candle_series=[], market_series=market_series)
-
 
     @classmethod
     def from_csv(
@@ -216,7 +237,17 @@ class BacktestClient(Client):
             v_key = pick(volume_col, "volume")
             t_key = pick(tick_count_col, "tick_count")
 
-            missing = [name for name, k in [("timestamp", ts_key), ("open", o_key), ("high", h_key), ("low", l_key), ("close", c_key)] if k is None]
+            missing = [
+                name
+                for name, k in [
+                    ("timestamp", ts_key),
+                    ("open", o_key),
+                    ("high", h_key),
+                    ("low", l_key),
+                    ("close", c_key),
+                ]
+                if k is None
+            ]
             if missing:
                 raise ValueError(f"CSV missing required columns: {', '.join(missing)}")
 
@@ -269,7 +300,7 @@ class BacktestClient(Client):
 
     def get_streamer(self) -> Any:
         return BacktestStreamer(self, self._candle_series, self._market_series)
-    
+
     def _set_current_timestamp(self, ts: str) -> None:
         self._current_timestamp = ts
 
@@ -278,9 +309,11 @@ class BacktestClient(Client):
 
     def _get_mark_price(self, epic: str) -> float:
         if epic not in self._mark_price:
-            raise RuntimeError(f"No mark price available for {epic} (no data replayed yet)")
+            raise RuntimeError(
+                f"No mark price available for {epic} (no data replayed yet)"
+            )
         return self._mark_price[epic]
-    
+
     def get_mark_price(self, epic: str) -> float | None:
         return self._mark_price.get(epic)
 
@@ -289,7 +322,9 @@ class BacktestClient(Client):
         # Backtest uses mid-price; bid/offer equal for now.
         return {"snapshot": {"bid": price, "offer": price}}
 
-    async def get_historical_candles(self, epic: str, period: str, num_points: int) -> list[Candle]:
+    async def get_historical_candles(
+        self, epic: str, period: str, num_points: int
+    ) -> list[Candle]:
         if num_points <= 0:
             return []
         candles = self._history.get((epic, period), [])
@@ -316,9 +351,9 @@ class BacktestClient(Client):
         price = self._get_mark_price(epic)
         self.trades.append(
             Trade(
-                epic=epic, 
-                direction=direction, 
-                size=float(size), 
+                epic=epic,
+                direction=direction,
+                size=float(size),
                 price=price,
                 timestamp=self._current_timestamp,
             )
@@ -337,11 +372,15 @@ class BacktestClient(Client):
                 entry_price=price,
             )
         else:
-            same = (pos.direction == "LONG" and direction == "BUY") or (pos.direction == "SHORT" and direction == "SELL")
+            same = (pos.direction == "LONG" and direction == "BUY") or (
+                pos.direction == "SHORT" and direction == "SELL"
+            )
             if same:
                 # Increase position: weighted avg entry
                 new_size = pos.size + float(size)
-                pos.entry_price = (pos.entry_price * pos.size + price * float(size)) / new_size
+                pos.entry_price = (
+                    pos.entry_price * pos.size + price * float(size)
+                ) / new_size
                 pos.size = new_size
             else:
                 # Opposite direction: close (only supports full close or reduce; compute realised on reduced amount)

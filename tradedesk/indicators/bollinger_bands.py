@@ -1,4 +1,5 @@
 """Bollinger Bands indicator implementation."""
+
 import math
 from collections import deque
 

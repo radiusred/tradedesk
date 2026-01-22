@@ -10,7 +10,7 @@ from .base import Client, Streamer
 from ..marketdata import CandleClose
 
 __all__ = [
-    "Client", 
+    "Client",
     "Streamer",
     "MarketData",
     "CandleClose",

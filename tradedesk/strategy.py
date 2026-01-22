@@ -15,7 +15,6 @@ import abc
 import asyncio
 import logging
 from datetime import datetime, timezone
-from typing import Any
 from tradedesk.subscriptions import MarketSubscription, ChartSubscription
 from tradedesk.marketdata import Candle, ChartHistory, MarketData
 from tradedesk.indicators.base import Indicator
@@ -25,42 +24,47 @@ from tradedesk.marketdata import CandleClose
 
 log = logging.getLogger(__name__)
 
+
 # ----------------------------------------------------------------------
 # Abstract base class for all strategies.
 # ----------------------------------------------------------------------
 class BaseStrategy(abc.ABC):
     """
     Base class for all trading strategies.
-    
+
     Provides common infrastructure for market data streaming and processing.
     Subclasses implement trading logic by overriding on_price_update() and/or
     on_candle_update().
-    
+
     Example:
         class MyStrategy(BaseStrategy):
             SUBSCRIPTIONS = [
                 MarketSubscription("CS.D.GBPUSD.TODAY.IP"),
                 ChartSubscription("CS.D.GBPUSD.TODAY.IP", "5MINUTE"),
             ]
-            
+
             async def on_price_update(self, epic, bid, offer, timestamp, raw_data):
                 # Handle tick-level updates
                 pass
-            
+
             async def on_candle_update(self, epic, period, candle):
                 # Handle completed candles
                 wr = self.wr.update(candle)
                 if wr and wr < -80:
                     log.info("Oversold!")
     """
-    
+
     # Subclasses should define which data streams they want
     SUBSCRIPTIONS: list[MarketSubscription | ChartSubscription] = []
-    
+
     # Default polling interval when streamer is unavailable
     POLL_INTERVAL = 5  # seconds
-    
-    def __init__(self, client: Client, subscriptions: list[MarketSubscription | ChartSubscription] | None = None):
+
+    def __init__(
+        self,
+        client: Client,
+        subscriptions: list[MarketSubscription | ChartSubscription] | None = None,
+    ):
         """
         Initialize the strategy.
 
@@ -71,7 +75,11 @@ class BaseStrategy(abc.ABC):
             chart_history_length: Number of candles to retain per chart subscription.
         """
         self.client = client
-        self.subscriptions = list(subscriptions) if subscriptions is not None else list(self.SUBSCRIPTIONS)
+        self.subscriptions = (
+            list(subscriptions)
+            if subscriptions is not None
+            else list(self.SUBSCRIPTIONS)
+        )
 
         # Create chart history managers for each chart subscription
         self.charts: dict[tuple[str, str], ChartHistory] = {}
@@ -81,21 +89,23 @@ class BaseStrategy(abc.ABC):
         for sub in self.subscriptions:
             if isinstance(sub, ChartSubscription):
                 key = (sub.epic, sub.period)
-                self.charts[key] = ChartHistory(sub.epic, sub.period, 200) # max_chart_history
-        
+                self.charts[key] = ChartHistory(
+                    sub.epic, sub.period, 200
+                )  # max_chart_history
+
         # Initialize the watchdog timestamp
         self.last_update = datetime.now(timezone.utc)
         self.watchdog_threshold = 60  # seconds
-        
+
         if not self.subscriptions:
             log.warning(
                 "%s has no subscriptions defined. Set SUBSCRIPTIONS or set subscriptions in __init__.",
-                self.__class__.__name__
+                self.__class__.__name__,
             )
-    
+
     def _chart_key(self, sub: ChartSubscription) -> tuple[str, str]:
         return (sub.epic, sub.period)
-    
+
     def register_indicator(self, sub: ChartSubscription, indicator: Indicator) -> None:
         """
         Register an indicator against a specific chart subscription.
@@ -108,7 +118,7 @@ class BaseStrategy(abc.ABC):
 
     def warmup_enabled(self) -> bool:
         return True
-    
+
     async def warmup(self) -> None:
         """
         Provider-neutral warmup entrypoint.
@@ -127,19 +137,19 @@ class BaseStrategy(abc.ABC):
         """
         if not self.warmup_enabled():
             return
-        
+
         plan = self.chart_warmup_plan()
         log.debug("Warmup plan: %s", plan)
 
         if not any(w > 0 for w in plan.values()):
             log.debug("No warmup required (no indicators registered)")
             return
-        
+
         get_hist = getattr(self.client, "get_historical_candles", None)
         if not callable(get_hist):
             log.debug("Client does not support historical candles; skipping warmup")
             return
-        
+
         history: dict[tuple[str, str], list[Candle]] = {}
 
         for (epic, period), warmup in plan.items():
@@ -147,7 +157,12 @@ class BaseStrategy(abc.ABC):
                 continue
             try:
                 candles = await get_hist(epic, period, warmup)
-                log.debug("Warmup fetched %d candles for %s %s", len(candles or []), epic, period)
+                log.debug(
+                    "Warmup fetched %d candles for %s %s",
+                    len(candles or []),
+                    epic,
+                    period,
+                )
                 history[(epic, period)] = candles or []
             except Exception:
                 log.exception(
@@ -157,7 +172,7 @@ class BaseStrategy(abc.ABC):
                 )
 
         self.warmup_from_history(history)
-            
+
     def warmup_from_history(self, history: dict[tuple[str, str], list[Candle]]) -> None:
         """
         Warm up chart histories and registered indicators from supplied historical candles.
@@ -197,7 +212,7 @@ class BaseStrategy(abc.ABC):
             plan[key] = self.required_warmup(sub)
 
         return plan
-    
+
     def required_warmup(self, sub: ChartSubscription) -> int:
         """
         Return the number of completed candles required to warm up all registered
@@ -206,7 +221,7 @@ class BaseStrategy(abc.ABC):
         key = self._chart_key(sub)
         indicators = self._chart_indicators.get(key, [])
         return max((ind.warmup_periods() for ind in indicators), default=0)
-    
+
     def prime_chart(self, sub: ChartSubscription, candles: list[Candle]) -> None:
         """
         Prime chart history and registered indicators with historical candles.
@@ -234,15 +249,15 @@ class BaseStrategy(abc.ABC):
     async def on_price_update(self, market_data: MarketData) -> None:
         """
         Called whenever a price update is received for a subscribed MARKET.
-        
-        This is where you implement tick-level trading logic for market subscriptions.        
+
+        This is where you implement tick-level trading logic for market subscriptions.
         """
         pass
-    
+
     async def on_candle_close(self, candle_close: CandleClose) -> None:
         """
         Called when a candle completes for a subscribed CHART.
-        
+
         Default implementation stores candle in chart history.
         Override to implement your candle-based trading logic.
         """
@@ -254,7 +269,7 @@ class BaseStrategy(abc.ABC):
     async def run(self) -> None:
         """
         Start the strategy; runs until cancelled.
-        
+
         Note: This method is typically called by the runner, not directly.
         The runner orchestrates multiple strategies with a shared connection.
         """
@@ -265,7 +280,7 @@ class BaseStrategy(abc.ABC):
                 sub_display.append(f"MARKET:{sub.epic}")
             elif isinstance(sub, ChartSubscription):
                 sub_display.append(f"CHART:{sub.epic}:{sub.period}")
-        
+
         log.info("%s started for %s", self.__class__.__name__, ", ".join(sub_display))
 
         try:
@@ -279,25 +294,26 @@ class BaseStrategy(abc.ABC):
         else:
             log.info("Falling back to polling mode (Lightstreamer not available)")
             await self._run_polling()
-    
+
     async def _run_polling(self) -> None:
         """
         Fallback polling mode - fetches market snapshots at regular intervals.
         Used when Lightstreamer is unavailable (typically in tests).
-        
+
         Note: Only polls MARKET subscriptions, not CHART subscriptions.
         """
         # Only poll market subscriptions
         market_epics = [
-            sub.epic for sub in self.subscriptions 
+            sub.epic
+            for sub in self.subscriptions
             if isinstance(sub, MarketSubscription)
         ]
-        
+
         if not market_epics:
             log.warning("No market subscriptions to poll")
             await asyncio.Future()  # Wait forever
             return
-        
+
         last_prices: dict[str, float | None] = {epic: None for epic in market_epics}
 
         while True:
@@ -311,19 +327,28 @@ class BaseStrategy(abc.ABC):
                     # Only notify on price changes
                     if last_prices[epic] != mid:
                         last_prices[epic] = mid
-                        timestamp = datetime.now(timezone.utc).isoformat(timespec="seconds") + "Z"
-                        market_data = MarketData(epic=epic, bid=bid, offer=offer, timestamp=timestamp, raw=snapshot)
+                        timestamp = (
+                            datetime.now(timezone.utc).isoformat(timespec="seconds")
+                            + "Z"
+                        )
+                        market_data = MarketData(
+                            epic=epic,
+                            bid=bid,
+                            offer=offer,
+                            timestamp=timestamp,
+                            raw=snapshot,
+                        )
                         await self.on_price_update(market_data)
-                        
+
                 except Exception:
                     log.exception("Failed to fetch market snapshot for %s", epic)
-            
+
             await asyncio.sleep(self.POLL_INTERVAL)
 
     async def _run_streaming(self) -> None:
         streamer = self.client.get_streamer()
         await streamer.run(self)
-    
+
     async def _handle_event(self, event: MarketData | CandleClose) -> None:
         """
         Internal event dispatcher.
@@ -336,10 +361,10 @@ class BaseStrategy(abc.ABC):
 
         if isinstance(event, MarketData):
             await self.on_price_update(event)
-            
+
         elif isinstance(event, CandleClose):
             await self.on_candle_close(event)
-            
+
         else:
             # Defensive: should never happen unless someone extends events incorrectly.
             raise TypeError(f"Unsupported event type: {type(event)!r}")

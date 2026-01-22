@@ -46,7 +46,10 @@ class Lightstreamer(Streamer):
         if LightstreamerClient is None or Subscription is None:
             raise RuntimeError("Lightstreamer client library not available")
 
-        log.info("Starting Lightstreamer streaming for %s subscriptions", len(strategy.subscriptions))
+        log.info(
+            "Starting Lightstreamer streaming for %s subscriptions",
+            len(strategy.subscriptions),
+        )
 
         market_queue: asyncio.Queue[dict[str, Any]] = asyncio.Queue()
         chart_queue: asyncio.Queue[dict[str, Any]] = asyncio.Queue()
@@ -55,13 +58,25 @@ class Lightstreamer(Streamer):
         ls_client = LightstreamerClient(self.client.ls_url, "DEFAULT")
         self._ls_client = ls_client
 
-        ls_client.connectionDetails.setUser(self.client.client_id or self.client.account_id or "")
-        ls_client.connectionDetails.setPassword(f"CST-{self.client.ls_cst}|XST-{self.client.ls_xst}")
+        ls_client.connectionDetails.setUser(
+            self.client.client_id or self.client.account_id or ""
+        )
+        ls_client.connectionDetails.setPassword(
+            f"CST-{self.client.ls_cst}|XST-{self.client.ls_xst}"
+        )
 
-        log.info("LS connecting to %s with clientId %s", self.client.ls_url, self.client.client_id)
+        log.info(
+            "LS connecting to %s with clientId %s",
+            self.client.ls_url,
+            self.client.client_id,
+        )
 
-        market_subs = [s for s in strategy.subscriptions if isinstance(s, MarketSubscription)]
-        chart_subs = [s for s in strategy.subscriptions if isinstance(s, ChartSubscription)]
+        market_subs = [
+            s for s in strategy.subscriptions if isinstance(s, MarketSubscription)
+        ]
+        chart_subs = [
+            s for s in strategy.subscriptions if isinstance(s, ChartSubscription)
+        ]
 
         subscriptions = []
 
@@ -83,11 +98,18 @@ class Lightstreamer(Streamer):
                             return
 
                         item_name = update.getItemName()
-                        epic = item_name.split(":", 1)[1] if ":" in item_name else item_name
+                        epic = (
+                            item_name.split(":", 1)[1]
+                            if ":" in item_name
+                            else item_name
+                        )
 
                         data = {
                             "type": "market",
-                            "timestamp": datetime.now(timezone.utc).isoformat(timespec="seconds") + "Z",
+                            "timestamp": datetime.now(timezone.utc).isoformat(
+                                timespec="seconds"
+                            )
+                            + "Z",
                             "epic": epic,
                             "bid": float(bid_str),
                             "offer": float(offer_str),
@@ -145,9 +167,18 @@ class Lightstreamer(Streamer):
                                 if not all([ofr_close, bid_close]):
                                     return
 
-                                open_price = (float(ofr_open or ofr_close) + float(bid_open or bid_close)) / 2
-                                high_price = (float(ofr_high or ofr_close) + float(bid_high or bid_close)) / 2
-                                low_price = (float(ofr_low or ofr_close) + float(bid_low or bid_close)) / 2
+                                open_price = (
+                                    float(ofr_open or ofr_close)
+                                    + float(bid_open or bid_close)
+                                ) / 2
+                                high_price = (
+                                    float(ofr_high or ofr_close)
+                                    + float(bid_high or bid_close)
+                                ) / 2
+                                low_price = (
+                                    float(ofr_low or ofr_close)
+                                    + float(bid_low or bid_close)
+                                ) / 2
                                 close_price = (float(ofr_close) + float(bid_close)) / 2
 
                                 ltv = update.getValue("LTV")
@@ -161,7 +192,8 @@ class Lightstreamer(Streamer):
                                     "epic": sub.epic,
                                     "period": sub.period,
                                     "candle": {
-                                        "timestamp": update.getValue("UTM") or datetime.now(timezone.utc).isoformat(),
+                                        "timestamp": update.getValue("UTM")
+                                        or datetime.now(timezone.utc).isoformat(),
                                         "open": open_price,
                                         "high": high_price,
                                         "low": low_price,
@@ -176,13 +208,24 @@ class Lightstreamer(Streamer):
                                 log.exception("Error processing chart update: %s", e)
 
                         def onSubscriptionError(self, code: Any, message: Any) -> None:
-                            log.error("Chart subscription error for %s: %s - %s", sub.epic, code, message)
+                            log.error(
+                                "Chart subscription error for %s: %s - %s",
+                                sub.epic,
+                                code,
+                                message,
+                            )
 
                         def onSubscription(self) -> None:
-                            log.info("Chart subscription active for %s %s", sub.epic, sub.period)
+                            log.info(
+                                "Chart subscription active for %s %s",
+                                sub.epic,
+                                sub.period,
+                            )
 
                         def onUnsubscription(self) -> None:
-                            log.info("Chart unsubscribed for %s %s", sub.epic, sub.period)
+                            log.info(
+                                "Chart unsubscribed for %s %s", sub.epic, sub.period
+                            )
 
                     return ChartListener()
 
@@ -232,7 +275,9 @@ class Lightstreamer(Streamer):
         async def _heartbeat_monitor() -> None:
             while True:
                 await asyncio.sleep(self.heartbeat_sleep)
-                delta = (datetime.now(timezone.utc) - strategy.last_update).total_seconds()
+                delta = (
+                    datetime.now(timezone.utc) - strategy.last_update
+                ).total_seconds()
                 if delta > strategy.watchdog_threshold:
                     log.warning(
                         "❤  Heartbeat Alert: no updates for %s in %.1fs. Connection may be stale.",
@@ -255,8 +300,11 @@ class Lightstreamer(Streamer):
                     )
                     await strategy._handle_event(event)
                 except Exception:
-                    log.exception("Unhandled exception in market_consumer for %s", payload.get("epic"))
-                    
+                    log.exception(
+                        "Unhandled exception in market_consumer for %s",
+                        payload.get("epic"),
+                    )
+
         async def chart_consumer() -> None:
             while True:
                 payload = await chart_queue.get()
@@ -287,7 +335,9 @@ class Lightstreamer(Streamer):
         try:
             await asyncio.Future()
         except asyncio.CancelledError:
-            log.info("%s cancelled – cleaning up Lightstreamer", strategy.__class__.__name__)
+            log.info(
+                "%s cancelled – cleaning up Lightstreamer", strategy.__class__.__name__
+            )
         finally:
             for task in tasks:
                 task.cancel()
