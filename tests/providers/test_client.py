@@ -143,3 +143,100 @@ class TestIGClient:
                 payload = await client.confirm_deal("REF123", timeout_s=1.0, poll_s=0.0)
                 assert payload["dealStatus"] == "ACCEPTED"
                 assert payload["dealId"] == "D1"
+
+    @pytest.mark.asyncio
+    async def test_get_instrument_metadata_caches_results(self, mock_aiohttp_session):
+        """Test that get_instrument_metadata caches results and doesn't refetch unnecessarily."""
+        mock_response = MagicMock()
+        mock_response.status = 200
+        mock_response.json = AsyncMock(return_value={
+            "dealingRules": {
+                "minDealSize": {"unit": "POINTS", "value": 0.5},
+                "minStepDistance": {"unit": "POINTS", "value": 0.1},
+            },
+            "instrument": {"epic": "CS.D.EURUSD.TODAY.IP"},
+            "snapshot": {"bid": 1.1, "offer": 1.1001},
+        })
+        mock_response.__aenter__ = AsyncMock(return_value=mock_response)
+        mock_response.__aexit__ = AsyncMock(return_value=None)
+
+        mock_aiohttp_session.request.return_value = mock_response
+
+        with patch("aiohttp.ClientSession", return_value=mock_aiohttp_session):
+            client = IGClient()
+            client._session = mock_aiohttp_session
+
+            # First call should fetch from API
+            metadata1 = await client.get_instrument_metadata("CS.D.EURUSD.TODAY.IP")
+            assert metadata1["dealingRules"]["minStepDistance"]["value"] == 0.1
+            assert mock_aiohttp_session.request.call_count == 1
+
+            # Second call should use cache
+            metadata2 = await client.get_instrument_metadata("CS.D.EURUSD.TODAY.IP")
+            assert metadata2 == metadata1
+            assert mock_aiohttp_session.request.call_count == 1  # No additional call
+
+            # Force refresh should fetch again
+            metadata3 = await client.get_instrument_metadata("CS.D.EURUSD.TODAY.IP", force_refresh=True)
+            assert metadata3["dealingRules"]["minStepDistance"]["value"] == 0.1
+            assert mock_aiohttp_session.request.call_count == 2
+
+    @pytest.mark.asyncio
+    async def test_quantise_size_rounds_down_to_step(self, mock_aiohttp_session):
+        """Test that quantise_size properly rounds down to the instrument's step size."""
+        with patch("aiohttp.ClientSession", return_value=mock_aiohttp_session):
+            client = IGClient()
+
+            # Populate cache directly (simulating a prior get_instrument_metadata call)
+            client._instrument_metadata["CS.D.EURUSD.TODAY.IP"] = {
+                "dealingRules": {
+                    "minStepDistance": {"value": 0.5}
+                }
+            }
+
+            # Test various sizes
+            assert client.quantise_size("CS.D.EURUSD.TODAY.IP", 1.0) == 1.0
+            assert client.quantise_size("CS.D.EURUSD.TODAY.IP", 1.2) == 1.0
+            assert client.quantise_size("CS.D.EURUSD.TODAY.IP", 1.5) == 1.5
+            assert client.quantise_size("CS.D.EURUSD.TODAY.IP", 1.759110721932789) == 1.5
+            assert client.quantise_size("CS.D.EURUSD.TODAY.IP", 2.3) == 2.0
+            assert client.quantise_size("CS.D.EURUSD.TODAY.IP", 2.5) == 2.5
+
+    @pytest.mark.asyncio
+    async def test_quantise_size_with_decimal_step(self, mock_aiohttp_session):
+        """Test quantise_size with a smaller decimal step size."""
+        with patch("aiohttp.ClientSession", return_value=mock_aiohttp_session):
+            client = IGClient()
+
+            client._instrument_metadata["IX.D.DOW.DAILY.IP"] = {
+                "dealingRules": {
+                    "minStepDistance": {"value": 0.1}
+                }
+            }
+
+            assert client.quantise_size("IX.D.DOW.DAILY.IP", 1.759110721932789) == 1.7
+            assert client.quantise_size("IX.D.DOW.DAILY.IP", 2.35) == 2.3
+            assert client.quantise_size("IX.D.DOW.DAILY.IP", 0.05) == 0.0
+
+    @pytest.mark.asyncio
+    async def test_quantise_size_no_step_returns_original(self, mock_aiohttp_session):
+        """Test that quantise_size returns original size when no step is defined."""
+        with patch("aiohttp.ClientSession", return_value=mock_aiohttp_session):
+            client = IGClient()
+
+            # No minStepDistance defined
+            client._instrument_metadata["TEST.EPIC"] = {
+                "dealingRules": {}
+            }
+
+            size = 1.759110721932789
+            assert client.quantise_size("TEST.EPIC", size) == size
+
+    @pytest.mark.asyncio
+    async def test_quantise_size_raises_without_metadata(self, mock_aiohttp_session):
+        """Test that quantise_size raises RuntimeError if metadata not loaded."""
+        with patch("aiohttp.ClientSession", return_value=mock_aiohttp_session):
+            client = IGClient()
+
+            with pytest.raises(RuntimeError, match="Instrument metadata not loaded"):
+                client.quantise_size("UNKNOWN.EPIC", 1.0)

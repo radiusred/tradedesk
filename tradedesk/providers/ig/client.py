@@ -4,6 +4,7 @@ import logging
 import time
 from typing import Any
 import aiohttp
+from decimal import Decimal, ROUND_DOWN
 from datetime import datetime, timezone
 from tradedesk.marketdata import Candle
 from tradedesk.providers import Client
@@ -62,6 +63,9 @@ class IGClient(Client):
         self._auth_lock = asyncio.Lock()  # Prevent concurrent authentication
         self._session: aiohttp.ClientSession | None = None
         self._account_type: str | None = None
+
+        # Instrument metadata cache: epic -> dealing rules
+        self._instrument_metadata: dict[str, dict[str, Any]] = {}
 
     async def __aenter__(self) -> "IGClient":
         """Async context manager entry."""
@@ -391,6 +395,69 @@ class IGClient(Client):
     async def get_market_snapshot(self, epic: str) -> dict[str, Any]:
         """Return the latest market snapshot for the given EPIC."""
         return await self._request("GET", f"/markets/{epic}")
+
+    async def get_instrument_metadata(self, epic: str, *, force_refresh: bool = False) -> dict[str, Any]:
+        """
+        Fetch and cache instrument metadata (dealing rules) for the given EPIC.
+
+        Returns the full market details response which includes:
+        - dealingRules: minDealSize, minStepDistance, etc.
+        - instrument: epic, expiry, type, etc.
+        - snapshot: current prices
+
+        Results are cached per-epic unless force_refresh=True.
+        """
+        if not force_refresh and epic in self._instrument_metadata:
+            return self._instrument_metadata[epic]
+
+        metadata = await self._request("GET", f"/markets/{epic}")
+        self._instrument_metadata[epic] = metadata
+        return metadata
+
+    def quantise_size(self, epic: str, size: float) -> float:
+        """
+        Quantise the position size according to the instrument's minStepDistance.
+
+        This method requires that get_instrument_metadata() has been called for
+        this epic at least once (typically during strategy warmup/initialization).
+
+        Args:
+            epic: The instrument epic
+            size: The desired position size
+
+        Returns:
+            The quantised size rounded down to the nearest valid step
+
+        Raises:
+            RuntimeError: If instrument metadata has not been fetched for this epic
+        """
+        if epic not in self._instrument_metadata:
+            raise RuntimeError(
+                f"Instrument metadata not loaded for {epic}. "
+                f"Call get_instrument_metadata('{epic}') first."
+            )
+
+        metadata = self._instrument_metadata[epic]
+        dealing_rules = metadata.get("dealingRules", {})
+        min_step = dealing_rules.get("minStepDistance", {})
+        step_value = min_step.get("value")
+
+        # If no step size defined, return the original size
+        if step_value is None or float(step_value) <= 0:
+            return float(size)
+
+        step = float(step_value)
+        s = Decimal(str(size))
+        q = Decimal(str(step))
+        quantised = float((s / q).to_integral_value(rounding=ROUND_DOWN) * q)
+
+        if quantised != size:
+            log.debug(
+                "Quantised size for %s: %.10f -> %.10f (step=%.10f)",
+                epic, size, quantised, step
+            )
+
+        return quantised
 
     async def get_price_ticks(self, epic: str) -> dict[str, Any]:
         """Convenient shortcut to the "prices" endpoint."""
