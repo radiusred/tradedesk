@@ -79,6 +79,7 @@ Backward compatibility is **not required** unless explicitly stated.
 * No `from __future__ import ...`
 * Prefer clarity and correctness over abstraction
 * Avoid premature generalisation
+* Code should meet `ruff check` and `mypy --strict` requirements
 
 When proposing code:
 

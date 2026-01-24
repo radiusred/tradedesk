@@ -322,10 +322,6 @@ class IGClient(Client):
                         err_body = await resp.json()
                     except Exception:
                         err_body = await resp.text()
-
-                    log.error(
-                        "HTTP %s for %s %s: %s", resp.status, method, url, err_body
-                    )
                     raise RuntimeError(
                         f"IG request failed: HTTP {resp.status}: {err_body}"
                     )
@@ -434,13 +430,16 @@ class IGClient(Client):
         if not force_refresh and epic in self._instrument_metadata:
             return self._instrument_metadata[epic]
 
-        metadata = await self._request("GET", f"/markets/{epic}")
+        metadata = await self.get_market_snapshot(epic)
         self._instrument_metadata[epic] = metadata
         return metadata
 
-    def quantise_size(self, epic: str, size: float) -> float:
+    async def quantise_size(self, epic: str, size: float) -> float:
         """
-        Quantise the position size according to the instrument's minStepDistance.
+        Quantise the position size according to the instrument's dealing rules.
+
+        The step size is inferred from the precision of minDealSize, as IG's
+        minStepDistance doesn't directly map to position size units.
 
         This method requires that get_instrument_metadata() has been called for
         this epic at least once (typically during strategy warmup/initialization).
@@ -451,37 +450,45 @@ class IGClient(Client):
 
         Returns:
             The quantised size rounded down to the nearest valid step
-
-        Raises:
-            RuntimeError: If instrument metadata has not been fetched for this epic
         """
-        if epic not in self._instrument_metadata:
-            raise RuntimeError(
-                f"Instrument metadata not loaded for {epic}. "
-                f"Call get_instrument_metadata('{epic}') first."
-            )
 
-        metadata = self._instrument_metadata[epic]
+        metadata = await self.get_instrument_metadata(epic)
         dealing_rules = metadata.get("dealingRules", {})
-        min_step = dealing_rules.get("minStepDistance", {})
-        step_value = min_step.get("value")
+        min_value = dealing_rules.get("minDealSize", {}).get("value")
 
-        # If no step size defined, return the original size
-        if step_value is None or float(step_value) <= 0:
+        # If no minimum deal size defined, return the original size
+        if min_value is None:
             return float(size)
 
-        step = float(step_value)
+        # Infer step size from the decimal places in minDealSize
+        # e.g., 0.04 (2 decimals) -> step = 0.01
+        #       1    (0 decimals) -> step = 1
+        # Use string representation to count decimal places consistently
+        min_str = str(min_value)
+        if '.' in min_str:
+            # Count digits after decimal point
+            decimal_places = len(min_str.split('.')[1])
+        else:
+            # No decimal point, step = 1
+            decimal_places = 0
+
+        step = Decimal(10) ** -decimal_places
+
         s = Decimal(str(size))
-        q = Decimal(str(step))
-        quantised = float((s / q).to_integral_value(rounding=ROUND_DOWN) * q)
+        quantised = float((s / step).to_integral_value(rounding=ROUND_DOWN) * step)
+
+        # Ensure quantised size is not below minimum deal size
+        if quantised < float(min_value):
+            quantised = float(min_value)
 
         if quantised != size:
             log.debug(
-                "Quantised size for %s: %.10f -> %.10f (step=%.10f)",
+                "Quantised size for %s: %.10f -> %.10f (step=%.10f, min=%.10f)",
                 epic,
                 size,
                 quantised,
-                step,
+                float(step),
+                float(min_value),
             )
 
         return quantised
@@ -530,6 +537,7 @@ class IGClient(Client):
 
         # Dealing endpoints are generally VERSION 1 (more consistent across IG)
         path = await self._dealing_path_for_current_account()
+        log.info("Placing market order: %s, %s, %s", epic, size, direction)
         return await self._request("POST", path, json=order, api_version="1")
 
     async def confirm_deal(
@@ -558,6 +566,7 @@ class IGClient(Client):
                 status = (payload.get("dealStatus") or "").upper()
 
                 if status and status != "PENDING":
+                    log.info("Order %s confirmed with status: %s", deal_reference, status)
                     return payload
 
             except RuntimeError as e:
@@ -652,16 +661,16 @@ class IGClient(Client):
                 continue
             timestamp = ts if ts.endswith("Z") else ts + "Z"
 
-            o = mid(p.get("openPrice"))
-            h = mid(p.get("highPrice"))
-            l = mid(p.get("lowPrice"))
-            c = mid(p.get("closePrice"))
-            if c is None:
+            open = mid(p.get("openPrice"))
+            high = mid(p.get("highPrice"))
+            low = mid(p.get("lowPrice"))
+            close = mid(p.get("closePrice"))
+            if close is None:
                 continue
 
-            open_p = o if o is not None else c
-            high_p = h if h is not None else c
-            low_p = l if l is not None else c
+            open_p = open if open is not None else close
+            high_p = high if high is not None else close
+            low_p = low if low is not None else close
 
             volume = float(p.get("lastTradedVolume") or 0.0)
 
@@ -671,7 +680,7 @@ class IGClient(Client):
                     open=open_p,
                     high=high_p,
                     low=low_p,
-                    close=c,
+                    close=close,
                     volume=volume,
                     tick_count=0,
                 )
