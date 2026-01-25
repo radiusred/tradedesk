@@ -39,7 +39,7 @@ from .runner import run_strategies
 from .subscriptions import MarketSubscription, ChartSubscription
 from .marketdata import MarketData, Candle, CandleClose, ChartHistory
 
-__version__ = "0.1.0"
+__version__ = "0.2.0"
 
 __all__ = [
     "__version__",
