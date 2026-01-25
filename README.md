@@ -1,6 +1,7 @@
 # tradedesk
 
 ![CI Build](https://github.com/radiusred/tradedesk/actions/workflows/ci.yml/badge.svg)
+[![PyPI Version](https://img.shields.io/pypi/v/tradedesk?label=PyPI)](https://pypi.python.org/pypi/tradedesk)
 
 ## What tradedesk is
 

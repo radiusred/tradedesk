@@ -30,6 +30,9 @@ dependencies = [
 
 [project.optional-dependencies]
 dev = [
+    "pre-commit>=4.5",
+    "mypy>=1.19",
+    "ruff>=0.14",
     "pytest>=8.0",
     "responses>=0.25",
     "pytest-asyncio>=0.23",
