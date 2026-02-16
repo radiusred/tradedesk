@@ -5,10 +5,7 @@ Internal representation: UTC-aware ``datetime``.
 Milliseconds-since-epoch used only at I/O boundaries (IG API, CandleAggregator).
 """
 
-from dataclasses import replace
 from datetime import datetime, timezone
-
-from tradedesk.marketdata import Candle
 
 
 # ---------------------------------------------------------------------------
@@ -68,37 +65,3 @@ def ms_to_iso(ms: int) -> str:
 def now_utc_iso() -> str:
     """Current UTC time as an ISO string."""
     return datetime.now(timezone.utc).isoformat()
-
-
-# ---------------------------------------------------------------------------
-# Candle timestamp helpers
-# ---------------------------------------------------------------------------
-
-
-def candle_with_ms_timestamp(candle: Candle) -> Candle:
-    """Return *candle* with its timestamp normalised to int milliseconds.
-
-    Used at the boundary with :class:`CandleAggregator` which expects
-    millisecond-int timestamps (IG streaming format).
-    """
-    ts = candle.timestamp
-    if isinstance(ts, (int, float)):
-        return replace(candle, timestamp=int(ts))
-    return replace(candle, timestamp=iso_to_ms(str(ts)))  # type: ignore[arg-type]
-
-
-def candle_with_iso_timestamp(candle: Candle) -> Candle:
-    """Return *candle* with its timestamp normalised to an ISO string.
-
-    Strategies and recording always work with ISO strings; this converts
-    back from milliseconds when needed (e.g. after aggregation).
-    """
-    ts = candle.timestamp
-    if isinstance(ts, str):
-        if ts.replace(".", "", 1).lstrip("-").isdigit():
-            return replace(candle, timestamp=ms_to_iso(int(float(ts))))
-        return candle  # already ISO
-    if isinstance(ts, int):
-        return replace(candle, timestamp=ms_to_iso(ts))
-    # Unexpected type – best-effort
-    return replace(candle, timestamp=ms_to_iso(int(ts)))

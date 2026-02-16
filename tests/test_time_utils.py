@@ -2,12 +2,7 @@
 
 from datetime import datetime, timezone
 
-import pytest
-
-from tradedesk.marketdata.candle import Candle
 from tradedesk.time_utils import (
-    candle_with_iso_timestamp,
-    candle_with_ms_timestamp,
     iso_to_ms,
     ms_to_iso,
     now_utc_iso,
@@ -109,52 +104,3 @@ class TestNowUtcIso:
         # Should be parseable
         dt = datetime.fromisoformat(result)
         assert dt.tzinfo is not None
-
-
-# ---------------------------------------------------------------------------
-# Candle timestamp helpers
-# ---------------------------------------------------------------------------
-
-class TestCandleWithMsTimestamp:
-
-    def test_iso_to_ms(self):
-        c = Candle(timestamp="2025-01-15T12:30:00Z", open=1.0, high=2.0, low=0.5, close=1.5)
-        result = candle_with_ms_timestamp(c)
-        assert isinstance(result.timestamp, int)
-
-    def test_already_int(self):
-        c = Candle(timestamp=1736899200000, open=1.0, high=2.0, low=0.5, close=1.5)
-        result = candle_with_ms_timestamp(c)
-        assert result.timestamp == 1736899200000
-
-    def test_float_to_int(self):
-        c = Candle(timestamp=1736899200000.0, open=1.0, high=2.0, low=0.5, close=1.5)
-        result = candle_with_ms_timestamp(c)
-        assert isinstance(result.timestamp, int)
-
-
-class TestCandleWithIsoTimestamp:
-
-    def test_ms_int_to_iso(self):
-        c = Candle(timestamp=1736899200000, open=1.0, high=2.0, low=0.5, close=1.5)
-        result = candle_with_iso_timestamp(c)
-        assert isinstance(result.timestamp, str)
-        assert "2025-01-15" in result.timestamp
-
-    def test_already_iso(self):
-        c = Candle(timestamp="2025-01-15T12:30:00Z", open=1.0, high=2.0, low=0.5, close=1.5)
-        result = candle_with_iso_timestamp(c)
-        assert result.timestamp == "2025-01-15T12:30:00Z"
-
-    def test_numeric_string_to_iso(self):
-        c = Candle(timestamp="1736899200000", open=1.0, high=2.0, low=0.5, close=1.5)
-        result = candle_with_iso_timestamp(c)
-        assert isinstance(result.timestamp, str)
-        assert "2025-01-15" in result.timestamp
-
-    def test_unexpected_type_best_effort(self):
-        """Non-str, non-int type falls through to the best-effort branch."""
-        c = Candle(timestamp=1736899200000.0, open=1.0, high=2.0, low=0.5, close=1.5)
-        # float is not str and not int – hits the last branch
-        result = candle_with_iso_timestamp(c)
-        assert isinstance(result.timestamp, str)
