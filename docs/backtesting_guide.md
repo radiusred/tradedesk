@@ -178,7 +178,7 @@ This section shows a practical workflow with code. The examples assume:
 Example (in-memory):
 
 ```python
-from tradedesk.marketdata import Candle
+from tradedesk import Candle
 from tradedesk.providers.backtest.client import BacktestClient
 
 epic = "IX.D.FTSE.DAILY.IP"

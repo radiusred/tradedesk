@@ -5,7 +5,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 from pathlib import Path
 
 from tradedesk.execution.backtest.harness import BacktestSpec, run_backtest
-from tradedesk.marketdata import Candle
+from tradedesk.types import Candle
 
 
 @pytest.fixture

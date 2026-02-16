@@ -3,7 +3,7 @@
 from dataclasses import dataclass
 from typing import Optional
 
-from .candle import Candle
+from tradedesk.types import Candle
 
 
 def _period_to_seconds(period: str) -> int:

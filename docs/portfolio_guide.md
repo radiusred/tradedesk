@@ -166,7 +166,7 @@ from tradedesk.portfolio import (
     EqualSplitRiskPolicy,
     Instrument,
 )
-from tradedesk.marketdata import Candle
+from tradedesk import Candle
 from tradedesk.marketdata.events import CandleClosedEvent
 
 class SimpleStrategy:

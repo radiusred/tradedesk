@@ -4,7 +4,7 @@ import pytest
 
 from tradedesk import run_strategies
 from tradedesk.marketdata.instrument import MarketData
-from tradedesk.marketdata.candle import Candle
+from tradedesk.types import Candle
 from tradedesk.marketdata.events import CandleClosedEvent
 from tradedesk.execution.backtest.client import BacktestClient
 from tradedesk.strategy.base import BaseStrategy

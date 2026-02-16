@@ -18,7 +18,7 @@ from tradedesk.recording.types import EquityRecord
 from tradedesk.time_utils import parse_timestamp
 
 if TYPE_CHECKING:
-    from tradedesk.marketdata import Candle
+    from tradedesk.types import Candle
 
 log = logging.getLogger(__name__)
 

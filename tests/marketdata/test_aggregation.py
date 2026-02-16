@@ -2,7 +2,7 @@
 
 import pytest
 
-from tradedesk.marketdata.candle import Candle
+from tradedesk.types import Candle
 from tradedesk.marketdata.aggregation import CandleAggregator, choose_base_period
 
 

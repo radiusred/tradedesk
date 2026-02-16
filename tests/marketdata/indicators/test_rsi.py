@@ -1,7 +1,7 @@
 import pytest
 
 from tradedesk.marketdata.indicators.rsi import RSI
-from tradedesk.marketdata.candle import Candle
+from tradedesk.types import Candle
 
 
 def candle(close: float) -> Candle:

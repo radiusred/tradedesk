@@ -3,7 +3,7 @@ import math
 import pytest
 
 from tradedesk.marketdata.indicators.bollinger_bands import BollingerBands
-from tradedesk.marketdata.candle import Candle
+from tradedesk.types import Candle
 
 
 def candle(close: float) -> Candle:

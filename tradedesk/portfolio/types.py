@@ -10,7 +10,7 @@ from typing import Any, NewType, Protocol, TYPE_CHECKING
 
 if TYPE_CHECKING:
     from tradedesk.execution.position import PositionTracker
-    from tradedesk.marketdata import Candle
+    from tradedesk.types import Candle
     from tradedesk.marketdata.events import CandleClosedEvent
     from tradedesk.recording.journal import JournalEntry
 

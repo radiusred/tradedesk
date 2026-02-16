@@ -3,7 +3,7 @@
 import math
 from collections import deque
 
-from tradedesk.marketdata.candle import Candle
+from tradedesk.types import Candle
 from .base import Indicator
 
 

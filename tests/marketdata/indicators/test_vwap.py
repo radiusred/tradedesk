@@ -1,7 +1,7 @@
 import pytest
 
 from tradedesk.marketdata.indicators.vwap import VWAP
-from tradedesk.marketdata.candle import Candle
+from tradedesk.types import Candle
 
 
 def candle(ts: str, high: float, low: float, close: float, vol: float) -> Candle:

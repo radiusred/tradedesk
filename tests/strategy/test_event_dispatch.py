@@ -3,7 +3,7 @@ from unittest.mock import AsyncMock, MagicMock
 
 from tradedesk.marketdata.instrument import MarketData
 from tradedesk.marketdata.events import CandleClosedEvent
-from tradedesk.marketdata.candle import Candle
+from tradedesk.types import Candle
 from tradedesk.strategy.base import BaseStrategy
 
 

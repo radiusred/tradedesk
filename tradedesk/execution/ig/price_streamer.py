@@ -6,11 +6,11 @@ from typing import Any
 from tradedesk.execution.streamer import Streamer
 from tradedesk.marketdata import (
     MarketData,
-    Candle,
     MarketSubscription,
     ChartSubscription,
 )
 from tradedesk.marketdata.events import CandleClosedEvent
+from tradedesk.types import Candle
 
 log = logging.getLogger(__name__)
 

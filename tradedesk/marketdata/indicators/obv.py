@@ -1,6 +1,6 @@
 """On-Balance Volume (OBV) indicator implementation."""
 
-from tradedesk.marketdata.candle import Candle
+from tradedesk.types import Candle
 from .base import Indicator
 
 

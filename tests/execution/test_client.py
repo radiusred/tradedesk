@@ -886,7 +886,7 @@ class TestIGClient:
     @pytest.mark.asyncio
     async def test_get_historical_candles_returns_candles(self, mock_aiohttp_session):
         """Test get_historical_candles returns properly formatted candles."""
-        from tradedesk.marketdata.candle import Candle
+        from tradedesk.types import Candle
 
         mock_response = MagicMock()
         mock_response.status = 200

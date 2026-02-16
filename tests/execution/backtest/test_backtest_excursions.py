@@ -9,7 +9,7 @@ from tradedesk.execution.backtest.excursions import (
     compute_excursions,
 )
 from tradedesk.execution.broker import Direction
-from tradedesk.marketdata.candle import Candle
+from tradedesk.types import Candle
 from tradedesk.recording.metrics import RoundTrip
 
 

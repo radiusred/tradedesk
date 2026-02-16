@@ -15,7 +15,7 @@ The `tradedesk.aggregation` module provides time-bucketing candle aggregation fo
 
 ```python
 from tradedesk.aggregation import CandleAggregator
-from tradedesk.marketdata import Candle
+from tradedesk import Candle
 
 # Create aggregator for 15-minute candles from 5-minute base period
 agg = CandleAggregator(target_period="15MINUTE", base_period="5MINUTE")

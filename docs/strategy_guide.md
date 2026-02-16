@@ -578,7 +578,7 @@ print(getattr(client, "trades", []))
 You should unit test the state container independently of the runner.
 
 ```python
-from tradedesk.marketdata import Candle
+from tradedesk import Candle
 
 
 def test_entry_requires_ready_indicators():

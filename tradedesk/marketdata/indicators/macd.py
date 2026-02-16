@@ -8,7 +8,7 @@ between two moving averages of prices.
 
 from collections import deque
 from .base import Indicator
-from ..candle import Candle
+from ...types import Candle
 
 
 class MACD(Indicator):

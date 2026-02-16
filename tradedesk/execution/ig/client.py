@@ -15,7 +15,7 @@ from tradedesk.execution import (
 )
 from tradedesk.execution.ig.price_streamer import Lightstreamer
 from tradedesk.execution.ig.settings import settings
-from tradedesk.marketdata.candle import Candle
+from tradedesk.types import Candle
 
 log = logging.getLogger(__name__)
 

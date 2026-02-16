@@ -1,6 +1,6 @@
 import pytest
 
-from tradedesk.marketdata.candle import Candle
+from tradedesk.types import Candle
 from tradedesk.marketdata.indicators.sma import SMA
 
 
