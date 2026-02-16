@@ -145,6 +145,7 @@ async def test_lightstreamer_emits_marketdata_and_candleclose_and_disconnects():
     ls_client.disconnect.assert_called()
     assert task.done()
 
+
 @pytest.mark.asyncio
 async def test_heartbeat_threshold_tuned_for_chart_only():
     # Patch Subscription class used by streamer

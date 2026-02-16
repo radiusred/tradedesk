@@ -8,7 +8,7 @@ from tradedesk.execution.backtest.reporting import compute_equity
 from tradedesk.recording import compute_metrics
 from tradedesk.recording.ledger import TradeLedger
 from tradedesk.recording.types import EquityRecord
-from tradedesk.strategy import BaseStrategy
+from tradedesk.types import StreamConsumer
 
 
 @dataclass(frozen=True)
@@ -25,7 +25,7 @@ async def run_backtest(
     *,
     spec: BacktestSpec,
     out_dir: Path,
-    strategy_factory: Callable[[BacktestClient], BaseStrategy],
+    strategy_factory: Callable[[BacktestClient], StreamConsumer],
 ) -> dict[str, str | int | float]:
     """
     Strategy-agnostic candle backtest runner.
@@ -58,37 +58,25 @@ async def run_backtest(
 
     strat = strategy_factory(raw_client)
 
-    orig_handle = getattr(strat, "_handle_event", None)
+    orig_handle = strat._handle_event  # StreamConsumer guarantees this
 
-    # BaseStrategy has _handle_event in tradedesk.strategy; wrap it to sample equity.
+    # Wrap _handle_event to sample equity on every event.
     async def wrapped_handle(event: object) -> None:
-        if callable(orig_handle):
-            await orig_handle(event)
+        await orig_handle(event)
 
-        # Prefer backtest client's canonical timestamp if present.
-        ts = (
-            getattr(raw_client, "_current_timestamp", "")
-            or getattr(event, "timestamp", "")
-            or ""
-        )
+        ts = raw_client._current_timestamp or getattr(event, "timestamp", "") or ""
         ledger.record_equity(
             EquityRecord(timestamp=str(ts), equity=float(compute_equity(raw_client)))
         )
 
-    if hasattr(strat, "_handle_event"):
-        setattr(strat, "_handle_event", wrapped_handle)
+    strat._handle_event = wrapped_handle  # type: ignore[method-assign]
 
     streamer = raw_client.get_streamer()
     await streamer.run(strat)
 
-    # Persist artefacts via ledger (your consolidated method).
+    # Persist artefacts via ledger.
     out_dir.mkdir(parents=True, exist_ok=True)
-    if hasattr(ledger, "write") and callable(getattr(ledger, "write")):
-        ledger.write(out_dir)
-    else:
-        # Backward compatible fallback if needed.
-        ledger.write_trades_csv(out_dir / "trades.csv")
-        ledger.write_equity_csv(out_dir / "equity.csv")
+    ledger.write(out_dir)
 
     equity_rows = [
         {"timestamp": e.timestamp, "equity": str(e.equity)} for e in ledger.equity

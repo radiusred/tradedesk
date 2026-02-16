@@ -107,7 +107,7 @@ class BaseStrategy(abc.ABC):
 
         # Initialize the watchdog timestamp
         self.last_update = datetime.now(timezone.utc)
-        self.watchdog_threshold = 60  # seconds
+        self.watchdog_threshold: float = 60.0  # seconds
 
         if not self.subscriptions:
             log.warning(
@@ -157,18 +157,15 @@ class BaseStrategy(abc.ABC):
             log.debug("No warmup required (no indicators registered)")
             return
 
-        get_hist = getattr(self.client, "get_historical_candles", None)
-        if not callable(get_hist):
-            log.debug("Client does not support historical candles; skipping warmup")
-            return
-
         history: dict[tuple[str, str], list[Candle]] = {}
 
         for (instrument, period), warmup in plan.items():
             if warmup <= 0:
                 continue
             try:
-                candles = await get_hist(instrument, period, warmup)
+                candles = await self.client.get_historical_candles(
+                    instrument, period, warmup
+                )
                 log.debug(
                     "Warmup fetched %d candles for %s %s",
                     len(candles or []),
@@ -255,8 +252,7 @@ class BaseStrategy(abc.ABC):
                 ind.update(candle)
 
     def _has_streamer(self) -> bool:
-        get_streamer = getattr(self.client, "get_streamer", None)
-        return callable(get_streamer)
+        return self.client.get_streamer() is not None
 
     async def on_price_update(self, market_data: MarketData) -> None:
         """
@@ -372,9 +368,10 @@ class BaseStrategy(abc.ABC):
 
     async def _run_streaming(self) -> None:
         streamer = self.client.get_streamer()
+        assert streamer is not None, "No streamer available"
         await streamer.run(self)
 
-    async def _handle_event(self, event: MarketData | CandleClosedEvent) -> None:
+    async def _handle_event(self, event: object) -> None:
         """
         Internal event dispatcher - bridges to event bus and callbacks.
 

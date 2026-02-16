@@ -15,9 +15,33 @@ from tradedesk.execution.broker import Direction
 def test_backtest_replays_candles_and_executes_virtual_trades():
     # Simple 3-candle series
     candles = [
-        Candle(timestamp="2025-12-28T00:00:00Z", open=10, high=10, low=10, close=10, volume=0.0, tick_count=0),
-        Candle(timestamp="2025-12-28T00:05:00Z", open=11, high=11, low=11, close=11, volume=0.0, tick_count=0),
-        Candle(timestamp="2025-12-28T00:10:00Z", open=12, high=12, low=12, close=12, volume=0.0, tick_count=0),
+        Candle(
+            timestamp="2025-12-28T00:00:00Z",
+            open=10,
+            high=10,
+            low=10,
+            close=10,
+            volume=0.0,
+            tick_count=0,
+        ),
+        Candle(
+            timestamp="2025-12-28T00:05:00Z",
+            open=11,
+            high=11,
+            low=11,
+            close=11,
+            volume=0.0,
+            tick_count=0,
+        ),
+        Candle(
+            timestamp="2025-12-28T00:10:00Z",
+            open=12,
+            high=12,
+            low=12,
+            close=12,
+            volume=0.0,
+            tick_count=0,
+        ),
     ]
 
     history = {("EPIC", "5MINUTE"): candles}
@@ -37,9 +61,13 @@ def test_backtest_replays_candles_and_executes_virtual_trades():
 
             # trade: buy on first candle, sell on last candle
             if cc.candle.close == 10:
-                await self.client.place_market_order(instrument=cc.instrument, direction="BUY", size=1.0)
+                await self.client.place_market_order(
+                    instrument=cc.instrument, direction="BUY", size=1.0
+                )
             if cc.candle.close == 12:
-                await self.client.place_market_order(instrument=cc.instrument, direction="SELL", size=1.0)
+                await self.client.place_market_order(
+                    instrument=cc.instrument, direction="SELL", size=1.0
+                )
 
             # keep default chart storage behavior
             await super().on_candle_close(cc)
@@ -77,7 +105,9 @@ def test_backtest_replays_candles_and_executes_virtual_trades():
 async def test_backtest_rejects_direction_enum_without_conversion():
     """Test that passing Direction enum directly to place_market_order is rejected."""
     candles = [
-        Candle(timestamp="2025-12-28T00:00:00Z", open=100, high=100, low=100, close=100),
+        Candle(
+            timestamp="2025-12-28T00:00:00Z", open=100, high=100, low=100, close=100
+        ),
     ]
     client = BacktestClient.from_history({("TEST", "1MINUTE"): candles})
     await client.start()
@@ -88,15 +118,19 @@ async def test_backtest_rejects_direction_enum_without_conversion():
         await client.place_market_order(
             instrument="TEST",
             direction=Direction.LONG,  # This is wrong!
-            size=1.0
+            size=1.0,
         )
 
 
 async def test_backtest_accepts_direction_with_to_order_side():
     """Test that using Direction.to_order_side() works correctly."""
     candles = [
-        Candle(timestamp="2025-12-28T00:00:00Z", open=100, high=100, low=100, close=100),
-        Candle(timestamp="2025-12-28T00:05:00Z", open=110, high=110, low=110, close=110),
+        Candle(
+            timestamp="2025-12-28T00:00:00Z", open=100, high=100, low=100, close=100
+        ),
+        Candle(
+            timestamp="2025-12-28T00:05:00Z", open=110, high=110, low=110, close=110
+        ),
     ]
     client = BacktestClient.from_history({("TEST", "5MINUTE"): candles})
     await client.start()
@@ -107,7 +141,7 @@ async def test_backtest_accepts_direction_with_to_order_side():
     result = await client.place_market_order(
         instrument="TEST",
         direction=Direction.LONG.to_order_side(),  # Correct!
-        size=1.0
+        size=1.0,
     )
 
     assert result["status"] == "FILLED"
@@ -122,7 +156,7 @@ async def test_backtest_accepts_direction_with_to_order_side():
     result = await client.place_market_order(
         instrument="TEST",
         direction=Direction.SHORT.to_order_side(),  # SELL
-        size=1.0
+        size=1.0,
     )
 
     assert result["status"] == "FILLED"

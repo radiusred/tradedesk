@@ -46,13 +46,13 @@ class Lightstreamer(Streamer):
             except Exception:
                 log.exception("Lightstreamer disconnect failed")
 
-    async def run(self, strategy: Any) -> None:
+    async def run(self, consumer: Any) -> None:
         if LightstreamerClient is None or Subscription is None:
             raise RuntimeError("Lightstreamer client library not available")
 
         log.info(
             "Starting Lightstreamer streaming for %s subscriptions",
-            len(strategy.subscriptions),
+            len(consumer.subscriptions),
         )
 
         market_queue: asyncio.Queue[dict[str, Any]] = asyncio.Queue()
@@ -76,10 +76,10 @@ class Lightstreamer(Streamer):
         )
 
         market_subs = [
-            s for s in strategy.subscriptions if isinstance(s, MarketSubscription)
+            s for s in consumer.subscriptions if isinstance(s, MarketSubscription)
         ]
         chart_subs = [
-            s for s in strategy.subscriptions if isinstance(s, ChartSubscription)
+            s for s in consumer.subscriptions if isinstance(s, ChartSubscription)
         ]
 
         subscriptions = []
@@ -269,12 +269,12 @@ class Lightstreamer(Streamer):
         # on the smallest subscribed bar to avoid false positives.
         if chart_subs and not market_subs:
             min_bar_s = min(_period_seconds(s.period) for s in chart_subs)
-            tuned = max(float(strategy.watchdog_threshold), float(min_bar_s) * 1.2)
-            if tuned != strategy.watchdog_threshold:
-                strategy.watchdog_threshold = tuned
+            tuned = max(float(consumer.watchdog_threshold), float(min_bar_s) * 1.2)
+            if tuned != consumer.watchdog_threshold:
+                consumer.watchdog_threshold = tuned
                 log.info(
                     "Heartbeat tuned for chart-only stream: threshold=%.1fs (min_bar=%ds)",
-                    strategy.watchdog_threshold,
+                    consumer.watchdog_threshold,
                     min_bar_s,
                 )
 
@@ -282,12 +282,12 @@ class Lightstreamer(Streamer):
             while True:
                 await asyncio.sleep(self.heartbeat_sleep)
                 delta = (
-                    datetime.now(timezone.utc) - strategy.last_update
+                    datetime.now(timezone.utc) - consumer.last_update
                 ).total_seconds()
-                if delta > strategy.watchdog_threshold:
+                if delta > consumer.watchdog_threshold:
                     log.warning(
                         "❤  Heartbeat Alert: no updates for %s in %.1fs. Connection may be stale.",
-                        strategy.__class__.__name__,
+                        consumer.__class__.__name__,
                         delta,
                     )
                 elif delta < self.heartbeat_sleep:
@@ -304,7 +304,7 @@ class Lightstreamer(Streamer):
                         timestamp=payload["timestamp"],
                         raw=payload["raw"],
                     )
-                    await strategy._handle_event(event)
+                    await consumer._handle_event(event)
                 except Exception:
                     log.exception(
                         "Unhandled exception in market_consumer for %s",
@@ -322,7 +322,7 @@ class Lightstreamer(Streamer):
                         timeframe=payload["timeframe"],
                         candle=candle,
                     )
-                    await strategy._handle_event(event)
+                    await consumer._handle_event(event)
                 except Exception:
                     log.exception(
                         "Unhandled exception in chart_consumer for epic=%s period=%s payload=%r",
@@ -342,7 +342,7 @@ class Lightstreamer(Streamer):
             await asyncio.Future()
         except asyncio.CancelledError:
             log.info(
-                "%s cancelled – cleaning up Lightstreamer", strategy.__class__.__name__
+                "%s cancelled – cleaning up Lightstreamer", consumer.__class__.__name__
             )
         finally:
             for task in tasks:

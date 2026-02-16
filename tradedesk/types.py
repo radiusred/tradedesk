@@ -2,6 +2,9 @@ from __future__ import annotations
 
 import copy
 from dataclasses import dataclass
+from datetime import datetime
+from enum import Enum
+from typing import Any, Protocol
 
 from tradedesk.time_utils import iso_to_ms, ms_to_iso
 
@@ -92,3 +95,69 @@ class Candle:
 
         c.timestamp = ms_to_iso(int(ts))
         return c
+
+
+class Direction(str, Enum):
+    """Trading direction for a position.
+
+    Generic concept representing position bias (LONG or SHORT).
+    Brokers are responsible for converting this to their API format.
+    """
+
+    LONG = "long"
+    SHORT = "short"
+
+    def opposite(self) -> Direction:
+        """Return the opposite direction."""
+        return Direction.SHORT if self is Direction.LONG else Direction.LONG
+
+    def to_order_side(self) -> str:
+        """Convert direction to order side string (BUY/SELL).
+
+        This is the standard convention used by most broker APIs and the
+        BacktestClient for placing market orders.
+
+        Returns:
+            "BUY" for LONG positions, "SELL" for SHORT positions
+        """
+        return "BUY" if self is Direction.LONG else "SELL"
+
+    @classmethod
+    def from_order_side(cls, side: str) -> Direction:
+        """Convert order side string (BUY/SELL) to direction."""
+        if side.upper() == "BUY":
+            return Direction.LONG
+        elif side.upper() == "SELL":
+            return Direction.SHORT
+        else:
+            raise ValueError(f"Invalid order side {side}: must be BUY or SELL")
+
+
+class StreamConsumer(Protocol):
+    """Minimal interface a Streamer needs to dispatch events into.
+
+    BaseStrategy satisfies this protocol. Defined here so that
+    execution.Streamer and execution.backtest.harness can accept
+    any StreamConsumer without importing strategy.
+    """
+
+    subscriptions: list[Any]
+    last_update: datetime
+    watchdog_threshold: float
+
+    async def _handle_event(self, event: object) -> None: ...
+
+
+class DataProvider(Protocol):
+    """Provides historical market data for warmup.
+
+    Client implementations satisfy this protocol structurally.
+    Strategies accept DataProvider instead of Client to avoid
+    coupling to the execution domain.
+    """
+
+    async def get_historical_candles(
+        self, instrument: str, period: str, num_points: int
+    ) -> list[Candle]: ...
+
+    async def get_market_snapshot(self, instrument: str) -> dict[str, Any]: ...

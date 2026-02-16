@@ -3,12 +3,13 @@ from tradedesk.marketdata.indicators.williams_r import WilliamsR
 
 
 class TestWarmupFromHistory:
-
     def test_warmup_primes_only_charts_with_history(self, DummyStrategy, make_candles):
-        Strat = DummyStrategy([
-            ChartSubscription("EPIC1", "1MINUTE"),
-            ChartSubscription("EPIC2", "5MINUTE"),
-        ])
+        Strat = DummyStrategy(
+            [
+                ChartSubscription("EPIC1", "1MINUTE"),
+                ChartSubscription("EPIC2", "5MINUTE"),
+            ]
+        )
         strat = Strat(client=None)
 
         sub1 = ChartSubscription("EPIC1", "1MINUTE")

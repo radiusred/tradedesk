@@ -71,7 +71,7 @@ class BacktestStreamer(Streamer):
     async def disconnect(self) -> None:
         self._connected = False
 
-    async def run(self, strategy: Any) -> None:
+    async def run(self, consumer: Any) -> None:
         await self.connect()
 
         stream: list[tuple[datetime, object]] = []
@@ -123,6 +123,6 @@ class BacktestStreamer(Streamer):
 
                 self._client._set_current_timestamp(ts_iso)
 
-                await strategy._handle_event(event)
+                await consumer._handle_event(event)
         finally:
             await self.disconnect()

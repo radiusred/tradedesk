@@ -1,8 +1,6 @@
 import abc
-from typing import TYPE_CHECKING
 
-if TYPE_CHECKING:
-    from tradedesk.strategy.base import BaseStrategy
+from tradedesk.types import StreamConsumer
 
 
 class Streamer(abc.ABC):
@@ -19,6 +17,6 @@ class Streamer(abc.ABC):
         raise NotImplementedError
 
     @abc.abstractmethod
-    async def run(self, strategy: "BaseStrategy") -> None:
-        """Run the stream and dispatch events into the supplied strategy."""
+    async def run(self, consumer: StreamConsumer) -> None:
+        """Run the stream and dispatch events into the supplied consumer."""
         raise NotImplementedError

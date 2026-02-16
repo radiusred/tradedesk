@@ -32,8 +32,18 @@ class TestBollingerBands:
     def test_returns_none_until_ready(self) -> None:
         bb = BollingerBands(period=3, k=2.0)
 
-        assert bb.update(candle(10.0)) == {"middle": None, "upper": None, "lower": None, "std": None}
-        assert bb.update(candle(11.0)) == {"middle": None, "upper": None, "lower": None, "std": None}
+        assert bb.update(candle(10.0)) == {
+            "middle": None,
+            "upper": None,
+            "lower": None,
+            "std": None,
+        }
+        assert bb.update(candle(11.0)) == {
+            "middle": None,
+            "upper": None,
+            "lower": None,
+            "std": None,
+        }
 
         out = bb.update(candle(12.0))
         assert bb.ready() is True

@@ -22,6 +22,7 @@ class Strat(BaseStrategy):
         await self.on_candle_update_mock(cc)
         await super().on_candle_close(cc)
 
+
 @pytest.mark.asyncio
 async def test_handle_event_marketdata_updates_last_update_and_dispatches():
     s = Strat(MagicMock())

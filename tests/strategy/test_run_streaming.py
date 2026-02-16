@@ -7,6 +7,7 @@ from tradedesk.marketdata.subscriptions import MarketSubscription
 import tradedesk.strategy.base as strategy_module
 from tradedesk.marketdata.subscriptions import ChartSubscription
 
+
 class FakeUpdate:
     def __init__(self, item_name: str, values: dict[str, str | None]):
         self._item_name = item_name
@@ -67,7 +68,9 @@ class FakeLSClient:
 
 @pytest.mark.asyncio
 class TestRunStreaming:
-    async def test_run_streaming_processes_market_and_chart_updates(self, monkeypatch, DummyStrategy, candle_factory):
+    async def test_run_streaming_processes_market_and_chart_updates(
+        self, monkeypatch, DummyStrategy, candle_factory
+    ):
         # Capture created LS client instance
         created = {"client": None}
 
@@ -75,7 +78,7 @@ class TestRunStreaming:
             c = FakeLSClient(url, adapter)
             created["client"] = c
             return c
-        
+
         monkeypatch.setattr(price_streamer, "LightstreamerClient", ls_factory)
         monkeypatch.setattr(price_streamer, "Subscription", FakeSubscription)
 
@@ -84,14 +87,18 @@ class TestRunStreaming:
 
         Strat = DummyStrategy([market_sub, chart_sub])
 
-        ClientStub = type("Client", (), {
-            "ls_url": "https://example",
-            "ls_cst": "CST",
-            "ls_xst": "XST",
-            "client_id": "CID",
-            "account_id": "AID",
-            "get_streamer": lambda self: Lightstreamer(self),
-        })
+        ClientStub = type(
+            "Client",
+            (),
+            {
+                "ls_url": "https://example",
+                "ls_cst": "CST",
+                "ls_xst": "XST",
+                "client_id": "CID",
+                "account_id": "AID",
+                "get_streamer": lambda self: Lightstreamer(self),
+            },
+        )
         strat = Strat(client=ClientStub())
 
         seen_market = []
@@ -124,13 +131,24 @@ class TestRunStreaming:
             assert len(ls_client.subscribed) == 2
 
             # Identify which is market vs chart by fields
-            market_ls_sub = next(s for s in ls_client.subscribed if "BID" in s.fields and "OFFER" in s.fields)
-            chart_ls_sub = next(s for s in ls_client.subscribed if "CONS_END" in s.fields)
+            market_ls_sub = next(
+                s
+                for s in ls_client.subscribed
+                if "BID" in s.fields and "OFFER" in s.fields
+            )
+            chart_ls_sub = next(
+                s for s in ls_client.subscribed if "CONS_END" in s.fields
+            )
 
             # Trigger a market update
             mu = FakeUpdate(
                 item_name=market_ls_sub.items[0],
-                values={"BID": "1.25", "OFFER": "1.26", "UPDATE_TIME": "12:00:00", "MARKET_STATE": "TRADEABLE"},
+                values={
+                    "BID": "1.25",
+                    "OFFER": "1.26",
+                    "UPDATE_TIME": "12:00:00",
+                    "MARKET_STATE": "TRADEABLE",
+                },
             )
             market_ls_sub.listeners[0].onItemUpdate(mu)
 

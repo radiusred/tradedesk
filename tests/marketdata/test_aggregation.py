@@ -18,10 +18,42 @@ def test_aggregates_three_5min_into_one_15min() -> None:
     # Bucket [00:15:00, 00:30:00) contains candles at 00:20:00, 00:25:00, 00:29:00
     # Next candle at 00:30:00 triggers emission
     base_ts = 1767225600000
-    c1 = Candle(timestamp=base_ts + 20*60*1000, open=100, high=105, low=99, close=104, volume=10, tick_count=1)
-    c2 = Candle(timestamp=base_ts + 25*60*1000, open=104, high=106, low=103, close=105, volume=20, tick_count=2)
-    c3 = Candle(timestamp=base_ts + 29*60*1000, open=105, high=108, low=104, close=107, volume=30, tick_count=3)
-    c4 = Candle(timestamp=base_ts + 35*60*1000, open=107, high=109, low=106, close=108, volume=40, tick_count=4)
+    c1 = Candle(
+        timestamp=base_ts + 20 * 60 * 1000,
+        open=100,
+        high=105,
+        low=99,
+        close=104,
+        volume=10,
+        tick_count=1,
+    )
+    c2 = Candle(
+        timestamp=base_ts + 25 * 60 * 1000,
+        open=104,
+        high=106,
+        low=103,
+        close=105,
+        volume=20,
+        tick_count=2,
+    )
+    c3 = Candle(
+        timestamp=base_ts + 29 * 60 * 1000,
+        open=105,
+        high=108,
+        low=104,
+        close=107,
+        volume=30,
+        tick_count=3,
+    )
+    c4 = Candle(
+        timestamp=base_ts + 35 * 60 * 1000,
+        open=107,
+        high=109,
+        low=106,
+        close=108,
+        volume=40,
+        tick_count=4,
+    )
 
     assert agg.update(instrument=instrument, candle=c1) is None
     assert agg.update(instrument=instrument, candle=c2) is None
@@ -32,7 +64,7 @@ def test_aggregates_three_5min_into_one_15min() -> None:
     assert out is not None
 
     # Emitted timestamp should be the end of the bucket (00:30:00)
-    assert out.timestamp == str(base_ts + 30*60*1000)
+    assert out.timestamp == str(base_ts + 30 * 60 * 1000)
     assert out.open == pytest.approx(100.0)
     assert out.high == pytest.approx(108.0)
     assert out.low == pytest.approx(99.0)
@@ -53,12 +85,20 @@ def test_state_is_independent_per_instrument() -> None:
     # Use aligned timestamps: bucket [00:10:00, 00:20:00) contains candles at 00:12:00 and 00:17:00
     # Next candle at 00:22:00 triggers emission
     base_ts = 1767225600000  # 2026-01-01 00:00:00 UTC
-    a1 = Candle(timestamp=base_ts + 12*60*1000, open=1, high=2, low=0.5, close=1.5)
-    b1 = Candle(timestamp=base_ts + 12*60*1000, open=10, high=11, low=9, close=10.5)
-    a2 = Candle(timestamp=base_ts + 17*60*1000, open=1.5, high=3, low=1.4, close=2.5)
-    b2 = Candle(timestamp=base_ts + 17*60*1000, open=10.5, high=12, low=10, close=11.5)
-    a3 = Candle(timestamp=base_ts + 22*60*1000, open=2.5, high=4, low=2.0, close=3.0)
-    b3 = Candle(timestamp=base_ts + 22*60*1000, open=11.5, high=13, low=11, close=12.0)
+    a1 = Candle(timestamp=base_ts + 12 * 60 * 1000, open=1, high=2, low=0.5, close=1.5)
+    b1 = Candle(timestamp=base_ts + 12 * 60 * 1000, open=10, high=11, low=9, close=10.5)
+    a2 = Candle(
+        timestamp=base_ts + 17 * 60 * 1000, open=1.5, high=3, low=1.4, close=2.5
+    )
+    b2 = Candle(
+        timestamp=base_ts + 17 * 60 * 1000, open=10.5, high=12, low=10, close=11.5
+    )
+    a3 = Candle(
+        timestamp=base_ts + 22 * 60 * 1000, open=2.5, high=4, low=2.0, close=3.0
+    )
+    b3 = Candle(
+        timestamp=base_ts + 22 * 60 * 1000, open=11.5, high=13, low=11, close=12.0
+    )
 
     assert agg.update(instrument=inst_a, candle=a1) is None
     assert agg.update(instrument=inst_b, candle=b1) is None
@@ -160,7 +200,9 @@ def test_reset_clears_instrument_state() -> None:
 
 def test_aggregates_seconds_into_minute() -> None:
     """Test aggregating SECOND candles into 1MINUTE."""
-    agg = CandleAggregator(target_period="1MINUTE", base_period="SECOND", supported_periods=["SECOND"])
+    agg = CandleAggregator(
+        target_period="1MINUTE", base_period="SECOND", supported_periods=["SECOND"]
+    )
     assert agg.describe()[2] == 60  # factor
 
     inst = "EURUSD"

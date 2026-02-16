@@ -14,8 +14,8 @@ from tradedesk.time_utils import (
 # parse_timestamp
 # ---------------------------------------------------------------------------
 
-class TestParseTimestamp:
 
+class TestParseTimestamp:
     def test_iso_string_with_z(self):
         dt = parse_timestamp("2025-01-15T12:30:00Z")
         assert dt == datetime(2025, 1, 15, 12, 30, tzinfo=timezone.utc)
@@ -78,8 +78,8 @@ class TestParseTimestamp:
 # iso_to_ms / ms_to_iso
 # ---------------------------------------------------------------------------
 
-class TestIsoToMs:
 
+class TestIsoToMs:
     def test_round_trip(self):
         ts = "2025-01-15T12:30:00Z"
         ms = iso_to_ms(ts)
@@ -98,7 +98,6 @@ class TestIsoToMs:
 
 
 class TestNowUtcIso:
-
     def test_returns_iso_string(self):
         result = now_utc_iso()
         # Should be parseable

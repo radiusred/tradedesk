@@ -17,27 +17,47 @@ from tradedesk.portfolio.reconciliation import ReconciliationManager
 # Helpers
 # ---------------------------------------------------------------------------
 
-def _je(epic, direction=None, size=None, entry_price=None,
-        bars_held=0, mfe_points=0.0, entry_atr=0.0):
+
+def _je(
+    epic,
+    direction=None,
+    size=None,
+    entry_price=None,
+    bars_held=0,
+    mfe_points=0.0,
+    entry_atr=0.0,
+):
     return JournalEntry(
-        instrument=epic, direction=direction, size=size, entry_price=entry_price,
-        bars_held=bars_held, mfe_points=mfe_points,
-        entry_atr=entry_atr, updated_at="",
+        instrument=epic,
+        direction=direction,
+        size=size,
+        entry_price=entry_price,
+        bars_held=bars_held,
+        mfe_points=mfe_points,
+        entry_atr=entry_atr,
+        updated_at="",
     )
 
 
 def _bp(epic, direction="BUY", size=1.0, entry_price=100.0, deal_id="D1"):
     return BrokerPosition(
-        instrument=epic, direction=direction, size=size,
-        entry_price=entry_price, deal_id=deal_id,
+        instrument=epic,
+        direction=direction,
+        size=size,
+        entry_price=entry_price,
+        deal_id=deal_id,
     )
 
 
 def _candle():
     return Candle(
         timestamp="2026-01-01T00:00:00Z",
-        open=100.0, high=101.0, low=99.0, close=100.5,
-        volume=1.0, tick_count=1,
+        open=100.0,
+        high=101.0,
+        low=99.0,
+        close=100.5,
+        volume=1.0,
+        tick_count=1,
     )
 
 
@@ -73,7 +93,9 @@ class _FakeStrategy:
     def to_journal_entry(self, instrument):
         return JournalEntry(
             instrument=instrument,
-            direction=self.position.direction.value if self.position.direction else None,
+            direction=self.position.direction.value
+            if self.position.direction
+            else None,
             size=self.position.size,
             entry_price=self.position.entry_price,
             bars_held=self.position.bars_held,
@@ -83,13 +105,15 @@ class _FakeStrategy:
         )
 
     def restore_from_journal(self, entry):
-        self.position = PositionTracker.from_dict({
-            "direction": entry.direction,
-            "size": entry.size,
-            "entry_price": entry.entry_price,
-            "bars_held": entry.bars_held,
-            "mfe_points": entry.mfe_points,
-        })
+        self.position = PositionTracker.from_dict(
+            {
+                "direction": entry.direction,
+                "size": entry.size,
+                "entry_price": entry.entry_price,
+                "bars_held": entry.bars_held,
+                "mfe_points": entry.mfe_points,
+            }
+        )
         self.entry_atr = entry.entry_atr
 
     async def check_restored_position(self, candle):
@@ -136,8 +160,8 @@ def journal(tmp_path):
 # Startup reconciliation: reconcile_on_startup
 # ---------------------------------------------------------------------------
 
-class TestStartupReconciliation:
 
+class TestStartupReconciliation:
     @pytest.mark.asyncio
     async def test_matched_position_restored(self, journal):
         """Matching journal + broker position restores from journal."""
@@ -303,8 +327,8 @@ class TestStartupReconciliation:
 # Periodic reconciliation: periodic_reconcile
 # ---------------------------------------------------------------------------
 
-class TestPeriodicReconciliation:
 
+class TestPeriodicReconciliation:
     @pytest.mark.asyncio
     async def test_all_clean_no_changes(self, journal):
         """When everything matches, no corrections are made."""
@@ -424,9 +448,7 @@ class TestPeriodicReconciliation:
     async def test_multiple_epics_independent(self, journal):
         """Corrections apply per-epic: one phantom, one matched."""
         client = AsyncMock()
-        client.get_positions = AsyncMock(
-            return_value=[_bp("B", "SELL", 0.5, 50.0)]
-        )
+        client.get_positions = AsyncMock(return_value=[_bp("B", "SELL", 0.5, 50.0)])
 
         mgr = _build_manager(["A", "B"], journal=journal, client=client)
         _strat(mgr, "A").position.open(Direction.LONG, 1.0, 100.0)  # phantom
@@ -442,8 +464,8 @@ class TestPeriodicReconciliation:
 # Position change callback wiring
 # ---------------------------------------------------------------------------
 
-class TestPositionChangeCallback:
 
+class TestPositionChangeCallback:
     def test_persist_tracks_changed_epic(self, journal):
         """persist_positions records which epic triggered the save."""
         mgr = _build_manager(["A", "B"], journal=journal)

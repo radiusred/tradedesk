@@ -12,8 +12,8 @@ from tradedesk.portfolio.types import Instrument
 # InstrumentWindow
 # ---------------------------------------------------------------------------
 
-class TestInstrumentWindow:
 
+class TestInstrumentWindow:
     def test_add_and_get(self):
         w = InstrumentWindow(max_size=5)
         w.add_trade({"pnl": 10.0})
@@ -40,19 +40,21 @@ class TestInstrumentWindow:
 # WeightedRollingTracker
 # ---------------------------------------------------------------------------
 
-class TestWeightedRollingTracker:
 
+class TestWeightedRollingTracker:
     def test_invalid_decay_weights(self):
         with pytest.raises(ValueError, match="must sum to 1.0"):
             WeightedRollingTracker(decay_weights=(0.5, 0.3, 0.1))
 
     def test_update_from_trades(self):
         tracker = WeightedRollingTracker()
-        tracker.update_from_trades([
-            {"instrument": "USDJPY", "pnl": 10.0},
-            {"instrument": "USDJPY", "pnl": -5.0},
-            {"instrument": "GBPUSD", "pnl": 3.0},
-        ])
+        tracker.update_from_trades(
+            [
+                {"instrument": "USDJPY", "pnl": 10.0},
+                {"instrument": "USDJPY", "pnl": -5.0},
+                {"instrument": "GBPUSD", "pnl": 3.0},
+            ]
+        )
         assert "USDJPY" in tracker._windows
         assert "GBPUSD" in tracker._windows
         assert len(tracker._windows["USDJPY"].get_trades()) == 2
@@ -65,10 +67,12 @@ class TestWeightedRollingTracker:
         assert tracker._cached_metrics is not None
 
         # Two more trades should trigger recompute
-        tracker.update_from_trades([
-            {"instrument": "X", "pnl": 2.0},
-            {"instrument": "X", "pnl": 3.0},
-        ])
+        tracker.update_from_trades(
+            [
+                {"instrument": "X", "pnl": 2.0},
+                {"instrument": "X", "pnl": 3.0},
+            ]
+        )
         assert tracker._cached_metrics is None
 
     def test_compute_metrics_basic(self):

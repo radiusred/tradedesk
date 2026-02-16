@@ -125,9 +125,14 @@ class Client(abc.ABC):
         """
         raise NotImplementedError
 
-    def get_streamer(self) -> Streamer:
-        """Return a Streamer implementation for this client.
+    def get_streamer(self) -> Streamer | None:
+        """Return a Streamer implementation for this client, or None if unsupported."""
+        return None
 
-        Not wired in yet; will be introduced when we encapsulate Lightstreamer.
-        """
-        raise NotImplementedError
+    async def get_instrument_metadata(self, instrument: str) -> dict[str, Any]:
+        """Fetch instrument metadata. Returns empty dict by default."""
+        return {}
+
+    async def quantise_size(self, instrument: str, size: float) -> float:
+        """Round size to broker-compliant increment. Returns size unchanged by default."""
+        return size

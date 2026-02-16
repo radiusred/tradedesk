@@ -17,14 +17,17 @@ def test_parse_ts_accepts_slashes_and_z():
     dt = _parse_ts("2025/12/04T19:20:00Z")
     assert dt.isoformat() == "2025-12-04T19:20:00+00:00"
 
+
 def test_parse_ts_accepts_iso_z():
     dt = _parse_ts("2025-12-04T19:20:00Z")
     assert dt.isoformat() == "2025-12-04T19:20:00+00:00"
 
+
 def test_parse_ts_accepts_space_and_z():
     dt = _parse_ts("2025-12-04 19:20:00Z")
     assert dt.isoformat() == "2025-12-04T19:20:00+00:00"
-    
+
+
 @pytest.mark.asyncio
 async def test_backtest_trade_has_timestamp():
     instrument = "EPIC"
@@ -37,6 +40,7 @@ async def test_backtest_trade_has_timestamp():
     await client.place_market_order(instrument, "BUY", 1.0)
 
     assert client.trades[0].timestamp == "2025-01-01T00:00:00Z"
+
 
 def test_backtest_from_csv_replays_and_trades(tmp_path: Path):
     csv_path = tmp_path / "candles.csv"
@@ -57,9 +61,13 @@ def test_backtest_from_csv_replays_and_trades(tmp_path: Path):
 
         async def on_candle_close(self, candle_close: CandleClosedEvent):
             if candle_close.candle.close == 10:
-                await self.client.place_market_order(instrument=candle_close.instrument, direction="BUY", size=1.0)
+                await self.client.place_market_order(
+                    instrument=candle_close.instrument, direction="BUY", size=1.0
+                )
             if candle_close.candle.close == 12:
-                await self.client.place_market_order(instrument=candle_close.instrument, direction="SELL", size=1.0)
+                await self.client.place_market_order(
+                    instrument=candle_close.instrument, direction="SELL", size=1.0
+                )
             await super().on_candle_close(candle_close)
 
     def factory():
@@ -78,6 +86,7 @@ def test_backtest_from_csv_replays_and_trades(tmp_path: Path):
     assert len(client.trades) == 2
     assert client.realised_pnl == 2.0
     assert client.positions == {}
+
 
 def test_backtest_market_csvs_drive_price_updates_and_signals(tmp_path: Path):
     gbp = tmp_path / "gbp.csv"
@@ -122,7 +131,9 @@ def test_backtest_market_csvs_drive_price_updates_and_signals(tmp_path: Path):
         def __init__(self, client, lookback=10):
             super().__init__(client)
             self.lookback = lookback
-            self.prices: dict[str, list[float]] = {s.instrument: [] for s in self.SUBSCRIPTIONS}
+            self.prices: dict[str, list[float]] = {
+                s.instrument: [] for s in self.SUBSCRIPTIONS
+            }
             self.signals: list[tuple[str, str]] = []
 
         async def on_price_update(self, md: MarketData):
@@ -130,7 +141,7 @@ def test_backtest_market_csvs_drive_price_updates_and_signals(tmp_path: Path):
             self.prices[md.instrument].append(mid)
             if len(self.prices[md.instrument]) < self.lookback:
                 return
-            window = self.prices[md.instrument][-self.lookback:]
+            window = self.prices[md.instrument][-self.lookback :]
             momentum = (window[-1] - window[0]) / window[0]
             if momentum > 0.001:
                 self.signals.append((md.instrument, "UP"))
@@ -150,7 +161,9 @@ def test_backtest_market_csvs_drive_price_updates_and_signals(tmp_path: Path):
         return c
 
     with patch("sys.exit") as _:
-        run_strategies(strategy_specs=[MomentumLike], client_factory=factory, setup_logging=False)
+        run_strategies(
+            strategy_specs=[MomentumLike], client_factory=factory, setup_logging=False
+        )
 
     # Verify at least one UP for GBP and one DOWN for EUR occurred
     # (The strategy instance is internal; so assert indirectly via client mark prices after replay)

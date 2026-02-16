@@ -139,9 +139,7 @@ async def test_run_backtest_metrics_output(
     client_instance.start = AsyncMock()
     client_instance.get_streamer.return_value.run = AsyncMock()
 
-    spec = BacktestSpec(
-        instrument="TEST", period="1MIN", candle_csv=Path("dummy.csv")
-    )
+    spec = BacktestSpec(instrument="TEST", period="1MIN", candle_csv=Path("dummy.csv"))
 
     result = await run_backtest(
         spec=spec, out_dir=tmp_path, strategy_factory=lambda c: MagicMock()
@@ -151,28 +149,3 @@ async def test_run_backtest_metrics_output(
     assert result["final_equity"] == "10500.00"
     assert result["win_rate"] == "60.0"
     assert result["avg_hold_min"] == "15.0"
-
-
-@pytest.mark.asyncio
-async def test_run_backtest_ledger_fallback(
-    mock_client_cls, mock_ledger_cls, mock_compute_metrics, tmp_path
-):
-    """Test fallback to legacy CSV writing if ledger.write() is missing."""
-    client_instance = mock_client_cls.from_csv.return_value
-    client_instance.start = AsyncMock()
-    client_instance.get_streamer.return_value.run = AsyncMock()
-
-    # Mock ledger without write method
-    ledger_instance = mock_ledger_cls.return_value
-    del ledger_instance.write
-
-    spec = BacktestSpec(
-        instrument="TEST", period="1MIN", candle_csv=Path("dummy.csv")
-    )
-
-    await run_backtest(
-        spec=spec, out_dir=tmp_path, strategy_factory=lambda c: MagicMock()
-    )
-
-    ledger_instance.write_trades_csv.assert_called_with(tmp_path / "trades.csv")
-    ledger_instance.write_equity_csv.assert_called_with(tmp_path / "equity.csv")

@@ -6,11 +6,13 @@ from tradedesk.marketdata.indicators.williams_r import WilliamsR
 
 class TestStrategyWarmupPlan:
     def test_plan_includes_only_chart_subscriptions(self, DummyStrategy):
-        Strat = DummyStrategy([
-            MarketSubscription("MARKET_EPIC"),
-            ChartSubscription("EPIC1", "1MINUTE"),
-            ChartSubscription("EPIC2", "5MINUTE"),
-        ])
+        Strat = DummyStrategy(
+            [
+                MarketSubscription("MARKET_EPIC"),
+                ChartSubscription("EPIC1", "1MINUTE"),
+                ChartSubscription("EPIC2", "5MINUTE"),
+            ]
+        )
         strat = Strat(client=None)
 
         plan = strat.chart_warmup_plan()
@@ -21,10 +23,12 @@ class TestStrategyWarmupPlan:
         assert ("MARKET_EPIC", "MARKET") not in plan  # sanity check
 
     def test_plan_defaults_to_zero_when_no_indicators_registered(self, DummyStrategy):
-        Strat = DummyStrategy([
-            ChartSubscription("EPIC1", "1MINUTE"),
-            ChartSubscription("EPIC2", "5MINUTE"),
-        ])
+        Strat = DummyStrategy(
+            [
+                ChartSubscription("EPIC1", "1MINUTE"),
+                ChartSubscription("EPIC2", "5MINUTE"),
+            ]
+        )
         strat = Strat(client=None)
 
         plan = strat.chart_warmup_plan()
@@ -33,10 +37,12 @@ class TestStrategyWarmupPlan:
         assert plan[("EPIC2", "5MINUTE")] == 0
 
     def test_plan_uses_required_warmup_per_chart(self, DummyStrategy):
-        Strat = DummyStrategy([
-            ChartSubscription("EPIC1", "1MINUTE"),
-            ChartSubscription("EPIC2", "5MINUTE"),
-        ])
+        Strat = DummyStrategy(
+            [
+                ChartSubscription("EPIC1", "1MINUTE"),
+                ChartSubscription("EPIC2", "5MINUTE"),
+            ]
+        )
         strat = Strat(client=None)
 
         sub1 = ChartSubscription("EPIC1", "1MINUTE")
