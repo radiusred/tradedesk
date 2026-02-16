@@ -3,16 +3,14 @@
 import logging
 from dataclasses import dataclass
 from enum import Enum
-from typing import TYPE_CHECKING, Any, cast
+from typing import Any, cast
 
 from tradedesk.events import DomainEvent
 from tradedesk.execution import BrokerPosition, Direction
-from tradedesk.portfolio.runner import PortfolioRunner
-from tradedesk.portfolio.types import Instrument, ReconcilableStrategy
 from tradedesk.recording.journal import JournalEntry, PositionJournal
 
-if TYPE_CHECKING:
-    from tradedesk.marketdata.events import CandleClosedEvent
+from .runner import PortfolioRunner
+from .types import Instrument, ReconcilableStrategy
 
 log = logging.getLogger(__name__)
 

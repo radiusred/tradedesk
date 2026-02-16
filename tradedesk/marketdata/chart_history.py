@@ -3,7 +3,7 @@ from typing import Optional
 
 import numpy as np
 
-from tradedesk.marketdata.candle import Candle
+from .candle import Candle
 
 
 class ChartHistory:
