@@ -61,10 +61,10 @@ class Candle:
         Used at the boundary with :class:`CandleAggregator` which expects
         millisecond-int timestamps (IG streaming format).
 
-        mypy strict assignment errors are ignored here intentionally to allow the 
-        timestamp field to be either str or int in the original Candle, and then 
+        mypy strict assignment errors are ignored here intentionally to allow the
+        timestamp field to be either str or int in the original Candle, and then
         normalise it to int milliseconds in the cloned Candle. Rather than widening
-        the type of timestamp in the Candle class, we handle the conversion here 
+        the type of timestamp in the Candle class, we handle the conversion here
         and ignore the type assignment error.
         """
         c = copy.copy(self)
@@ -77,7 +77,6 @@ class Candle:
             c.timestamp = iso_to_ms(str(ts))  # type: ignore[assignment]
         return c
 
-
     def candle_with_iso_timestamp(self) -> Candle:
         """Return a cloned *candle* with its timestamp normalised to an ISO string.
 
@@ -88,8 +87,8 @@ class Candle:
         ts = c.timestamp
         if isinstance(ts, str):
             if ts.replace(".", "", 1).lstrip("-").isdigit():
-                c.timestamp=ms_to_iso(int(float(ts)))
+                c.timestamp = ms_to_iso(int(float(ts)))
             return c  # already ISO
 
-        c.timestamp=ms_to_iso(int(ts))
+        c.timestamp = ms_to_iso(int(ts))
         return c
