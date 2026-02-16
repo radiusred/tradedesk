@@ -16,7 +16,6 @@ import asyncio
 from enum import Enum
 import logging
 from datetime import datetime, timezone
-from tradedesk.execution import Client
 from tradedesk.marketdata import (
     ChartHistory,
     ChartSubscription,
@@ -25,7 +24,7 @@ from tradedesk.marketdata import (
 )
 from tradedesk.marketdata.events import CandleClosedEvent
 from tradedesk.marketdata.indicators import Indicator
-from tradedesk.types import Candle
+from tradedesk.types import Candle, DataProvider
 
 log = logging.getLogger(__name__)
 
@@ -75,18 +74,21 @@ class BaseStrategy(abc.ABC):
 
     def __init__(
         self,
-        client: Client,
+        data_provider: DataProvider | None = None,
         subscriptions: list[MarketSubscription | ChartSubscription] | None = None,
     ):
         """
         Initialize the strategy.
 
         Args:
-            client: Authenticated provider client
+            data_provider: Provider for historical data (for warmup).
+                Typically a Client instance, but accepts any DataProvider.
             subscriptions: Optional explicit subscriptions for this instance.
                 If omitted, defaults to the class-level SUBSCRIPTIONS.
         """
-        self.client = client
+        self._data_provider = data_provider
+        # Backwards compatibility - deprecated
+        self.client = data_provider
         self.subscriptions = (
             list(subscriptions)
             if subscriptions is not None
@@ -150,6 +152,10 @@ class BaseStrategy(abc.ABC):
         if not self.warmup_enabled():
             return
 
+        if self._data_provider is None:
+            log.debug("No data provider available; skipping warmup")
+            return
+
         plan = self.chart_warmup_plan()
         log.debug("Warmup plan: %s", plan)
 
@@ -163,7 +169,7 @@ class BaseStrategy(abc.ABC):
             if warmup <= 0:
                 continue
             try:
-                candles = await self.client.get_historical_candles(
+                candles = await self._data_provider.get_historical_candles(
                     instrument, period, warmup
                 )
                 log.debug(
@@ -252,7 +258,7 @@ class BaseStrategy(abc.ABC):
                 ind.update(candle)
 
     def _has_streamer(self) -> bool:
-        return self.client.get_streamer() is not None
+        return self.client.get_streamer() is not None  # type: ignore[union-attr]
 
     async def on_price_update(self, market_data: MarketData) -> None:
         """
@@ -321,6 +327,10 @@ class BaseStrategy(abc.ABC):
 
         Note: Only polls MARKET subscriptions, not CHART subscriptions.
         """
+        if self._data_provider is None:
+            log.error("Cannot poll without data provider")
+            return
+
         # Only poll market subscriptions
         market_instruments = [
             sub.instrument
@@ -340,7 +350,7 @@ class BaseStrategy(abc.ABC):
         while True:
             for instrument in market_instruments:
                 try:
-                    snapshot = await self.client.get_market_snapshot(instrument)
+                    snapshot = await self._data_provider.get_market_snapshot(instrument)
                     bid = float(snapshot["snapshot"]["bid"])
                     offer = float(snapshot["snapshot"]["offer"])
                     mid = (bid + offer) / 2
@@ -367,7 +377,7 @@ class BaseStrategy(abc.ABC):
             await asyncio.sleep(self.POLL_INTERVAL)
 
     async def _run_streaming(self) -> None:
-        streamer = self.client.get_streamer()
+        streamer = self.client.get_streamer()  # type: ignore[union-attr]
         assert streamer is not None, "No streamer available"
         await streamer.run(self)
 

@@ -38,10 +38,15 @@ async def run_backtest(
       - Computes metrics from ledger state
       - Returns a flat dict row suitable for metrics.csv aggregation
     """
+    from tradedesk.execution.order_handler import OrderExecutionHandler
+
     raw_client = BacktestClient.from_csv(
         spec.candle_csv, instrument=spec.instrument, period=spec.period
     )
     await raw_client.start()
+
+    # Wire event-driven order execution for the backtest client.
+    _order_handler = OrderExecutionHandler(raw_client)  # noqa: F841
 
     # Apply additive price adjustment to candle OHLC (e.g. BID -> MID normalisation).
     adj = float(spec.half_spread_adjustment or 0.0)
