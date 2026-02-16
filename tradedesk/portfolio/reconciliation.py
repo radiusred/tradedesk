@@ -265,7 +265,11 @@ class ReconciliationManager:
     async def _on_candle_closed(self, event: DomainEvent) -> None:
         """Handle target-period candle events for periodic reconciliation."""
         from tradedesk.marketdata.events import CandleClosedEvent
-        if not isinstance(event, CandleClosedEvent) or event.timeframe != self._target_period:
+
+        if (
+            not isinstance(event, CandleClosedEvent)
+            or event.timeframe != self._target_period
+        ):
             return
 
         # Increment candle counter
