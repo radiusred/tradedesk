@@ -4,7 +4,7 @@ from abc import ABC
 from collections import defaultdict
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
-from typing import Any, Awaitable, Callable, TypeVar, dataclass_transform
+from typing import Awaitable, Callable, TypeVar, dataclass_transform
 
 logger = logging.getLogger(__name__)
 

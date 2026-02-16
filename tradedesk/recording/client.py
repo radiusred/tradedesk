@@ -1,8 +1,9 @@
 from typing import Any
 
+from tradedesk.time_utils import now_utc_iso
+
 from .ledger import TradeLedger
 from .types import TradeRecord
-from tradedesk.time_utils import now_utc_iso
 
 
 class RecordingClient:

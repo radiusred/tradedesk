@@ -2,9 +2,10 @@
 
 from dataclasses import dataclass
 
-from tradedesk.portfolio.types import Instrument, PortfolioStrategy
 from tradedesk.marketdata.events import CandleClosedEvent
-from tradedesk.portfolio.risk import RiskAllocationPolicy
+
+from .risk import RiskAllocationPolicy
+from .types import Instrument, PortfolioStrategy
 
 
 @dataclass

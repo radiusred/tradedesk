@@ -2,8 +2,9 @@
 
 from typing import Any
 
-from tradedesk.execution.broker import Direction
 from tradedesk.marketdata.candle import Candle
+
+from .broker import Direction
 
 
 class PositionTracker:

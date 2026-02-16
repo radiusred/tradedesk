@@ -4,10 +4,11 @@ from datetime import timedelta, timezone
 from pathlib import Path
 from typing import Any
 
+from tradedesk.time_utils import parse_timestamp
+
 from .metrics import round_trips_from_fills
 from .opportunity import OpportunityRecorder
 from .types import EquityRecord, RecordingMode, TradeRecord
-from tradedesk.time_utils import parse_timestamp
 
 
 def trade_rows_from_trades(trades: list[TradeRecord]) -> list[dict[str, str]]:

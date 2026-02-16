@@ -1,10 +1,10 @@
-from tradedesk.execution.streamer import Streamer
-from tradedesk.execution.broker import AccountBalance, BrokerPosition
-from tradedesk.marketdata.candle import Candle
-
-
 import abc
 from typing import Any
+
+from tradedesk.marketdata.candle import Candle
+
+from .broker import AccountBalance, BrokerPosition
+from .streamer import Streamer
 
 
 class Client(abc.ABC):

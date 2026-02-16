@@ -4,7 +4,7 @@ from abc import ABC, abstractmethod
 from dataclasses import dataclass
 from typing import Mapping
 
-from tradedesk.portfolio.types import Instrument
+from .types import Instrument
 
 
 def atr_normalised_size(
