@@ -1,4 +1,9 @@
+from __future__ import annotations
+
+import copy
 from dataclasses import dataclass
+
+from tradedesk.time_utils import iso_to_ms, ms_to_iso
 
 
 @dataclass
@@ -49,3 +54,34 @@ class Candle:
             f"L={self.low:.5f}, C={self.close:.5f}, "
             f"V={self.volume:.0f})"
         )
+
+    def candle_with_ms_timestamp(self) -> Candle:
+        """Return a cloned *candle* with its timestamp normalised to int milliseconds.
+
+        Used at the boundary with :class:`CandleAggregator` which expects
+        millisecond-int timestamps (IG streaming format).
+        """
+        c = copy.copy(self)
+        ts = c.timestamp
+        if isinstance(ts, (int, float)):
+            c.timestamp = int(ts)
+        else:
+            c.timestamp = iso_to_ms(str(ts))
+        return c
+
+
+    def candle_with_iso_timestamp(self) -> Candle:
+        """Return a cloned *candle* with its timestamp normalised to an ISO string.
+
+        Strategies and recording always work with ISO strings; this converts
+        back from milliseconds when needed (e.g. after aggregation).
+        """
+        c = copy.copy(self)
+        ts = c.timestamp
+        if isinstance(ts, str):
+            if ts.replace(".", "", 1).lstrip("-").isdigit():
+                c.timestamp=ms_to_iso(int(float(ts)))
+            return c  # already ISO
+        
+        c.timestamp=ms_to_iso(int(ts))
+        return c

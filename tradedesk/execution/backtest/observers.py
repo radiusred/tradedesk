@@ -15,11 +15,10 @@ from tradedesk.execution.backtest.reporting import compute_equity
 from tradedesk.recording import RoundTrip, round_trips_from_fills
 from tradedesk.recording.ledger import TradeLedger, trade_rows_from_trades
 from tradedesk.recording.types import EquityRecord
-from tradedesk.time_utils import candle_with_iso_timestamp, parse_timestamp
+from tradedesk.time_utils import parse_timestamp
 
 if TYPE_CHECKING:
     from tradedesk.marketdata import Candle
-    from tradedesk.marketdata.events import CandleClosedEvent
 
 log = logging.getLogger(__name__)
 
@@ -71,7 +70,7 @@ class BacktestRecorder:
         if inner is None:
             return
         eq = compute_equity(inner)
-        ts = candle_with_iso_timestamp(candle).timestamp
+        ts = candle.candle_with_iso_timestamp().timestamp
         self._ledger.record_equity(EquityRecord(timestamp=ts, equity=float(eq)))
 
 
