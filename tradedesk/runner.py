@@ -153,6 +153,11 @@ async def _async_run_strategies(
     log.info("=" * 70)
 
     try:
+        # Wire up event-driven order execution before strategies start.
+        from tradedesk.execution.order_handler import OrderExecutionHandler
+
+        _order_handler = OrderExecutionHandler(client)  # noqa: F841
+
         strategy_instances = _instantiate_strategies(client, strategy_specs)
 
         log.info("Starting strategies...")

@@ -99,7 +99,7 @@ class TestRunStreaming:
                 "get_streamer": lambda self: Lightstreamer(self),
             },
         )
-        strat = Strat(client=ClientStub())
+        strat = Strat(data_provider=ClientStub())
 
         seen_market = []
         seen_candles = []

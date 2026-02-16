@@ -13,7 +13,7 @@ class TestStrategyWarmupPlan:
                 ChartSubscription("EPIC2", "5MINUTE"),
             ]
         )
-        strat = Strat(client=None)
+        strat = Strat(data_provider=None)
 
         plan = strat.chart_warmup_plan()
 
@@ -29,7 +29,7 @@ class TestStrategyWarmupPlan:
                 ChartSubscription("EPIC2", "5MINUTE"),
             ]
         )
-        strat = Strat(client=None)
+        strat = Strat(data_provider=None)
 
         plan = strat.chart_warmup_plan()
 
@@ -43,7 +43,7 @@ class TestStrategyWarmupPlan:
                 ChartSubscription("EPIC2", "5MINUTE"),
             ]
         )
-        strat = Strat(client=None)
+        strat = Strat(data_provider=None)
 
         sub1 = ChartSubscription("EPIC1", "1MINUTE")
 

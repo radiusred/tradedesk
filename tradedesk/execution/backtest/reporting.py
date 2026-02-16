@@ -1,7 +1,8 @@
 from dataclasses import dataclass
 
-from tradedesk.execution.backtest import BacktestClient
 from tradedesk.execution.broker import Direction
+
+from .client import BacktestClient
 
 
 def compute_unrealised_pnl(client: BacktestClient) -> float:

@@ -89,3 +89,12 @@ def get_dispatcher() -> EventDispatcher:
     if _dispatcher is None:
         _dispatcher = EventDispatcher()
     return _dispatcher
+
+
+def reset_dispatcher() -> None:
+    """Replace the global dispatcher with a fresh instance.
+
+    Intended for test isolation — ensures no handlers leak between tests.
+    """
+    global _dispatcher
+    _dispatcher = EventDispatcher()

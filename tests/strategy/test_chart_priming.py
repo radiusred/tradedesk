@@ -7,7 +7,7 @@ class TestStrategyChartPriming:
         self, DummyStrategy, make_candles
     ):
         Strat = DummyStrategy([ChartSubscription("EPIC", "1MINUTE")])
-        strat = Strat(client=None)
+        strat = Strat(data_provider=None)
 
         sub = ChartSubscription("EPIC", "1MINUTE")
         wr = WilliamsR(period=3)

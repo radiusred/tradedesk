@@ -1,27 +1,22 @@
 from tradedesk.events import DomainEvent, event
-
-
-class Order:
-    pass
-
-
-class Fill:
-    pass
+from tradedesk.types import OrderRequest, OrderResult
 
 
 @event
-class OrderSubmittedEvent(DomainEvent):
-    strategy_id: str
-    order: Order
+class OrderRequestEvent(DomainEvent):
+    """Published by strategies to request order execution.
+
+    The ``request_id`` links the event to a pending Future in the
+    module-level registry so the caller can ``await`` the result.
+    """
+
+    request: OrderRequest
+    request_id: str
 
 
 @event
-class OrderFilledEvent(DomainEvent):
-    order_id: str
-    fill: Fill
+class OrderCompletedEvent(DomainEvent):
+    """Published after an order has been executed (or rejected)."""
 
-
-@event
-class OrderRejectedEvent(DomainEvent):
-    order_id: str
-    reason: str
+    request_id: str
+    result: OrderResult

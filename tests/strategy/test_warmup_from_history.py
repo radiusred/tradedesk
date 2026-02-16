@@ -10,7 +10,7 @@ class TestWarmupFromHistory:
                 ChartSubscription("EPIC2", "5MINUTE"),
             ]
         )
-        strat = Strat(client=None)
+        strat = Strat(data_provider=None)
 
         sub1 = ChartSubscription("EPIC1", "1MINUTE")
         wr = WilliamsR(period=3)

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import copy
+import dataclasses
 from dataclasses import dataclass
 from datetime import datetime
 from enum import Enum
@@ -161,3 +162,27 @@ class DataProvider(Protocol):
     ) -> list[Candle]: ...
 
     async def get_market_snapshot(self, instrument: str) -> dict[str, Any]: ...
+
+    async def get_instrument_metadata(self, instrument: str) -> dict[str, Any]: ...
+
+
+@dataclass(frozen=True, kw_only=True)
+class OrderRequest:
+    """Immutable description of a market order to place."""
+
+    instrument: str
+    direction: str  # "BUY" or "SELL"
+    size: float
+    currency: str = "USD"
+    force_open: bool = True
+
+
+@dataclass(frozen=True, kw_only=True)
+class OrderResult:
+    """Outcome of an order execution attempt."""
+
+    success: bool
+    fill_price: float = 0.0
+    fill_size: float = 0.0
+    raw: dict[str, Any] = dataclasses.field(default_factory=dict)
+    error: str = ""

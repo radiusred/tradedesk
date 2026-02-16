@@ -5,12 +5,21 @@ import sys
 from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 
+from tradedesk.events import reset_dispatcher
 from tradedesk.types import Candle
 from tradedesk.strategy.base import BaseStrategy
 from tradedesk.marketdata.subscriptions import ChartSubscription
 
 
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
+
+
+@pytest.fixture(autouse=True)
+def _reset_event_dispatcher():
+    """Reset the global event dispatcher before each test."""
+    reset_dispatcher()
+    yield
+    reset_dispatcher()
 
 
 @pytest.fixture

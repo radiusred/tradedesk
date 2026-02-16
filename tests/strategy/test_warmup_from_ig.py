@@ -19,7 +19,7 @@ class TestStrategyWarmupFromIG:
                 assert num_points == 14
                 return make_candles(14)
 
-        strat = Strat(client=FakeClient())
+        strat = Strat(data_provider=FakeClient())
 
         wr = WilliamsR(period=14)
         strat.register_indicator(sub, wr)

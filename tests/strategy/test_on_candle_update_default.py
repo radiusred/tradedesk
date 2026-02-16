@@ -11,7 +11,7 @@ class TestOnCandleUpdateDefault:
     ):
         sub = ChartSubscription("EPIC", "1MINUTE")
         Strat = DummyStrategy([sub])
-        strat = Strat(client=None)
+        strat = Strat(data_provider=None)
 
         candle = candle_factory(0)
         await strat.on_candle_close(
@@ -26,7 +26,7 @@ class TestOnCandleUpdateDefault:
         self, DummyStrategy, candle_factory
     ):
         Strat = DummyStrategy([])  # no chart subs => no chart history entries created
-        strat = Strat(client=None)
+        strat = Strat(data_provider=None)
 
         # Should not raise
         await strat.on_candle_close(

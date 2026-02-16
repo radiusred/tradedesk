@@ -8,7 +8,7 @@ import pytest
 @pytest.fixture
 def strat(DummyStrategy):
     Strat = DummyStrategy([])
-    return Strat(client=None)
+    return Strat(data_provider=None)
 
 
 class TestStrategyIndicatorWarmup:
