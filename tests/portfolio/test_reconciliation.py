@@ -40,7 +40,6 @@ def _broker_pos(instrument="USDJPY", direction="BUY", size=1.0):
 
 
 class TestDirectionMatches:
-
     def test_long_buy(self):
         assert _direction_matches("long", "BUY") is True
 
@@ -55,7 +54,6 @@ class TestDirectionMatches:
 
 
 class TestReconcile:
-
     def test_both_flat(self):
         result = reconcile(
             journal_positions={"USDJPY": _journal_entry(direction=None)},
@@ -136,8 +134,12 @@ class TestReconcile:
     def test_multiple_instruments(self):
         result = reconcile(
             journal_positions={
-                "USDJPY": _journal_entry(instrument="USDJPY", direction="long", size=1.0),
-                "GBPUSD": _journal_entry(instrument="GBPUSD", direction="short", size=2.0),
+                "USDJPY": _journal_entry(
+                    instrument="USDJPY", direction="long", size=1.0
+                ),
+                "GBPUSD": _journal_entry(
+                    instrument="GBPUSD", direction="short", size=2.0
+                ),
             },
             broker_positions=[
                 _broker_pos(instrument="USDJPY", direction="BUY", size=1.0),
@@ -149,39 +151,59 @@ class TestReconcile:
 
 
 class TestReconciliationResult:
-
     def test_is_clean(self):
         from tradedesk.portfolio.reconciliation import ReconciliationEntry
-        result = ReconciliationResult(entries=[
-            ReconciliationEntry(instrument="X", discrepancy=DiscrepancyType.MATCHED),
-        ])
+
+        result = ReconciliationResult(
+            entries=[
+                ReconciliationEntry(
+                    instrument="X", discrepancy=DiscrepancyType.MATCHED
+                ),
+            ]
+        )
         assert result.is_clean
 
     def test_has_emergencies(self):
         from tradedesk.portfolio.reconciliation import ReconciliationEntry
-        result = ReconciliationResult(entries=[
-            ReconciliationEntry(instrument="X", discrepancy=DiscrepancyType.FAILED_EXIT),
-        ])
+
+        result = ReconciliationResult(
+            entries=[
+                ReconciliationEntry(
+                    instrument="X", discrepancy=DiscrepancyType.FAILED_EXIT
+                ),
+            ]
+        )
         assert result.has_emergencies
 
     def test_orphan_broker_positions(self):
         from tradedesk.portfolio.reconciliation import ReconciliationEntry
-        result = ReconciliationResult(entries=[
-            ReconciliationEntry(instrument="X", discrepancy=DiscrepancyType.ORPHAN_BROKER),
-            ReconciliationEntry(instrument="Y", discrepancy=DiscrepancyType.MATCHED),
-        ])
+
+        result = ReconciliationResult(
+            entries=[
+                ReconciliationEntry(
+                    instrument="X", discrepancy=DiscrepancyType.ORPHAN_BROKER
+                ),
+                ReconciliationEntry(
+                    instrument="Y", discrepancy=DiscrepancyType.MATCHED
+                ),
+            ]
+        )
         assert len(result.orphan_broker_positions) == 1
 
     def test_phantom_local_positions(self):
         from tradedesk.portfolio.reconciliation import ReconciliationEntry
-        result = ReconciliationResult(entries=[
-            ReconciliationEntry(instrument="X", discrepancy=DiscrepancyType.PHANTOM_LOCAL),
-        ])
+
+        result = ReconciliationResult(
+            entries=[
+                ReconciliationEntry(
+                    instrument="X", discrepancy=DiscrepancyType.PHANTOM_LOCAL
+                ),
+            ]
+        )
         assert len(result.phantom_local_positions) == 1
 
 
 class TestReconciliationManager:
-
     @pytest.fixture
     def mock_strategy(self):
         strat = Mock()
@@ -274,7 +296,9 @@ class TestReconciliationManager:
         strat.restore_from_journal.assert_called_once()
 
     @pytest.mark.asyncio
-    async def test_periodic_reconcile_correction(self, manager, mock_client, mock_runner):
+    async def test_periodic_reconcile_correction(
+        self, manager, mock_client, mock_runner
+    ):
         """Periodic check finds discrepancy and fixes it."""
         # Setup: Strategy thinks flat, Broker has position
         mock_client.get_positions.return_value = [

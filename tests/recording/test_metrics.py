@@ -14,8 +14,20 @@ from tradedesk.execution.broker import Direction
 def test_round_trips_long_single_instrument() -> None:
     """Test round trip reconstruction for a single long trade."""
     fills = [
-        {"instrument": "EURUSD", "direction": "BUY", "timestamp": "2025-01-01T00:00:00Z", "price": "100", "size": "2"},
-        {"instrument": "EURUSD", "direction": "SELL", "timestamp": "2025-01-01T00:05:00Z", "price": "105", "size": "2"},
+        {
+            "instrument": "EURUSD",
+            "direction": "BUY",
+            "timestamp": "2025-01-01T00:00:00Z",
+            "price": "100",
+            "size": "2",
+        },
+        {
+            "instrument": "EURUSD",
+            "direction": "SELL",
+            "timestamp": "2025-01-01T00:05:00Z",
+            "price": "105",
+            "size": "2",
+        },
     ]
 
     trips = round_trips_from_fills(fills)
@@ -29,8 +41,20 @@ def test_round_trips_long_single_instrument() -> None:
 def test_round_trips_short_single_instrument() -> None:
     """Test round trip reconstruction for a single short trade."""
     fills = [
-        {"instrument": "GBPUSD", "direction": "SELL", "timestamp": "2025-01-01T00:00:00Z", "price": "200", "size": "1"},
-        {"instrument": "GBPUSD", "direction": "BUY", "timestamp": "2025-01-01T00:03:00Z", "price": "180", "size": "1"},
+        {
+            "instrument": "GBPUSD",
+            "direction": "SELL",
+            "timestamp": "2025-01-01T00:00:00Z",
+            "price": "200",
+            "size": "1",
+        },
+        {
+            "instrument": "GBPUSD",
+            "direction": "BUY",
+            "timestamp": "2025-01-01T00:03:00Z",
+            "price": "180",
+            "size": "1",
+        },
     ]
 
     trips = round_trips_from_fills(fills)
@@ -42,25 +66,69 @@ def test_round_trips_short_single_instrument() -> None:
 def test_round_trips_multiple_instruments_interleaved() -> None:
     """Test round trip reconstruction with multiple instruments."""
     fills = [
-        {"instrument": "EURUSD", "direction": "BUY", "timestamp": "2025-01-01T00:00:00Z", "price": "10", "size": "1"},
-        {"instrument": "GBPUSD", "direction": "SELL", "timestamp": "2025-01-01T00:01:00Z", "price": "50", "size": "2"},
-        {"instrument": "EURUSD", "direction": "SELL", "timestamp": "2025-01-01T00:02:00Z", "price": "12", "size": "1"},
-        {"instrument": "GBPUSD", "direction": "BUY", "timestamp": "2025-01-01T00:03:00Z", "price": "55", "size": "2"},
+        {
+            "instrument": "EURUSD",
+            "direction": "BUY",
+            "timestamp": "2025-01-01T00:00:00Z",
+            "price": "10",
+            "size": "1",
+        },
+        {
+            "instrument": "GBPUSD",
+            "direction": "SELL",
+            "timestamp": "2025-01-01T00:01:00Z",
+            "price": "50",
+            "size": "2",
+        },
+        {
+            "instrument": "EURUSD",
+            "direction": "SELL",
+            "timestamp": "2025-01-01T00:02:00Z",
+            "price": "12",
+            "size": "1",
+        },
+        {
+            "instrument": "GBPUSD",
+            "direction": "BUY",
+            "timestamp": "2025-01-01T00:03:00Z",
+            "price": "55",
+            "size": "2",
+        },
     ]
 
     trips = round_trips_from_fills(fills)
     assert len(trips) == 2
 
     t0, t1 = trips
-    assert (t0.instrument, t0.direction, t0.pnl) == ("EURUSD", Direction.LONG, pytest.approx((12 - 10) * 1))
-    assert (t1.instrument, t1.direction, t1.pnl) == ("GBPUSD", Direction.SHORT, pytest.approx((50 - 55) * 2))
+    assert (t0.instrument, t0.direction, t0.pnl) == (
+        "EURUSD",
+        Direction.LONG,
+        pytest.approx((12 - 10) * 1),
+    )
+    assert (t1.instrument, t1.direction, t1.pnl) == (
+        "GBPUSD",
+        Direction.SHORT,
+        pytest.approx((50 - 55) * 2),
+    )
 
 
 def test_round_trips_supports_epic_field_for_backward_compatibility() -> None:
     """Test that round_trips_from_fills also accepts 'epic' field."""
     fills = [
-        {"epic": "EURUSD", "direction": "BUY", "timestamp": "2025-01-01T00:00:00Z", "price": "100", "size": "1"},
-        {"epic": "EURUSD", "direction": "SELL", "timestamp": "2025-01-01T00:05:00Z", "price": "105", "size": "1"},
+        {
+            "epic": "EURUSD",
+            "direction": "BUY",
+            "timestamp": "2025-01-01T00:00:00Z",
+            "price": "100",
+            "size": "1",
+        },
+        {
+            "epic": "EURUSD",
+            "direction": "SELL",
+            "timestamp": "2025-01-01T00:05:00Z",
+            "price": "105",
+            "size": "1",
+        },
     ]
 
     trips = round_trips_from_fills(fills)
@@ -71,8 +139,20 @@ def test_round_trips_supports_epic_field_for_backward_compatibility() -> None:
 def test_round_trips_size_mismatch_raises() -> None:
     """Test that size mismatch raises an error."""
     fills = [
-        {"instrument": "EURUSD", "direction": "BUY", "timestamp": "2025-01-01T00:00:00Z", "price": "100", "size": "1"},
-        {"instrument": "EURUSD", "direction": "SELL", "timestamp": "2025-01-01T00:05:00Z", "price": "101", "size": "2"},
+        {
+            "instrument": "EURUSD",
+            "direction": "BUY",
+            "timestamp": "2025-01-01T00:00:00Z",
+            "price": "100",
+            "size": "1",
+        },
+        {
+            "instrument": "EURUSD",
+            "direction": "SELL",
+            "timestamp": "2025-01-01T00:05:00Z",
+            "price": "101",
+            "size": "2",
+        },
     ]
 
     with pytest.raises(ValueError, match="Size mismatch"):
@@ -82,7 +162,13 @@ def test_round_trips_size_mismatch_raises() -> None:
 def test_round_trips_incomplete_open_position_is_ignored() -> None:
     """Test that incomplete positions are ignored."""
     fills = [
-        {"instrument": "EURUSD", "direction": "BUY", "timestamp": "2025-01-01T00:00:00Z", "price": "100", "size": "1"},
+        {
+            "instrument": "EURUSD",
+            "direction": "BUY",
+            "timestamp": "2025-01-01T00:00:00Z",
+            "price": "100",
+            "size": "1",
+        },
     ]
 
     trips = round_trips_from_fills(fills)
@@ -92,10 +178,34 @@ def test_round_trips_incomplete_open_position_is_ignored() -> None:
 def test_equity_rows_from_round_trips_cumulative_pnl() -> None:
     """Test equity curve construction from round trips."""
     fills = [
-        {"instrument": "EURUSD", "direction": "BUY", "timestamp": "2025-01-01T00:00:00Z", "price": "10", "size": "1"},
-        {"instrument": "EURUSD", "direction": "SELL", "timestamp": "2025-01-01T00:10:00Z", "price": "12", "size": "1"},
-        {"instrument": "EURUSD", "direction": "BUY", "timestamp": "2025-01-01T00:20:00Z", "price": "10", "size": "1"},
-        {"instrument": "EURUSD", "direction": "SELL", "timestamp": "2025-01-01T00:30:00Z", "price": "15", "size": "1"},
+        {
+            "instrument": "EURUSD",
+            "direction": "BUY",
+            "timestamp": "2025-01-01T00:00:00Z",
+            "price": "10",
+            "size": "1",
+        },
+        {
+            "instrument": "EURUSD",
+            "direction": "SELL",
+            "timestamp": "2025-01-01T00:10:00Z",
+            "price": "12",
+            "size": "1",
+        },
+        {
+            "instrument": "EURUSD",
+            "direction": "BUY",
+            "timestamp": "2025-01-01T00:20:00Z",
+            "price": "10",
+            "size": "1",
+        },
+        {
+            "instrument": "EURUSD",
+            "direction": "SELL",
+            "timestamp": "2025-01-01T00:30:00Z",
+            "price": "15",
+            "size": "1",
+        },
     ]
 
     trips = round_trips_from_fills(fills)
@@ -160,8 +270,20 @@ def test_compute_metrics_wins_only_profit_factor_inf() -> None:
     ]
 
     trade_rows = [
-        {"timestamp": "2025-01-01T00:00:00+00:00", "instrument": "EURUSD", "direction": "BUY", "size": "1", "price": "100"},
-        {"timestamp": "2025-01-01T00:05:00+00:00", "instrument": "EURUSD", "direction": "SELL", "size": "1", "price": "110"},
+        {
+            "timestamp": "2025-01-01T00:00:00+00:00",
+            "instrument": "EURUSD",
+            "direction": "BUY",
+            "size": "1",
+            "price": "100",
+        },
+        {
+            "timestamp": "2025-01-01T00:05:00+00:00",
+            "instrument": "EURUSD",
+            "direction": "SELL",
+            "size": "1",
+            "price": "110",
+        },
     ]
 
     m = compute_metrics(equity_rows=equity_rows, trade_rows=trade_rows)
@@ -178,8 +300,20 @@ def test_compute_metrics_losses_only_profit_factor_zero() -> None:
     ]
 
     trade_rows = [
-        {"timestamp": "2025-01-01T00:00:00+00:00", "instrument": "EURUSD", "direction": "BUY", "size": "1", "price": "100"},
-        {"timestamp": "2025-01-01T00:05:00+00:00", "instrument": "EURUSD", "direction": "SELL", "size": "1", "price": "90"},
+        {
+            "timestamp": "2025-01-01T00:00:00+00:00",
+            "instrument": "EURUSD",
+            "direction": "BUY",
+            "size": "1",
+            "price": "100",
+        },
+        {
+            "timestamp": "2025-01-01T00:05:00+00:00",
+            "instrument": "EURUSD",
+            "direction": "SELL",
+            "size": "1",
+            "price": "90",
+        },
     ]
 
     m = compute_metrics(equity_rows=equity_rows, trade_rows=trade_rows)
@@ -197,10 +331,34 @@ def test_compute_metrics_mixed_wins_and_losses() -> None:
     ]
 
     trade_rows = [
-        {"timestamp": "2025-01-01T00:00:00+00:00", "instrument": "EURUSD", "direction": "BUY", "size": "1", "price": "100"},
-        {"timestamp": "2025-01-01T00:05:00+00:00", "instrument": "EURUSD", "direction": "SELL", "size": "1", "price": "110"},
-        {"timestamp": "2025-01-01T00:07:00+00:00", "instrument": "EURUSD", "direction": "BUY", "size": "1", "price": "110"},
-        {"timestamp": "2025-01-01T00:10:00+00:00", "instrument": "EURUSD", "direction": "SELL", "size": "1", "price": "105"},
+        {
+            "timestamp": "2025-01-01T00:00:00+00:00",
+            "instrument": "EURUSD",
+            "direction": "BUY",
+            "size": "1",
+            "price": "100",
+        },
+        {
+            "timestamp": "2025-01-01T00:05:00+00:00",
+            "instrument": "EURUSD",
+            "direction": "SELL",
+            "size": "1",
+            "price": "110",
+        },
+        {
+            "timestamp": "2025-01-01T00:07:00+00:00",
+            "instrument": "EURUSD",
+            "direction": "BUY",
+            "size": "1",
+            "price": "110",
+        },
+        {
+            "timestamp": "2025-01-01T00:10:00+00:00",
+            "instrument": "EURUSD",
+            "direction": "SELL",
+            "size": "1",
+            "price": "105",
+        },
     ]
 
     m = compute_metrics(equity_rows=equity_rows, trade_rows=trade_rows)
@@ -222,11 +380,25 @@ def test_compute_metrics_reporting_scale_scales_linear_outputs_only() -> None:
     ]
 
     trade_rows = [
-        {"timestamp": "2025-01-01T00:00:00+00:00", "instrument": "EURUSD", "direction": "BUY", "size": "1", "price": "100"},
-        {"timestamp": "2025-01-01T00:05:00+00:00", "instrument": "EURUSD", "direction": "SELL", "size": "1", "price": "110"},
+        {
+            "timestamp": "2025-01-01T00:00:00+00:00",
+            "instrument": "EURUSD",
+            "direction": "BUY",
+            "size": "1",
+            "price": "100",
+        },
+        {
+            "timestamp": "2025-01-01T00:05:00+00:00",
+            "instrument": "EURUSD",
+            "direction": "SELL",
+            "size": "1",
+            "price": "110",
+        },
     ]
 
-    m = compute_metrics(equity_rows=equity_rows, trade_rows=trade_rows, reporting_scale=2.0)
+    m = compute_metrics(
+        equity_rows=equity_rows, trade_rows=trade_rows, reporting_scale=2.0
+    )
 
     # Scaled
     assert m.final_equity == pytest.approx(20.0)
@@ -247,10 +419,36 @@ def test_compute_metrics_counts_exits_by_reason() -> None:
     ]
 
     trade_rows = [
-        {"timestamp": "2025-01-01T00:00:00+00:00", "instrument": "EURUSD", "direction": "BUY", "size": "1", "price": "100"},
-        {"timestamp": "2025-01-01T00:05:00+00:00", "instrument": "EURUSD", "direction": "SELL", "size": "1", "price": "110", "reason": "take_profit"},
-        {"timestamp": "2025-01-01T00:07:00+00:00", "instrument": "EURUSD", "direction": "BUY", "size": "1", "price": "110"},
-        {"timestamp": "2025-01-01T00:10:00+00:00", "instrument": "EURUSD", "direction": "SELL", "size": "1", "price": "105", "reason": "stop_loss"},
+        {
+            "timestamp": "2025-01-01T00:00:00+00:00",
+            "instrument": "EURUSD",
+            "direction": "BUY",
+            "size": "1",
+            "price": "100",
+        },
+        {
+            "timestamp": "2025-01-01T00:05:00+00:00",
+            "instrument": "EURUSD",
+            "direction": "SELL",
+            "size": "1",
+            "price": "110",
+            "reason": "take_profit",
+        },
+        {
+            "timestamp": "2025-01-01T00:07:00+00:00",
+            "instrument": "EURUSD",
+            "direction": "BUY",
+            "size": "1",
+            "price": "110",
+        },
+        {
+            "timestamp": "2025-01-01T00:10:00+00:00",
+            "instrument": "EURUSD",
+            "direction": "SELL",
+            "size": "1",
+            "price": "105",
+            "reason": "stop_loss",
+        },
     ]
 
     m = compute_metrics(equity_rows=equity_rows, trade_rows=trade_rows)

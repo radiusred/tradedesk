@@ -18,7 +18,6 @@ def _candle(ts: str, high: float, low: float) -> Candle:
 
 
 class TestBuildCandleIndex:
-
     def test_basic(self):
         candles = [
             _candle("2025-01-01T00:00:00Z", 105.0, 95.0),
@@ -45,7 +44,6 @@ class TestBuildCandleIndex:
 
 
 class TestComputeExcursions:
-
     def _make_index(self):
         candles = [
             _candle("2025-01-01T00:00:00Z", 105.0, 95.0),

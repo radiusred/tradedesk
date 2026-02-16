@@ -15,6 +15,7 @@ def candle(high: float, low: float, close: float) -> Candle:
         tick_count=1,
     )
 
+
 class TestATR:
     def test_rejects_non_positive_period(self) -> None:
         with pytest.raises(ValueError):

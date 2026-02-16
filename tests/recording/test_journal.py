@@ -33,7 +33,6 @@ def _make_entry(**overrides):
 
 
 class TestPositionJournal:
-
     def test_save_creates_directory_and_file(self, journal, journal_dir):
         entries = [_make_entry()]
         journal.save(entries)

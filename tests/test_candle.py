@@ -4,10 +4,12 @@ from tradedesk.types import Candle
 # Candle timestamp helpers
 # ---------------------------------------------------------------------------
 
-class TestCandleWithMsTimestamp:
 
+class TestCandleWithMsTimestamp:
     def test_iso_to_ms(self):
-        c = Candle(timestamp="2025-01-15T12:30:00Z", open=1.0, high=2.0, low=0.5, close=1.5)
+        c = Candle(
+            timestamp="2025-01-15T12:30:00Z", open=1.0, high=2.0, low=0.5, close=1.5
+        )
         result = c.candle_with_ms_timestamp()
         assert isinstance(result.timestamp, int)
         assert isinstance(c.timestamp, str)
@@ -31,7 +33,6 @@ class TestCandleWithMsTimestamp:
 
 
 class TestCandleWithIsoTimestamp:
-
     def test_ms_int_to_iso(self):
         c = Candle(timestamp=1736899200000, open=1.0, high=2.0, low=0.5, close=1.5)
         result = c.candle_with_iso_timestamp()
@@ -39,7 +40,9 @@ class TestCandleWithIsoTimestamp:
         assert "2025-01-15" in result.timestamp
 
     def test_already_iso(self):
-        c = Candle(timestamp="2025-01-15T12:30:00Z", open=1.0, high=2.0, low=0.5, close=1.5)
+        c = Candle(
+            timestamp="2025-01-15T12:30:00Z", open=1.0, high=2.0, low=0.5, close=1.5
+        )
         result = c.candle_with_iso_timestamp()
         assert result.timestamp == "2025-01-15T12:30:00Z"
 

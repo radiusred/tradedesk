@@ -30,7 +30,7 @@ class TestRSI:
         assert rsi.update(candle(11.0)) is None  # delta 1
         assert rsi.update(candle(12.0)) is None  # delta 2
 
-        v = rsi.update(candle(13.0))             # delta 3 -> first RSI
+        v = rsi.update(candle(13.0))  # delta 3 -> first RSI
         assert rsi.ready() is True
         assert v is not None
 
@@ -88,27 +88,27 @@ class TestRSI:
     def test_final_seed_branch_executed_on_boundary(self) -> None:
         rsi = RSI(period=3)
 
-        rsi.update(candle(10.0))                 # prev_close
+        rsi.update(candle(10.0))  # prev_close
         assert rsi.update(candle(12.0)) is None  # delta 1
         assert rsi.update(candle(11.0)) is None  # delta 2
 
-        v = rsi.update(candle(13.0))             # delta 3 -> first RSI (seeded)
+        v = rsi.update(candle(13.0))  # delta 3 -> first RSI (seeded)
         assert v == pytest.approx(80.0)
-        
+
     def test_wilder_smoothing_step_after_seed(self) -> None:
         rsi = RSI(period=3)
 
         # Prices produce deltas: +2, -1, +2 (seed), then +1 (smoothing)
-        rsi.update(candle(10.0))                 # prev_close
+        rsi.update(candle(10.0))  # prev_close
         assert rsi.update(candle(12.0)) is None  # delta 1
         assert rsi.update(candle(11.0)) is None  # delta 2
 
-        v_seed = rsi.update(candle(13.0))        # delta 3 -> seed RSI
+        v_seed = rsi.update(candle(13.0))  # delta 3 -> seed RSI
         assert v_seed == pytest.approx(80.0)
         assert rsi.ready() is True
 
         # Next candle triggers Wilder smoothing
-        v_next = rsi.update(candle(14.0))        # delta 4 = +1, gain=1 loss=0
+        v_next = rsi.update(candle(14.0))  # delta 4 = +1, gain=1 loss=0
         assert v_next is not None
 
         # Seed averages from first 3 deltas:

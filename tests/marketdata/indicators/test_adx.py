@@ -15,6 +15,7 @@ def candle(high: float, low: float, close: float) -> Candle:
         tick_count=1,
     )
 
+
 class TestADX:
     def test_rejects_non_positive_period(self) -> None:
         with pytest.raises(ValueError):
@@ -25,7 +26,11 @@ class TestADX:
     def test_none_until_di_available(self) -> None:
         adx = ADX(period=2)
 
-        assert adx.update(candle(10, 8, 9)) == {"adx": None, "plus_di": None, "minus_di": None}
+        assert adx.update(candle(10, 8, 9)) == {
+            "adx": None,
+            "plus_di": None,
+            "minus_di": None,
+        }
         out2 = adx.update(candle(11, 9, 10))  # delta 1 (< period): still none
         assert out2 == {"adx": None, "plus_di": None, "minus_di": None}
         assert adx.ready() is False
@@ -80,12 +85,16 @@ class TestADX:
 
         adx.reset()
         assert adx.ready() is False
-        assert adx.update(candle(10, 8, 9)) == {"adx": None, "plus_di": None, "minus_di": None}
+        assert adx.update(candle(10, 8, 9)) == {
+            "adx": None,
+            "plus_di": None,
+            "minus_di": None,
+        }
 
     def test_warmup_periods(self) -> None:
         assert ADX(period=14).warmup_periods() == 28
         assert ADX(period=2).warmup_periods() == 4
-        
+
     def test_adx_wilder_smoothing_after_seed(self) -> None:
         # Same monotonic up series used elsewhere:
         # Each delta: TR=2, +DM=1, -DM=0 => DX always 100 once DI available.

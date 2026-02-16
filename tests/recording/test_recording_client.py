@@ -29,7 +29,6 @@ def client(mock_inner, ledger):
 
 
 class TestRecordingClient:
-
     def test_getattr_delegates(self, client, mock_inner):
         assert client.some_other_method() == "delegated"
         mock_inner.some_other_method.assert_called_once()

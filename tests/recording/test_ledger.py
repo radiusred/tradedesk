@@ -12,8 +12,23 @@ from tradedesk.recording.types import EquityRecord, RecordingMode, TradeRecord
 # Helpers
 # ---------------------------------------------------------------------------
 
-def _trade(instrument="USDJPY", direction="BUY", price=150.0, size=1.0, ts="2025-01-15T12:00:00Z", reason=""):
-    return TradeRecord(timestamp=ts, instrument=instrument, direction=direction, size=size, price=price, reason=reason)
+
+def _trade(
+    instrument="USDJPY",
+    direction="BUY",
+    price=150.0,
+    size=1.0,
+    ts="2025-01-15T12:00:00Z",
+    reason="",
+):
+    return TradeRecord(
+        timestamp=ts,
+        instrument=instrument,
+        direction=direction,
+        size=size,
+        price=price,
+        reason=reason,
+    )
 
 
 def _equity(ts="2025-01-15T12:00:00Z", eq=10000.0):
@@ -29,8 +44,8 @@ def _read_csv(path):
 # trade_rows_from_trades
 # ---------------------------------------------------------------------------
 
-class TestTradeRowsFromTrades:
 
+class TestTradeRowsFromTrades:
     def test_converts_trade_records(self):
         trades = [_trade(price=150.0, size=1.5)]
         rows = trade_rows_from_trades(trades)
@@ -44,8 +59,8 @@ class TestTradeRowsFromTrades:
 # TradeLedger – backtest mode
 # ---------------------------------------------------------------------------
 
-class TestTradeLedgerBacktest:
 
+class TestTradeLedgerBacktest:
     def test_record_trade(self):
         ledger = TradeLedger()
         ledger.record_trade(_trade())
@@ -91,9 +106,18 @@ class TestTradeLedgerBacktest:
     def test_write_round_trips_csv(self, tmp_path):
         ledger = TradeLedger()
         # Entry
-        ledger.record_trade(_trade(direction="BUY", price=150.0, ts="2025-01-15T12:00:00Z"))
+        ledger.record_trade(
+            _trade(direction="BUY", price=150.0, ts="2025-01-15T12:00:00Z")
+        )
         # Exit
-        ledger.record_trade(_trade(direction="SELL", price=152.0, ts="2025-01-15T13:00:00Z", reason="take_profit"))
+        ledger.record_trade(
+            _trade(
+                direction="SELL",
+                price=152.0,
+                ts="2025-01-15T13:00:00Z",
+                reason="take_profit",
+            )
+        )
         path = tmp_path / "round_trips.csv"
         ledger.write_round_trips_csv(path)
         rows = _read_csv(path)
@@ -125,8 +149,12 @@ class TestTradeLedgerBacktest:
 
     def test_write_exposure_csv(self, tmp_path):
         ledger = TradeLedger()
-        ledger.record_trade(_trade(direction="BUY", price=150.0, ts="2025-01-15T12:00:00Z"))
-        ledger.record_trade(_trade(direction="SELL", price=152.0, ts="2025-01-15T13:00:00Z"))
+        ledger.record_trade(
+            _trade(direction="BUY", price=150.0, ts="2025-01-15T12:00:00Z")
+        )
+        ledger.record_trade(
+            _trade(direction="SELL", price=152.0, ts="2025-01-15T13:00:00Z")
+        )
         ledger.record_equity(_equity(ts="2025-01-15T12:30:00Z"))
         path = tmp_path / "exposure.csv"
         ledger.write_exposure_csv(path)
@@ -144,7 +172,9 @@ class TestTradeLedgerBacktest:
 
     def test_write_opportunity_csv_with_data(self, tmp_path):
         ledger = TradeLedger()
-        ledger.opportunity.on_instrument_bar(instrument="USDJPY", timestamp="t1", active=True)
+        ledger.opportunity.on_instrument_bar(
+            instrument="USDJPY", timestamp="t1", active=True
+        )
         ledger.opportunity.on_portfolio_snapshot(timestamp="t1", k_active=1)
         path = tmp_path / "opportunity.csv"
         ledger.write_opportunity_csv(path)
@@ -154,8 +184,12 @@ class TestTradeLedgerBacktest:
 
     def test_write_batch(self, tmp_path):
         ledger = TradeLedger()
-        ledger.record_trade(_trade(direction="BUY", price=150.0, ts="2025-01-15T12:00:00Z"))
-        ledger.record_trade(_trade(direction="SELL", price=152.0, ts="2025-01-15T13:00:00Z"))
+        ledger.record_trade(
+            _trade(direction="BUY", price=150.0, ts="2025-01-15T12:00:00Z")
+        )
+        ledger.record_trade(
+            _trade(direction="SELL", price=152.0, ts="2025-01-15T13:00:00Z")
+        )
         ledger.record_equity(_equity(ts="2025-01-15T12:30:00Z"))
         out = tmp_path / "results"
         ledger.write(out)
@@ -171,8 +205,8 @@ class TestTradeLedgerBacktest:
 # TradeLedger – broker mode
 # ---------------------------------------------------------------------------
 
-class TestTradeLedgerBroker:
 
+class TestTradeLedgerBroker:
     def test_broker_mode_requires_out_dir(self):
         with pytest.raises(ValueError, match="out_dir required"):
             TradeLedger(mode=RecordingMode.BROKER)
@@ -184,7 +218,9 @@ class TestTradeLedgerBroker:
         assert len(rows) == 0  # header only
 
     def test_broker_record_trade_appends_to_csv(self, tmp_path):
-        ledger = TradeLedger(mode=RecordingMode.BROKER, out_dir=tmp_path, initial_balance=10000.0)
+        ledger = TradeLedger(
+            mode=RecordingMode.BROKER, out_dir=tmp_path, initial_balance=10000.0
+        )
         ledger.record_trade(_trade(ts="2025-01-15T12:00:00Z"))
         rows = _read_csv(tmp_path / "trades.csv")
         assert len(rows) == 1
@@ -195,47 +231,77 @@ class TestTradeLedgerBroker:
         assert len(ledger.equity) == 0
 
     def test_broker_synthetic_equity_pnl(self, tmp_path):
-        ledger = TradeLedger(mode=RecordingMode.BROKER, out_dir=tmp_path, initial_balance=10000.0)
+        ledger = TradeLedger(
+            mode=RecordingMode.BROKER, out_dir=tmp_path, initial_balance=10000.0
+        )
         # Open long
-        ledger.record_trade(_trade(direction="BUY", price=150.0, size=1.0, ts="2025-01-15T12:00:00Z"))
+        ledger.record_trade(
+            _trade(direction="BUY", price=150.0, size=1.0, ts="2025-01-15T12:00:00Z")
+        )
         assert ledger._current_balance == 10000.0  # no P&L yet
 
         # Close long at profit
-        ledger.record_trade(_trade(direction="SELL", price=155.0, size=1.0, ts="2025-01-15T13:00:00Z"))
+        ledger.record_trade(
+            _trade(direction="SELL", price=155.0, size=1.0, ts="2025-01-15T13:00:00Z")
+        )
         assert ledger._current_balance == pytest.approx(10005.0)
 
     def test_broker_short_trade_pnl(self, tmp_path):
-        ledger = TradeLedger(mode=RecordingMode.BROKER, out_dir=tmp_path, initial_balance=10000.0)
+        ledger = TradeLedger(
+            mode=RecordingMode.BROKER, out_dir=tmp_path, initial_balance=10000.0
+        )
         # Open short
-        ledger.record_trade(_trade(direction="SELL", price=150.0, size=1.0, ts="2025-01-15T12:00:00Z"))
+        ledger.record_trade(
+            _trade(direction="SELL", price=150.0, size=1.0, ts="2025-01-15T12:00:00Z")
+        )
         # Close short at profit
-        ledger.record_trade(_trade(direction="BUY", price=145.0, size=1.0, ts="2025-01-15T13:00:00Z"))
+        ledger.record_trade(
+            _trade(direction="BUY", price=145.0, size=1.0, ts="2025-01-15T13:00:00Z")
+        )
         assert ledger._current_balance == pytest.approx(10005.0)
 
     def test_broker_adds_to_position(self, tmp_path):
-        ledger = TradeLedger(mode=RecordingMode.BROKER, out_dir=tmp_path, initial_balance=10000.0)
-        ledger.record_trade(_trade(direction="BUY", price=100.0, size=1.0, ts="2025-01-15T12:00:00Z"))
-        ledger.record_trade(_trade(direction="BUY", price=110.0, size=1.0, ts="2025-01-15T12:01:00Z"))
+        ledger = TradeLedger(
+            mode=RecordingMode.BROKER, out_dir=tmp_path, initial_balance=10000.0
+        )
+        ledger.record_trade(
+            _trade(direction="BUY", price=100.0, size=1.0, ts="2025-01-15T12:00:00Z")
+        )
+        ledger.record_trade(
+            _trade(direction="BUY", price=110.0, size=1.0, ts="2025-01-15T12:01:00Z")
+        )
         pos = ledger._open_positions["USDJPY"]
         assert pos["size"] == pytest.approx(2.0)
         assert pos["price"] == pytest.approx(105.0)  # average price
 
     def test_broker_partial_close(self, tmp_path):
-        ledger = TradeLedger(mode=RecordingMode.BROKER, out_dir=tmp_path, initial_balance=10000.0)
-        ledger.record_trade(_trade(direction="BUY", price=100.0, size=2.0, ts="2025-01-15T12:00:00Z"))
+        ledger = TradeLedger(
+            mode=RecordingMode.BROKER, out_dir=tmp_path, initial_balance=10000.0
+        )
+        ledger.record_trade(
+            _trade(direction="BUY", price=100.0, size=2.0, ts="2025-01-15T12:00:00Z")
+        )
         # Partial close
-        ledger.record_trade(_trade(direction="SELL", price=110.0, size=1.0, ts="2025-01-15T13:00:00Z"))
+        ledger.record_trade(
+            _trade(direction="SELL", price=110.0, size=1.0, ts="2025-01-15T13:00:00Z")
+        )
         # P&L: (110 - 100) * 1 = 10
         assert ledger._current_balance == pytest.approx(10010.0)
         # 1.0 remaining
         assert ledger._open_positions["USDJPY"]["size"] == pytest.approx(1.0)
 
     def test_broker_daily_equity_csv(self, tmp_path):
-        ledger = TradeLedger(mode=RecordingMode.BROKER, out_dir=tmp_path, initial_balance=10000.0)
+        ledger = TradeLedger(
+            mode=RecordingMode.BROKER, out_dir=tmp_path, initial_balance=10000.0
+        )
         # Trade on day 1
-        ledger.record_trade(_trade(direction="BUY", price=100.0, ts="2025-01-15T12:00:00Z"))
+        ledger.record_trade(
+            _trade(direction="BUY", price=100.0, ts="2025-01-15T12:00:00Z")
+        )
         # Trade on day 2 (triggers daily equity write)
-        ledger.record_trade(_trade(direction="SELL", price=110.0, ts="2025-01-16T12:00:00Z"))
+        ledger.record_trade(
+            _trade(direction="SELL", price=110.0, ts="2025-01-16T12:00:00Z")
+        )
         assert (tmp_path / "equity_daily.csv").exists()
 
     def test_broker_write_is_noop(self, tmp_path):

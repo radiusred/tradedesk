@@ -303,7 +303,7 @@ class BacktestClient(Client):
     async def close(self) -> None:
         self._closed = True
 
-    def get_streamer(self) -> Any:
+    def get_streamer(self) -> BacktestStreamer:
         return BacktestStreamer(self, self._candle_series, self._market_series)
 
     def _set_current_timestamp(self, ts: str) -> None:

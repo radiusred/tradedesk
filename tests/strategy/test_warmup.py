@@ -4,10 +4,12 @@ from tradedesk.marketdata.indicators.mfi import MFI
 from tradedesk.marketdata.indicators.williams_r import WilliamsR
 import pytest
 
+
 @pytest.fixture
 def strat(DummyStrategy):
     Strat = DummyStrategy([])
     return Strat(client=None)
+
 
 class TestStrategyIndicatorWarmup:
     def test_no_indicators_returns_zero(self, strat):

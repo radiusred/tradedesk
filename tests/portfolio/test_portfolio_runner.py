@@ -48,11 +48,11 @@ async def test_runner_splits_risk_across_active_strategies():
         default_risk_per_trade=10.0,
     )
 
-    await r.on_candle_close(CandleClosedEvent(
-        instrument=Instrument("EURUSD"),
-        timeframe="15MINUTE",
-        candle=None
-    ))
+    await r.on_candle_close(
+        CandleClosedEvent(
+            instrument=Instrument("EURUSD"), timeframe="15MINUTE", candle=None
+        )
+    )
 
     # Two active strategies should get 5.0 each
     assert s1._rpt == 5.0

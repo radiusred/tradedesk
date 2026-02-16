@@ -20,8 +20,8 @@ def _candle(ts="2025-01-15T12:00:00Z"):
 # BacktestRecorder
 # ---------------------------------------------------------------------------
 
-class TestBacktestRecorder:
 
+class TestBacktestRecorder:
     def test_sample_equity(self):
         ledger = TradeLedger()
         recorder = BacktestRecorder(ledger)
@@ -32,7 +32,9 @@ class TestBacktestRecorder:
         mock_client = MagicMock()
         mock_client._inner = mock_inner
 
-        with patch("tradedesk.execution.backtest.observers.compute_equity", return_value=100.0):
+        with patch(
+            "tradedesk.execution.backtest.observers.compute_equity", return_value=100.0
+        ):
             recorder.sample_equity(_candle(), mock_client)
 
         assert len(ledger.equity) == 1
@@ -52,8 +54,8 @@ class TestBacktestRecorder:
 # ProgressLogger
 # ---------------------------------------------------------------------------
 
-class TestProgressLogger:
 
+class TestProgressLogger:
     def test_logs_at_start_of_week(self):
         logger = ProgressLogger()
         with patch("tradedesk.execution.backtest.observers.log") as mock_log:
@@ -79,8 +81,8 @@ class TestProgressLogger:
 # TrackerSync
 # ---------------------------------------------------------------------------
 
-class TestTrackerSync:
 
+class TestTrackerSync:
     def test_sync_no_tracker(self):
         """If policy has no tracker attribute, sync is a noop."""
         ledger = TradeLedger()
@@ -98,13 +100,15 @@ class TestTrackerSync:
         ts = TrackerSync(ledger, policy)
         # Add only 5 trades
         for i in range(5):
-            ledger.trades.append(TradeRecord(
-                timestamp=f"2025-01-15T{i:02d}:00:00Z",
-                instrument="USDJPY",
-                direction="BUY" if i % 2 == 0 else "SELL",
-                size=1.0,
-                price=150.0,
-            ))
+            ledger.trades.append(
+                TradeRecord(
+                    timestamp=f"2025-01-15T{i:02d}:00:00Z",
+                    instrument="USDJPY",
+                    direction="BUY" if i % 2 == 0 else "SELL",
+                    size=1.0,
+                    price=150.0,
+                )
+            )
         ts.sync()
         tracker.update_from_trades.assert_not_called()
 
@@ -118,12 +122,14 @@ class TestTrackerSync:
         ts = TrackerSync(ledger, policy)
         # Add 10 trades (5 round trips)
         for i in range(10):
-            ledger.trades.append(TradeRecord(
-                timestamp=f"2025-01-15T00:{i:02d}:00Z",
-                instrument="USDJPY",
-                direction="BUY" if i % 2 == 0 else "SELL",
-                size=1.0,
-                price=150.0 + i,
-            ))
+            ledger.trades.append(
+                TradeRecord(
+                    timestamp=f"2025-01-15T00:{i:02d}:00Z",
+                    instrument="USDJPY",
+                    direction="BUY" if i % 2 == 0 else "SELL",
+                    size=1.0,
+                    price=150.0 + i,
+                )
+            )
         ts.sync()
         tracker.update_from_trades.assert_called_once()

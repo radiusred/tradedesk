@@ -5,6 +5,7 @@ import pytest
 from tradedesk.types import Candle
 from tradedesk.marketdata.indicators import MACD, MFI, WilliamsR
 
+
 def candle(
     open_: float,
     high: float,
@@ -25,6 +26,7 @@ def candle(
         tick_count=tick_count,
     )
 
+
 class TestIndicators:
     # -------------------------
     # Williams %R
@@ -42,7 +44,6 @@ class TestIndicators:
         assert wr.ready() is True
         assert isinstance(v, float)
 
-
     def test_williams_r_known_value(self) -> None:
         # period=3
         # highs: [2, 3, 4] -> HH=4
@@ -55,7 +56,6 @@ class TestIndicators:
         v = wr.update(candle(2, 4, 1, 3))
         assert v == pytest.approx(-25.0)
 
-
     def test_williams_r_flat_range_returns_minus_50(self) -> None:
         wr = WilliamsR(period=3)
 
@@ -64,7 +64,6 @@ class TestIndicators:
         assert wr.update(candle(10, 10, 10, 10)) is None
         v = wr.update(candle(10, 10, 10, 10))
         assert v == pytest.approx(-50.0)
-
 
     def test_williams_r_reset(self) -> None:
         wr = WilliamsR(period=2)
@@ -76,7 +75,6 @@ class TestIndicators:
         wr.reset()
         assert wr.ready() is False
         assert wr.update(candle(1, 2, 0, 1)) is None
-
 
     # -------------------------
     # MFI
@@ -103,7 +101,6 @@ class TestIndicators:
         assert mfi.ready() is True
         assert isinstance(v, float)
 
-
     def test_mfi_known_value_simple_sequence(self) -> None:
         """
         Construct a small, deterministic sequence with period=3 where we can compute
@@ -127,9 +124,8 @@ class TestIndicators:
         assert mfi.update(candle(1, 1, 1, 1, volume=1)) is None  # tp=1
         assert mfi.update(candle(2, 2, 2, 2, volume=1)) is None  # +2
         assert mfi.update(candle(3, 3, 3, 3, volume=1)) is None  # +3
-        v = mfi.update(candle(2, 2, 2, 2, volume=1))             # -2 => ready
+        v = mfi.update(candle(2, 2, 2, 2, volume=1))  # -2 => ready
         assert v == pytest.approx(100.0 - (100.0 / (1.0 + (5.0 / 2.0))), rel=1e-12)
-
 
     def test_mfi_volume_fallback_to_tick_count(self) -> None:
         # If volume is 0, MFI uses tick_count as volume surrogate.
@@ -143,7 +139,6 @@ class TestIndicators:
         v = mfi.update(candle(3, 3, 3, 3, volume=0, tick_count=10))
         assert v == pytest.approx(100.0)
 
-
     def test_mfi_neutral_when_no_flow(self) -> None:
         # With your patch: if pos==0 and neg==0 => return 50.0
         mfi = MFI(period=2)
@@ -153,7 +148,6 @@ class TestIndicators:
         assert mfi.update(candle(1, 1, 1, 1, volume=1)) is None
         v = mfi.update(candle(1, 1, 1, 1, volume=1))
         assert v == pytest.approx(50.0)
-
 
     def test_mfi_reset(self) -> None:
         mfi = MFI(period=2)
@@ -166,7 +160,6 @@ class TestIndicators:
         mfi.reset()
         assert mfi.ready() is False
         assert mfi.update(candle(1, 1, 1, 1, volume=1)) is None
-
 
     # -------------------------
     # MACD
@@ -184,7 +177,6 @@ class TestIndicators:
         # Still warming up until both EMAs exist
         out2 = macd.update(candle(2, 2, 2, 2))
         assert set(out2.keys()) == {"macd", "signal", "histogram"}
-
 
     def test_macd_strict_ready_only_when_signal_available(self) -> None:
         # With SMA seeding:
@@ -207,8 +199,9 @@ class TestIndicators:
         assert last["signal"] is not None
         assert last["histogram"] is not None
         # Histogram identity
-        assert last["histogram"] == pytest.approx(last["macd"] - last["signal"], rel=1e-12)
-
+        assert last["histogram"] == pytest.approx(
+            last["macd"] - last["signal"], rel=1e-12
+        )
 
     def test_macd_reset(self) -> None:
         macd = MACD(fast=3, slow=5, signal=2)

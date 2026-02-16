@@ -8,12 +8,15 @@ framework for implementing trading strategies.
 """
 
 from .runner import run_strategies
-from .types import Candle
+from .types import Candle, DataProvider, Direction, StreamConsumer
 
 __version__ = "0.4.0"
 
 __all__ = [
     "__version__",
     "Candle",
+    "DataProvider",
+    "Direction",
+    "StreamConsumer",
     "run_strategies",
 ]
