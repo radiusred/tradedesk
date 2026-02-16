@@ -1,14 +1,13 @@
 """MFE/MAE (Maximum Favorable/Adverse Excursion) computation."""
 
+from bisect import bisect_left, bisect_right
 from dataclasses import dataclass
 from datetime import datetime
-from bisect import bisect_left, bisect_right
 from typing import Iterable
 
-from tradedesk.marketdata import Candle
 from tradedesk.recording import RoundTrip
-
 from tradedesk.time_utils import parse_timestamp
+from tradedesk.types import Candle
 
 
 @dataclass(frozen=True)

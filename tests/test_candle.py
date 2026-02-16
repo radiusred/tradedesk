@@ -1,4 +1,4 @@
-from tradedesk.marketdata import Candle
+from tradedesk.types import Candle
 
 # ---------------------------------------------------------------------------
 # Candle timestamp helpers
@@ -21,6 +21,13 @@ class TestCandleWithMsTimestamp:
         c = Candle(timestamp=1736899200000.0, open=1.0, high=2.0, low=0.5, close=1.5)
         result = c.candle_with_ms_timestamp()
         assert isinstance(result.timestamp, int)
+
+    def test_numeric_string_to_ms(self):
+        """IG Lightstreamer UTM field returns epoch-ms as a string."""
+        c = Candle(timestamp="1736899200000", open=1.0, high=2.0, low=0.5, close=1.5)
+        result = c.candle_with_ms_timestamp()
+        assert isinstance(result.timestamp, int)
+        assert result.timestamp == 1736899200000
 
 
 class TestCandleWithIsoTimestamp:

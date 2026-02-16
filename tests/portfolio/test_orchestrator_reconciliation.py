@@ -7,7 +7,7 @@ from tradedesk.execution.position import PositionTracker
 from tradedesk.execution import Direction
 from tradedesk.execution import BrokerPosition
 from tradedesk.portfolio import Instrument
-from tradedesk.marketdata import Candle
+from tradedesk.types import Candle
 
 from tradedesk.recording.journal import PositionJournal, JournalEntry
 from tradedesk.portfolio.reconciliation import ReconciliationManager

@@ -11,8 +11,8 @@ from tradedesk.execution.backtest.streamer import (
     MarketSeries,
 )
 from tradedesk.execution.broker import Direction
-from tradedesk.marketdata.candle import Candle
 from tradedesk.marketdata.instrument import MarketData
+from tradedesk.types import Candle
 
 
 @dataclass

@@ -110,7 +110,7 @@ assert position.bars_held == 0
 ### Tracking Position Metrics
 
 ```python
-from tradedesk.marketdata import Candle
+from tradedesk import Candle
 
 # Update with each new candle
 candle = Candle(

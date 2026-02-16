@@ -18,7 +18,6 @@ import logging
 from datetime import datetime, timezone
 from tradedesk.execution import Client
 from tradedesk.marketdata import (
-    Candle,
     ChartHistory,
     ChartSubscription,
     MarketData,
@@ -26,6 +25,7 @@ from tradedesk.marketdata import (
 )
 from tradedesk.marketdata.events import CandleClosedEvent
 from tradedesk.marketdata.indicators import Indicator
+from tradedesk.types import Candle
 
 log = logging.getLogger(__name__)
 

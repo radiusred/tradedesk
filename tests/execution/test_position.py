@@ -1,7 +1,7 @@
 import pytest
 from tradedesk.execution.position import PositionTracker
 from tradedesk.execution.broker import Direction
-from tradedesk.marketdata.candle import Candle
+from tradedesk.types import Candle
 
 
 @pytest.fixture

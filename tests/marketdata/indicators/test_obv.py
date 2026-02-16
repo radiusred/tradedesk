@@ -1,7 +1,7 @@
 import pytest
 
 from tradedesk.marketdata.indicators.obv import OBV
-from tradedesk.marketdata.candle import Candle
+from tradedesk.types import Candle
 
 
 def candle(ts: str, close: float, vol: float) -> Candle:

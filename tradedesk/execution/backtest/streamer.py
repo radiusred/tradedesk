@@ -4,8 +4,9 @@ from datetime import datetime
 from typing import Any, Iterable
 
 from tradedesk.execution import Streamer
-from tradedesk.marketdata import Candle, MarketData
+from tradedesk.marketdata import MarketData
 from tradedesk.marketdata.events import CandleClosedEvent
+from tradedesk.types import Candle
 
 log = logging.getLogger(__name__)
 

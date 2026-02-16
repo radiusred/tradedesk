@@ -7,7 +7,7 @@ from tradedesk.execution.backtest.observers import (
     ProgressLogger,
     TrackerSync,
 )
-from tradedesk.marketdata.candle import Candle
+from tradedesk.types import Candle
 from tradedesk.recording.ledger import TradeLedger
 from tradedesk.recording.types import TradeRecord
 

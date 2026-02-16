@@ -1,7 +1,7 @@
 import pytest
 
 from tradedesk.marketdata.indicators.cci import CCI
-from tradedesk.marketdata.candle import Candle
+from tradedesk.types import Candle
 
 
 def candle(high: float, low: float, close: float) -> Candle:

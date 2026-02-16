@@ -1,6 +1,6 @@
 """Exponential Moving Average (EMA) indicator implementation."""
 
-from tradedesk.marketdata.candle import Candle
+from tradedesk.types import Candle
 from .base import Indicator
 
 

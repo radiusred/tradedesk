@@ -1,7 +1,7 @@
 import pytest
 
 from tradedesk.marketdata.indicators.atr import ATR
-from tradedesk.marketdata.candle import Candle
+from tradedesk.types import Candle
 
 
 def candle(high: float, low: float, close: float) -> Candle:

@@ -6,10 +6,9 @@ from typing import Callable
 from tradedesk.execution.backtest import BacktestClient
 from tradedesk.execution.backtest.reporting import compute_equity
 from tradedesk.recording import compute_metrics
-from tradedesk.strategy import BaseStrategy
-
 from tradedesk.recording.ledger import TradeLedger
 from tradedesk.recording.types import EquityRecord
+from tradedesk.strategy import BaseStrategy
 
 
 @dataclass(frozen=True)

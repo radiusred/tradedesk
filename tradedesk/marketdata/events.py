@@ -1,6 +1,6 @@
 from tradedesk.events import DomainEvent, event
+from tradedesk.types import Candle
 
-from .candle import Candle
 from .instrument import MarketData
 
 
