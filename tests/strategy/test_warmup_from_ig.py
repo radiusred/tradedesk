@@ -1,7 +1,7 @@
 import pytest
 
-from tradedesk.marketdata.subscriptions import ChartSubscription
 from tradedesk.marketdata.indicators.williams_r import WilliamsR
+from tradedesk.marketdata.subscriptions import ChartSubscription
 
 
 @pytest.mark.asyncio

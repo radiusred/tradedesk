@@ -1,10 +1,11 @@
-import pytest
 from unittest.mock import AsyncMock, MagicMock
 
-from tradedesk.marketdata.instrument import MarketData
+import pytest
+
 from tradedesk.marketdata.events import CandleClosedEvent
-from tradedesk.types import Candle
+from tradedesk.marketdata.instrument import MarketData
 from tradedesk.strategy.base import BaseStrategy
+from tradedesk.types import Candle
 
 
 class Strat(BaseStrategy):

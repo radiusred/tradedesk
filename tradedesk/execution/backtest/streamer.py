@@ -3,10 +3,9 @@ from dataclasses import dataclass
 from datetime import datetime
 from typing import Any, Iterable
 
+from tradedesk import Candle
 from tradedesk.execution import Streamer
-from tradedesk.marketdata import MarketData
-from tradedesk.marketdata.events import CandleClosedEvent
-from tradedesk.types import Candle
+from tradedesk.marketdata import CandleClosedEvent, MarketData
 
 log = logging.getLogger(__name__)
 

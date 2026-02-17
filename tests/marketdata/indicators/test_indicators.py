@@ -2,8 +2,8 @@
 
 import pytest
 
-from tradedesk.types import Candle
 from tradedesk.marketdata.indicators import MACD, MFI, WilliamsR
+from tradedesk.types import Candle
 
 
 def candle(

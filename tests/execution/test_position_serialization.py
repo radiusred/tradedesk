@@ -1,8 +1,9 @@
 """Tests for PositionTracker.to_dict / from_dict serialization."""
 
 import pytest
+
+from tradedesk import Direction
 from tradedesk.execution.position import PositionTracker
-from tradedesk.execution.broker import Direction
 
 
 def test_flat_to_dict():

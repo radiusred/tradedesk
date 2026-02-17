@@ -1,6 +1,7 @@
 import pytest
+
+from tradedesk import Direction
 from tradedesk.execution.position import PositionTracker
-from tradedesk.execution.broker import Direction
 from tradedesk.types import Candle
 
 

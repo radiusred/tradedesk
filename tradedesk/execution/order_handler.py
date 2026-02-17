@@ -23,10 +23,10 @@ import logging
 import uuid
 from typing import Any
 
-from tradedesk.events import DomainEvent, get_dispatcher
-from tradedesk.execution.client import Client
-from tradedesk.execution.events import OrderCompletedEvent, OrderRequestEvent
-from tradedesk.types import OrderRequest, OrderResult
+from tradedesk.execution import Client, OrderCompletedEvent, OrderRequestEvent
+
+from ..events import DomainEvent, get_dispatcher
+from ..types import OrderRequest, OrderResult
 
 log = logging.getLogger(__name__)
 

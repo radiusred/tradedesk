@@ -3,20 +3,23 @@ import logging
 from datetime import datetime, timezone
 from typing import Any
 
-from tradedesk.execution.streamer import Streamer
+from tradedesk import Candle
+from tradedesk.execution import Streamer
 from tradedesk.marketdata import (
+    CandleClosedEvent,
+    ChartSubscription,
     MarketData,
     MarketSubscription,
-    ChartSubscription,
 )
-from tradedesk.marketdata.events import CandleClosedEvent
-from tradedesk.types import Candle
 
 log = logging.getLogger(__name__)
 
 # Optional import
 try:
-    from lightstreamer.client import LightstreamerClient, Subscription  # type: ignore[import-untyped]
+    from lightstreamer.client import (  # type: ignore[import-untyped]
+        LightstreamerClient,
+        Subscription,
+    )
 except Exception:  # pragma: no cover
     LightstreamerClient = None
     Subscription = None

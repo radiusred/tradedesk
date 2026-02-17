@@ -5,10 +5,11 @@ from dataclasses import dataclass
 from enum import Enum
 from typing import Any, cast
 
-from tradedesk.events import DomainEvent
-from tradedesk.execution import BrokerPosition, Direction
-from tradedesk.recording.journal import JournalEntry, PositionJournal
+from tradedesk.recording import JournalEntry, PositionJournal
 
+from ..events import DomainEvent
+from ..execution import BrokerPosition
+from ..types import Direction
 from .runner import PortfolioRunner
 from .types import Instrument, ReconcilableStrategy
 
@@ -540,7 +541,7 @@ class ReconciliationManager:
                 continue
 
             log.info(
-                "Post-reconciliation check for %s: position %s size=%s -- evaluating exit conditions",
+                "Post-reconciliation check for %s: position %s size=%s - checking exit conditions",
                 epic,
                 strat.position.direction.value if strat.position.direction else "?",
                 strat.position.size,
@@ -647,7 +648,8 @@ class ReconciliationManager:
             if entry.discrepancy == DiscrepancyType.PHANTOM_LOCAL:
                 # Broker has no position -- reset local to flat
                 log.warning(
-                    "PHANTOM corrected: %s was %s size=%s locally but broker has no position; resetting to flat",
+                    "PHANTOM corrected: %s was %s size=%s locally but broker has no position; "
+                        "resetting to flat",
                     entry.instrument,
                     entry.journal_direction,
                     entry.journal_size,

@@ -1,6 +1,7 @@
 """Volume Weighted Average Price (VWAP) indicator implementation."""
 
 from tradedesk.types import Candle
+
 from .base import Indicator
 
 

@@ -33,7 +33,7 @@ dependencies = [
 dev = [
     "pre-commit>=4.5",
     "mypy>=1.19",
-    "ruff>=0.14",
+    "ruff>=0.15",
     "pytest>=8.0",
     "responses>=0.25",
     "pytest-asyncio>=0.23",
@@ -71,3 +71,36 @@ packages = ["tradedesk"]
 
 [tool.hatch.version]
 path = "tradedesk/__init__.py"
+
+[tool.mypy]
+python_version = "3.11"
+strict = true
+implicit_reexport = false
+namespace_packages = true
+explicit_package_bases = true
+
+[tool.ruff]
+target-version = "py311"
+line-length = 100
+
+[tool.ruff.lint]
+# E/F: Defaults, I: Import Sorting, TID: Tidy Imports
+select = ["E", "F", "I", "TID"]
+
+[tool.ruff.lint.flake8-tidy-imports.banned-api]
+# 1. Ban direct access to submodules by default
+"tradedesk.execution.*".msg = "Use 'from tradedesk.execution import ...' instead."
+"tradedesk.marketdata.*".msg = "Use 'from tradedesk.marketdata import ...' instead."
+"tradedesk.portfolio.*".msg = "Use 'from tradedesk.portfolio import ...' instead."
+"tradedesk.recording.*".msg = "Use 'from tradedesk.recording import ...' instead."
+"tradedesk.strategy.*".msg = "Use 'from tradedesk.strategy import ...' instead."
+
+[tool.ruff.lint.per-file-ignores]
+# 2. Allow modules WITHIN a package to import their own submodules
+"tradedesk/marketdata/*" = ["TID251"]
+"tradedesk/execution/*" = ["TID251"]
+"tradedesk/strategy/*" = ["TID251"]
+"tradedesk/portfolio/*" = ["TID251"]
+"tradedesk/recording/*" = ["TID251"]
+# 3. Allow relative import to top level to prevent circular deps
+"tradedesk/**/*.py" = ["TID252"]

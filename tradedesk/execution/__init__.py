@@ -9,9 +9,10 @@ from .broker import (
     AccountBalance,
     BrokerPosition,
     DealRejectedException,
-    Direction,
 )
 from .client import Client
+from .events import OrderCompletedEvent, OrderRequestEvent
+from .order_handler import request_order
 from .position import PositionTracker
 from .streamer import Streamer
 
@@ -20,7 +21,9 @@ __all__ = [
     "BrokerPosition",
     "Client",
     "DealRejectedException",
-    "Direction",
+    "OrderCompletedEvent",
+    "OrderRequestEvent",
     "PositionTracker",
+    "request_order",
     "Streamer",
 ]

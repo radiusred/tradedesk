@@ -4,7 +4,6 @@ import pytest
 
 from tradedesk.recording.opportunity import InstrumentOpportunity, OpportunityRecorder
 
-
 # ---------------------------------------------------------------------------
 # InstrumentOpportunity
 # ---------------------------------------------------------------------------

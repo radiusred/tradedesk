@@ -3,13 +3,13 @@ import asyncio
 import os
 import sys
 from unittest.mock import AsyncMock, MagicMock, patch
+
 import pytest
 
 from tradedesk.events import reset_dispatcher
-from tradedesk.types import Candle
-from tradedesk.strategy.base import BaseStrategy
 from tradedesk.marketdata.subscriptions import ChartSubscription
-
+from tradedesk.strategy.base import BaseStrategy
+from tradedesk.types import Candle
 
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
 

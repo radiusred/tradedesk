@@ -1,5 +1,5 @@
-from tradedesk.events import DomainEvent, event
-from tradedesk.types import OrderRequest, OrderResult
+from ..events import DomainEvent, event
+from ..types import OrderRequest, OrderResult
 
 
 @event

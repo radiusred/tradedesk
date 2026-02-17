@@ -1,9 +1,10 @@
 """Tests for tradedesk.portfolio.reconciliation."""
 
-import pytest
 from unittest.mock import AsyncMock, Mock
 
-from tradedesk.execution import Direction
+import pytest
+
+from tradedesk import Direction
 from tradedesk.execution.broker import BrokerPosition
 from tradedesk.portfolio.reconciliation import (
     DiscrepancyType,

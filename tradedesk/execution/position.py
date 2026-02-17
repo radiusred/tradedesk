@@ -2,9 +2,7 @@
 
 from typing import Any
 
-from tradedesk.types import Candle
-
-from .broker import Direction
+from ..types import Candle, Direction
 
 
 class PositionTracker:

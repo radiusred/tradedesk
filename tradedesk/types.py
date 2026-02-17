@@ -7,7 +7,7 @@ from datetime import datetime
 from enum import Enum
 from typing import Any, Protocol
 
-from tradedesk.time_utils import iso_to_ms, ms_to_iso
+from .time_utils import iso_to_ms, ms_to_iso
 
 
 @dataclass

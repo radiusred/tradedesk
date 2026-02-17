@@ -6,14 +6,19 @@ Tests for the BaseStrategy class.
 import asyncio
 from datetime import datetime
 from unittest.mock import AsyncMock, MagicMock, patch
+
 import pytest
+
 from tradedesk.execution.ig.price_streamer import Lightstreamer
-from tradedesk.strategy.base import BaseStrategy
 from tradedesk.marketdata.subscriptions import MarketSubscription
+from tradedesk.strategy.base import BaseStrategy
 
 # Optional import
 try:
-    from lightstreamer.client import LightstreamerClient, Subscription  # type: ignore[import-untyped]
+    from lightstreamer.client import (  # type: ignore[import-untyped]
+        LightstreamerClient,
+        Subscription,
+    )
 except Exception:  # pragma: no cover
     LightstreamerClient = None
     Subscription = None

@@ -1,6 +1,7 @@
 """Relative Strength Index (RSI) indicator (Wilder)."""
 
 from tradedesk.types import Candle
+
 from .base import Indicator
 
 

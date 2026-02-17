@@ -4,7 +4,7 @@ from dataclasses import dataclass
 from datetime import datetime
 from typing import Any, Iterable
 
-from tradedesk.types import Direction
+from ..types import Direction
 
 
 @dataclass(frozen=True)

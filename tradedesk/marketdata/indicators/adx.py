@@ -1,6 +1,7 @@
 """Average Directional Index (ADX) indicator implementation (Wilder)."""
 
 from tradedesk.types import Candle
+
 from .base import Indicator
 
 

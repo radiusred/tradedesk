@@ -2,15 +2,14 @@
 
 import pytest
 
+from tradedesk import Direction
 from tradedesk.execution.backtest.excursions import (
-    CandleIndex,
     Excursions,
     build_candle_index,
     compute_excursions,
 )
-from tradedesk.execution.broker import Direction
-from tradedesk.types import Candle
 from tradedesk.recording.metrics import RoundTrip
+from tradedesk.types import Candle
 
 
 def _candle(ts: str, high: float, low: float) -> Candle:

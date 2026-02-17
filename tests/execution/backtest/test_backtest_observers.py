@@ -7,9 +7,9 @@ from tradedesk.execution.backtest.observers import (
     ProgressLogger,
     TrackerSync,
 )
-from tradedesk.types import Candle
 from tradedesk.recording.ledger import TradeLedger
 from tradedesk.recording.types import TradeRecord
+from tradedesk.types import Candle
 
 
 def _candle(ts="2025-01-15T12:00:00Z"):

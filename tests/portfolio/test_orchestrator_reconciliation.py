@@ -1,17 +1,19 @@
-"""Tests for ReconciliationManager: startup reconciliation, periodic correction, and journal persistence."""
+"""
+Tests for ReconciliationManager: startup reconciliation, 
+periodic correction, and journal persistence.
+"""
 
-import pytest
 from unittest.mock import AsyncMock, MagicMock
 
-from tradedesk.execution.position import PositionTracker
-from tradedesk.execution import Direction
+import pytest
+
+from tradedesk import Direction
 from tradedesk.execution import BrokerPosition
+from tradedesk.execution.position import PositionTracker
 from tradedesk.portfolio import Instrument
-from tradedesk.types import Candle
-
-from tradedesk.recording.journal import PositionJournal, JournalEntry
 from tradedesk.portfolio.reconciliation import ReconciliationManager
-
+from tradedesk.recording.journal import JournalEntry, PositionJournal
+from tradedesk.types import Candle
 
 # ---------------------------------------------------------------------------
 # Helpers
