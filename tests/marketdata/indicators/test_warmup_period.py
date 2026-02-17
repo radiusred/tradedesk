@@ -2,8 +2,8 @@ import pytest
 
 from tradedesk.marketdata.indicators.macd import MACD
 from tradedesk.marketdata.indicators.mfi import MFI
-from tradedesk.marketdata.indicators.williams_r import WilliamsR
 from tradedesk.marketdata.indicators.sma import SMA
+from tradedesk.marketdata.indicators.williams_r import WilliamsR
 
 
 class TestIndicatorWarmupPeriods:

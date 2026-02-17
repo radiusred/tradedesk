@@ -1,4 +1,5 @@
 import pytest
+
 from tradedesk.events import DomainEvent, EventDispatcher, event, get_dispatcher
 
 

@@ -7,7 +7,6 @@ import pytest
 from tradedesk.portfolio.metrics_tracker import InstrumentWindow, WeightedRollingTracker
 from tradedesk.portfolio.types import Instrument
 
-
 # ---------------------------------------------------------------------------
 # InstrumentWindow
 # ---------------------------------------------------------------------------

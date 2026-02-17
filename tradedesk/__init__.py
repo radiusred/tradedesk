@@ -7,6 +7,7 @@ Provides authenticated API access, Lightstreamer streaming, and a base
 framework for implementing trading strategies.
 """
 
+from .events import DomainEvent, event, get_dispatcher
 from .runner import run_strategies
 from .types import (
     Candle,
@@ -24,8 +25,11 @@ __all__ = [
     "Candle",
     "DataProvider",
     "Direction",
+    "DomainEvent",
     "OrderRequest",
     "OrderResult",
     "StreamConsumer",
+    "event",
+    "get_dispatcher",
     "run_strategies",
 ]

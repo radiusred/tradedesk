@@ -2,10 +2,10 @@
 
 import pytest
 
+from tradedesk.marketdata.events import CandleClosedEvent
 from tradedesk.portfolio.risk import EqualSplitRiskPolicy
 from tradedesk.portfolio.runner import PortfolioRunner
 from tradedesk.portfolio.types import Instrument
-from tradedesk.marketdata.events import CandleClosedEvent
 
 
 class FakeStrategy:

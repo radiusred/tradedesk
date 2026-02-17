@@ -11,7 +11,6 @@ from typing import Any
 from tradedesk.execution import Client
 from tradedesk.strategy import BaseStrategy
 
-
 log = logging.getLogger(__name__)
 
 

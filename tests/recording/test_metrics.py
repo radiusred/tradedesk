@@ -2,13 +2,13 @@
 
 import pytest
 
+from tradedesk import Direction
 from tradedesk.recording.metrics import (
     compute_metrics,
-    round_trips_from_fills,
     equity_rows_from_round_trips,
     max_drawdown,
+    round_trips_from_fills,
 )
-from tradedesk.execution.broker import Direction
 
 
 def test_round_trips_long_single_instrument() -> None:

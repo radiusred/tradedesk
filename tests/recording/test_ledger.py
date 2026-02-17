@@ -7,7 +7,6 @@ import pytest
 from tradedesk.recording.ledger import TradeLedger, trade_rows_from_trades
 from tradedesk.recording.types import EquityRecord, RecordingMode, TradeRecord
 
-
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
@@ -212,7 +211,7 @@ class TestTradeLedgerBroker:
             TradeLedger(mode=RecordingMode.BROKER)
 
     def test_broker_mode_creates_trades_csv_on_init(self, tmp_path):
-        ledger = TradeLedger(mode=RecordingMode.BROKER, out_dir=tmp_path)
+        TradeLedger(mode=RecordingMode.BROKER, out_dir=tmp_path)
         assert (tmp_path / "trades.csv").exists()
         rows = _read_csv(tmp_path / "trades.csv")
         assert len(rows) == 0  # header only

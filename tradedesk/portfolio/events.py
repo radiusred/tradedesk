@@ -1,4 +1,4 @@
-from tradedesk.events import DomainEvent, event
+from ..events import DomainEvent, event
 
 __all__ = ["DomainEvent", "event", "PositionUpdatedEvent", "PortfolioValuedEvent"]
 

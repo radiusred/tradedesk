@@ -5,7 +5,7 @@ from unittest.mock import AsyncMock
 import pytest
 
 from tradedesk.execution.order_handler import OrderExecutionHandler, request_order
-from tradedesk.types import OrderRequest, OrderResult
+from tradedesk.types import OrderRequest
 
 
 @pytest.mark.asyncio

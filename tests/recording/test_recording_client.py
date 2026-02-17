@@ -1,7 +1,8 @@
 """Tests for tradedesk.recording.client – RecordingClient wrapper."""
 
+from unittest.mock import AsyncMock, MagicMock
+
 import pytest
-from unittest.mock import AsyncMock, MagicMock, PropertyMock
 
 from tradedesk.recording.client import RecordingClient
 from tradedesk.recording.ledger import TradeLedger

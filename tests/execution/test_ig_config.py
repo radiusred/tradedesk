@@ -5,7 +5,9 @@ Tests for the config module.
 
 import os
 from unittest.mock import patch
+
 import pytest
+
 from tradedesk.execution.ig.settings import Settings, settings
 
 

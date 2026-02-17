@@ -1,6 +1,7 @@
 """Tests for IGClient.get_positions and get_account_balance."""
 
 import pytest
+
 from tradedesk.execution.ig.client import IGClient
 
 

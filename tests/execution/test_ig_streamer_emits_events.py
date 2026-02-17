@@ -1,12 +1,12 @@
 import asyncio
-import pytest
 from unittest.mock import AsyncMock, MagicMock
 
-from tradedesk.marketdata.instrument import MarketData
-from tradedesk.marketdata.subscriptions import MarketSubscription
+import pytest
+
 import tradedesk.execution.ig.price_streamer as ig_streamer
 from tradedesk.marketdata.events import CandleClosedEvent
-from tradedesk.marketdata.subscriptions import ChartSubscription
+from tradedesk.marketdata.instrument import MarketData
+from tradedesk.marketdata.subscriptions import ChartSubscription, MarketSubscription
 from tradedesk.strategy.base import BaseStrategy
 
 

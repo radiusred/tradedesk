@@ -2,7 +2,7 @@
 
 from dataclasses import dataclass
 
-from tradedesk.marketdata.events import CandleClosedEvent
+from tradedesk.marketdata import CandleClosedEvent
 
 from .risk import RiskAllocationPolicy
 from .types import Instrument, PortfolioStrategy

@@ -4,15 +4,15 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
+from tradedesk import Candle, Direction
 from tradedesk.execution import AccountBalance, BrokerPosition, Client
-from tradedesk.execution.backtest.streamer import (
+from tradedesk.marketdata import MarketData
+
+from .streamer import (
     BacktestStreamer,
     CandleSeries,
     MarketSeries,
 )
-from tradedesk.execution.broker import Direction
-from tradedesk.marketdata.instrument import MarketData
-from tradedesk.types import Candle
 
 
 @dataclass
@@ -383,7 +383,8 @@ class BacktestClient(Client):
                 ) / new_size
                 pos.size = new_size
             else:
-                # Opposite direction: close (only supports full close or reduce; compute realised on reduced amount)
+                # Opposite direction: close (only supports full close or reduce; compute realised
+                # on reduced amount)
                 close_size = min(pos.size, float(size))
                 if pos.direction == Direction.LONG:
                     self.realised_pnl += (price - pos.entry_price) * close_size

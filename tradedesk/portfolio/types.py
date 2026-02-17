@@ -6,13 +6,13 @@ instruments.
 """
 
 from dataclasses import dataclass
-from typing import Any, NewType, Protocol, TYPE_CHECKING
+from typing import TYPE_CHECKING, Any, NewType, Protocol
 
 if TYPE_CHECKING:
-    from tradedesk.execution.position import PositionTracker
-    from tradedesk.types import Candle
-    from tradedesk.marketdata.events import CandleClosedEvent
-    from tradedesk.recording.journal import JournalEntry
+    from ..execution import PositionTracker
+    from ..marketdata import CandleClosedEvent
+    from ..recording import JournalEntry
+    from ..types import Candle
 
 Instrument = NewType("Instrument", str)
 

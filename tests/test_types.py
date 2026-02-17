@@ -26,21 +26,3 @@ class TestDirection:
     def test_from_order_side_case_insensitive(self) -> None:
         assert Direction.from_order_side("buy") == Direction.LONG
         assert Direction.from_order_side("Sell") == Direction.SHORT
-
-    def test_backward_compat_import_from_broker(self) -> None:
-        """Verify Direction is still importable from execution.broker."""
-        from tradedesk.execution.broker import Direction as BrokerDirection
-
-        assert BrokerDirection is Direction
-
-    def test_backward_compat_import_from_execution(self) -> None:
-        """Verify Direction is still importable from execution."""
-        from tradedesk.execution import Direction as ExecDirection
-
-        assert ExecDirection is Direction
-
-    def test_backward_compat_import_from_root(self) -> None:
-        """Verify Direction is importable from tradedesk root."""
-        from tradedesk import Direction as RootDirection
-
-        assert RootDirection is Direction

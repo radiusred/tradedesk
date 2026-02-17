@@ -2,8 +2,8 @@
 
 import pytest
 
-from tradedesk.types import Candle
 from tradedesk.marketdata.aggregation import CandleAggregator, choose_base_period
+from tradedesk.types import Candle
 
 
 def test_aggregates_three_5min_into_one_15min() -> None:

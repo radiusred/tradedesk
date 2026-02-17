@@ -2,14 +2,13 @@ from unittest.mock import patch
 
 import pytest
 
-from tradedesk import run_strategies
-from tradedesk.marketdata.instrument import MarketData
-from tradedesk.types import Candle
-from tradedesk.marketdata.events import CandleClosedEvent
+from tradedesk import Direction, run_strategies
 from tradedesk.execution.backtest.client import BacktestClient
-from tradedesk.strategy.base import BaseStrategy
+from tradedesk.marketdata.events import CandleClosedEvent
+from tradedesk.marketdata.instrument import MarketData
 from tradedesk.marketdata.subscriptions import ChartSubscription
-from tradedesk.execution.broker import Direction
+from tradedesk.strategy.base import BaseStrategy
+from tradedesk.types import Candle
 
 
 def test_backtest_replays_candles_and_executes_virtual_trades():

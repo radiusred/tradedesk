@@ -7,7 +7,6 @@ Milliseconds-since-epoch used only at I/O boundaries (IG API, CandleAggregator).
 
 from datetime import datetime, timezone
 
-
 # ---------------------------------------------------------------------------
 # Core conversions
 # ---------------------------------------------------------------------------

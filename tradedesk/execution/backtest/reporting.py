@@ -1,6 +1,6 @@
 from dataclasses import dataclass
 
-from tradedesk.execution.broker import Direction
+from tradedesk import Direction
 
 from .client import BacktestClient
 

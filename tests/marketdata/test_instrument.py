@@ -1,5 +1,7 @@
-import pytest
 from dataclasses import FrozenInstanceError
+
+import pytest
+
 from tradedesk.marketdata.instrument import Instrument
 
 

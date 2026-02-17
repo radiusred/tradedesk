@@ -3,12 +3,11 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Callable
 
-from tradedesk.execution.backtest import BacktestClient
-from tradedesk.execution.backtest.reporting import compute_equity
-from tradedesk.recording import compute_metrics
-from tradedesk.recording.ledger import TradeLedger
-from tradedesk.recording.types import EquityRecord
+from tradedesk.recording import EquityRecord, TradeLedger, compute_metrics
 from tradedesk.types import StreamConsumer
+
+from .client import BacktestClient
+from .reporting import compute_equity
 
 
 @dataclass(frozen=True)

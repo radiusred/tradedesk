@@ -5,8 +5,10 @@ Tests for the runner module.
 
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
+
 import pytest
-from tradedesk.runner import run_strategies, configure_logging, _run_strategies_async
+
+from tradedesk.runner import _run_strategies_async, configure_logging, run_strategies
 from tradedesk.strategy.base import BaseStrategy
 
 

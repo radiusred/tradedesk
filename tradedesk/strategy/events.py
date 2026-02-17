@@ -1,6 +1,6 @@
 from dataclasses import dataclass
 
-from tradedesk.events import DomainEvent
+from tradedesk import DomainEvent
 
 from .base import Signal
 

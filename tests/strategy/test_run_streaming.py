@@ -1,11 +1,11 @@
 import asyncio
+
 import pytest
 
+import tradedesk.strategy.base as strategy_module
 from tradedesk.execution.ig import price_streamer
 from tradedesk.execution.ig.price_streamer import Lightstreamer
-from tradedesk.marketdata.subscriptions import MarketSubscription
-import tradedesk.strategy.base as strategy_module
-from tradedesk.marketdata.subscriptions import ChartSubscription
+from tradedesk.marketdata.subscriptions import ChartSubscription, MarketSubscription
 
 
 class FakeUpdate:

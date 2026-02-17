@@ -3,7 +3,7 @@
 from dataclasses import dataclass
 from typing import Optional
 
-from tradedesk.types import Candle
+from ..types import Candle
 
 
 def _period_to_seconds(period: str) -> int:
@@ -66,7 +66,8 @@ def choose_base_period(
             return "SECOND"
 
     raise ValueError(
-        f"Cannot choose base period for target_period={target_period!r} with supported_periods={supported_periods}"
+        f"Cannot choose base period for target_period={target_period!r} "
+        f"with supported_periods={supported_periods}"
     )
 
 
@@ -131,7 +132,8 @@ class CandleAggregator:
 
         if self.target_s % self.base_s != 0:
             raise ValueError(
-                f"target_period ({self.target_period}) must be a multiple of base_period ({self.base_period})"
+                f"target_period ({self.target_period}) must be a multiple of "
+                f"base_period ({self.base_period})"
             )
 
         # Per-instrument state: (bucket_start_ts, agg_state)

@@ -1,7 +1,6 @@
-from tradedesk.marketdata.subscriptions import MarketSubscription
-from tradedesk.marketdata.subscriptions import ChartSubscription
 from tradedesk.marketdata.indicators.macd import MACD
 from tradedesk.marketdata.indicators.williams_r import WilliamsR
+from tradedesk.marketdata.subscriptions import ChartSubscription, MarketSubscription
 
 
 class TestStrategyWarmupPlan:

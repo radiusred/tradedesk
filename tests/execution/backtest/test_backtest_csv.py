@@ -4,13 +4,12 @@ from unittest.mock import patch
 import pytest
 
 from tradedesk import run_strategies
-from tradedesk.marketdata.instrument import MarketData
-from tradedesk.marketdata.events import CandleClosedEvent
-from tradedesk.marketdata.subscriptions import MarketSubscription
 from tradedesk.execution.backtest.client import BacktestClient
-from tradedesk.strategy.base import BaseStrategy
-from tradedesk.marketdata.subscriptions import ChartSubscription
 from tradedesk.execution.backtest.streamer import _parse_ts
+from tradedesk.marketdata.events import CandleClosedEvent
+from tradedesk.marketdata.instrument import MarketData
+from tradedesk.marketdata.subscriptions import ChartSubscription, MarketSubscription
+from tradedesk.strategy.base import BaseStrategy
 
 
 def test_parse_ts_accepts_slashes_and_z():

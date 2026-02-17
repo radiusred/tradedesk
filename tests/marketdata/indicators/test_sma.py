@@ -1,7 +1,7 @@
 import pytest
 
-from tradedesk.types import Candle
 from tradedesk.marketdata.indicators.sma import SMA
+from tradedesk.types import Candle
 
 
 def candle(close: float) -> Candle:

@@ -8,10 +8,8 @@ we encapsulate streaming and implement backtesting.
 
 from dataclasses import dataclass
 
-from tradedesk.types import Direction
-
 # Re-export Direction for backward compatibility
-__all__ = ["AccountBalance", "BrokerPosition", "DealRejectedException", "Direction"]
+__all__ = ["AccountBalance", "BrokerPosition", "DealRejectedException"]
 
 
 @dataclass(frozen=True)

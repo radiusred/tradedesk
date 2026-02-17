@@ -13,18 +13,20 @@ overriding on_price_update() and/or on_candle_update().
 
 import abc
 import asyncio
-from enum import Enum
 import logging
 from datetime import datetime, timezone
+from enum import Enum
+
 from tradedesk.marketdata import (
+    CandleClosedEvent,
     ChartHistory,
     ChartSubscription,
+    Indicator,
     MarketData,
     MarketSubscription,
 )
-from tradedesk.marketdata.events import CandleClosedEvent
-from tradedesk.marketdata.indicators import Indicator
-from tradedesk.types import Candle, DataProvider
+
+from ..types import Candle, DataProvider
 
 log = logging.getLogger(__name__)
 
@@ -113,7 +115,7 @@ class BaseStrategy(abc.ABC):
 
         if not self.subscriptions:
             log.warning(
-                "%s has no subscriptions defined. Set SUBSCRIPTIONS or set subscriptions in __init__.",
+                "%s has no subscriptions. Set SUBSCRIPTIONS or set subscriptions in __init__.",
                 self.__class__.__name__,
             )
 

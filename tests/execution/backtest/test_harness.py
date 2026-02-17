@@ -1,8 +1,9 @@
 """Tests for tradedesk.execution.backtest.harness."""
 
-import pytest
-from unittest.mock import AsyncMock, MagicMock, patch
 from pathlib import Path
+from unittest.mock import AsyncMock, MagicMock, patch
+
+import pytest
 
 from tradedesk.execution.backtest.harness import BacktestSpec, run_backtest
 from tradedesk.types import Candle

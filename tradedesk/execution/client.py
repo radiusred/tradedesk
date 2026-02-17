@@ -1,8 +1,7 @@
 import abc
 from typing import Any
 
-from tradedesk.types import Candle
-
+from ..types import Candle
 from .broker import AccountBalance, BrokerPosition
 from .streamer import Streamer
 

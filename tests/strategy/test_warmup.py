@@ -1,8 +1,9 @@
-from tradedesk.marketdata.subscriptions import ChartSubscription
+import pytest
+
 from tradedesk.marketdata.indicators.macd import MACD
 from tradedesk.marketdata.indicators.mfi import MFI
 from tradedesk.marketdata.indicators.williams_r import WilliamsR
-import pytest
+from tradedesk.marketdata.subscriptions import ChartSubscription
 
 
 @pytest.fixture
