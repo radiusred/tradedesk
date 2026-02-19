@@ -3,6 +3,23 @@ from enum import Enum
 
 
 class RecordingMode(Enum):
+    """Recording mode: BACKTEST or BROKER.
+
+    ARCHITECTURE NOTE: This enum is a known architecture smell. The recording
+    domain should NOT know about execution context (backtest vs live). However,
+    the modes represent fundamentally different data availability:
+
+    - BACKTEST: Has full equity history via record_equity() calls
+    - BROKER: Must compute synthetic equity from position tracking
+
+    Future refactoring should split this into orthogonal concerns:
+    - write_mode: BATCH vs INCREMENTAL
+    - equity_source: EXTERNAL vs SYNTHETIC
+    - output_files: FULL vs MINIMAL
+
+    For now, keep as-is since it works for two well-defined use cases.
+    """
+
     BACKTEST = "backtest"
     BROKER = "broker"  # covers both demo and live
 
