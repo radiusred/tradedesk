@@ -4,9 +4,7 @@ import logging
 from pathlib import Path
 from typing import Optional
 
-from tradedesk import OrderRequest, SessionEndedEvent, SessionStartedEvent, get_dispatcher
-from tradedesk.execution import OrderCompletedEvent, OrderRequestEvent
-from tradedesk.portfolio import PositionJournal
+from tradedesk import SessionEndedEvent, SessionStartedEvent, get_dispatcher
 
 from .events import (
     EquitySampledEvent,
@@ -31,7 +29,6 @@ class RecordingSubscriber:
     def __init__(
         self,
         ledger: Optional[TradeLedger] = None,
-        journal_dir: Optional[Path] = None,
         output_dir: Optional[Path] = None,
         reporting_scale: float = 1.0,
     ) -> None:
@@ -39,20 +36,13 @@ class RecordingSubscriber:
 
         Args:
             ledger: TradeLedger to record trades/equity (created if None)
-            journal_dir: Directory for position journal (portfolio domain)
             output_dir: Base directory for timestamped run outputs
             reporting_scale: Scale factor for metrics reporting
         """
         self.ledger = ledger or TradeLedger()
-        self.journal: PositionJournal | None = (
-            PositionJournal(journal_dir) if journal_dir is not None else None
-        )
         self._base_output_dir = output_dir
         self._reporting_scale = reporting_scale
         self._run_output_dir: Path | None = None
-        # Track pending order requests so we can enrich OrderCompletedEvent
-        # with the original OrderRequest information.
-        self._pending_requests: dict[str, OrderRequest] = {}
         # Track open positions for round trip pairing
         self._open_positions: dict[str, PositionOpenedEvent] = {}
 
@@ -108,49 +98,6 @@ class RecordingSubscriber:
 
         # Emit completion event
         await get_dispatcher().publish(ReportingCompleteEvent())
-
-    def handle_order_request(self, event: OrderRequestEvent) -> None:
-        # Store request so completed event can be correlated
-        self._pending_requests[event.request_id] = event.request
-
-    def handle_order_completed(self, event: OrderCompletedEvent) -> None:
-        # Correlate to original request if available
-        req = self._pending_requests.pop(event.request_id, None)
-        res = event.result
-
-        if not res.success:
-            return
-
-        instrument = None
-        direction = None
-        size = 0.0
-        price = float(res.fill_price) if res.fill_price else 0.0
-
-        if req is not None:
-            instrument = req.instrument
-            direction = req.direction
-            size = float(res.fill_size) if res.fill_size else float(req.size)
-        else:
-            # Best-effort: try to extract from result.raw if present
-            raw = getattr(res, "raw", {}) or {}
-            instrument = raw.get("instrument")
-            direction = raw.get("direction")
-            size = float(raw.get("size", 0.0)) or float(res.fill_size)
-
-        if instrument is None or direction is None:
-            # Can't create a TradeRecord without instrument/direction
-            return
-
-        tr = TradeRecord(
-            timestamp=event.timestamp.isoformat(),
-            instrument=instrument,
-            direction=direction,
-            size=size,
-            price=price,
-            reason=(res.error or ""),
-        )
-
-        self.ledger.record_trade(tr)
 
     async def handle_position_opened(self, event: PositionOpenedEvent) -> None:
         """Handle position opened: track for round trip pairing."""
@@ -208,7 +155,6 @@ class RecordingSubscriber:
 
 def register_recording_subscriber(
     ledger: Optional[TradeLedger] = None,
-    journal_dir: Optional[Path] = None,
     output_dir: Optional[Path] = None,
     reporting_scale: float = 1.0,
 ) -> RecordingSubscriber:
@@ -216,7 +162,6 @@ def register_recording_subscriber(
 
     Args:
         ledger: Optional TradeLedger instance (created if None)
-        journal_dir: Optional directory for position journal
         output_dir: Optional base directory for timestamped run outputs
         reporting_scale: Scale factor for metrics reporting
 
@@ -226,14 +171,11 @@ def register_recording_subscriber(
     dispatcher = get_dispatcher()
     sub = RecordingSubscriber(
         ledger=ledger,
-        journal_dir=journal_dir,
         output_dir=output_dir,
         reporting_scale=reporting_scale,
     )
 
     dispatcher.subscribe(SessionStartedEvent, sub.handle_session_started)
-    dispatcher.subscribe(OrderRequestEvent, sub.handle_order_request)
-    dispatcher.subscribe(OrderCompletedEvent, sub.handle_order_completed)
     dispatcher.subscribe(PositionOpenedEvent, sub.handle_position_opened)
     dispatcher.subscribe(PositionClosedEvent, sub.handle_position_closed)
     dispatcher.subscribe(EquitySampledEvent, sub.handle_equity_sampled)
