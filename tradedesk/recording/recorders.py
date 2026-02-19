@@ -9,8 +9,8 @@ from __future__ import annotations
 import logging
 from typing import TYPE_CHECKING, Any
 
-from tradedesk import DomainEvent, get_dispatcher
-from tradedesk.marketdata.events import CandleClosedEvent
+from tradedesk.events import DomainEvent, get_dispatcher
+from tradedesk.marketdata import CandleClosedEvent
 from tradedesk.time_utils import parse_timestamp
 
 from .equity import compute_equity, compute_unrealised_pnl

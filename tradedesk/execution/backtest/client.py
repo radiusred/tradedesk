@@ -4,11 +4,13 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-from tradedesk import Candle, Direction, get_dispatcher
-from tradedesk.execution import AccountBalance, BrokerPosition, Client
+from tradedesk.events import get_dispatcher
+from tradedesk.execution.broker import AccountBalance, BrokerPosition
+from tradedesk.execution.client import Client
 from tradedesk.marketdata import MarketData
 from tradedesk.recording import PositionClosedEvent, PositionOpenedEvent
 from tradedesk.time_utils import parse_timestamp
+from tradedesk.types import Candle, Direction
 
 from .streamer import (
     BacktestStreamer,

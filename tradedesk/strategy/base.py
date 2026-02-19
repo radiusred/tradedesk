@@ -17,12 +17,14 @@ import logging
 from datetime import datetime, timezone
 from enum import Enum
 
+from tradedesk.events import get_dispatcher
 from tradedesk.marketdata import (
     CandleClosedEvent,
     ChartHistory,
     ChartSubscription,
     Indicator,
     MarketData,
+    MarketDataReceivedEvent,
     MarketSubscription,
 )
 
@@ -392,9 +394,6 @@ class BaseStrategy(abc.ABC):
         2. Calls existing strategy callbacks (for backwards compatibility)
         3. Updates common bookkeeping (e.g. last_update)
         """
-        from tradedesk.events import get_dispatcher
-        from tradedesk.marketdata.events import MarketDataReceivedEvent
-
         # Get the global event dispatcher
         dispatcher = get_dispatcher()
 
