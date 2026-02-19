@@ -1,13 +1,13 @@
-"""Tests for tradedesk.execution.backtest.observers – recording, progress, tracker sync."""
+"""Tests for tradedesk.recording.recorders – recording, progress, tracker sync."""
 
 from unittest.mock import MagicMock, patch
 
-from tradedesk.execution.backtest.observers import (
+from tradedesk.recording.ledger import TradeLedger
+from tradedesk.recording.recorders import (
     BacktestRecorder,
     ProgressLogger,
     TrackerSync,
 )
-from tradedesk.recording.ledger import TradeLedger
 from tradedesk.recording.types import TradeRecord
 from tradedesk.types import Candle
 

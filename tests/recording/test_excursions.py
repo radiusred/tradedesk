@@ -1,9 +1,9 @@
-"""Tests for tradedesk.execution.backtest.excursions – MFE/MAE computation."""
+"""Tests for tradedesk.recording.excursions – MFE/MAE computation."""
 
 import pytest
 
 from tradedesk import Direction
-from tradedesk.execution.backtest.excursions import (
+from tradedesk.recording.excursions import (
     Excursions,
     build_candle_index,
     compute_excursions,

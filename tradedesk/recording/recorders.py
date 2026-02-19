@@ -16,7 +16,7 @@ from tradedesk.recording.metrics import RoundTrip, round_trips_from_fills
 from tradedesk.recording.types import EquityRecord
 from tradedesk.time_utils import parse_timestamp
 
-from .reporting import compute_equity
+from .equity import compute_equity
 
 if TYPE_CHECKING:
     from tradedesk import Candle
