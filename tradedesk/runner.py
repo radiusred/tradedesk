@@ -8,7 +8,7 @@ import sys
 from collections.abc import Callable
 from typing import Any
 
-from tradedesk.execution import Client
+from tradedesk.execution import Client, OrderExecutionHandler
 from tradedesk.strategy import BaseStrategy
 
 log = logging.getLogger(__name__)
@@ -153,8 +153,6 @@ async def _async_run_strategies(
 
     try:
         # Wire up event-driven order execution before strategies start.
-        from tradedesk.execution.order_handler import OrderExecutionHandler
-
         _order_handler = OrderExecutionHandler(client)  # noqa: F841
 
         strategy_instances = _instantiate_strategies(client, strategy_specs)

@@ -1,10 +1,10 @@
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
-from tradedesk import Direction
+from tradedesk.types import Direction
 
 if TYPE_CHECKING:
-    from tradedesk.execution.backtest.client import BacktestClient
+    from tradedesk.execution import BacktestClient
 
 
 def compute_unrealised_pnl(client: BacktestClient) -> float:

@@ -4,7 +4,7 @@ import logging
 from pathlib import Path
 from typing import Optional
 
-from tradedesk import SessionEndedEvent, SessionStartedEvent, get_dispatcher
+from tradedesk.events import SessionEndedEvent, SessionStartedEvent, get_dispatcher
 
 from .events import (
     EquitySampledEvent,

@@ -7,13 +7,13 @@ from typing import Any
 
 import aiohttp
 
-from tradedesk import Candle
-from tradedesk.execution import (
+from tradedesk.execution.broker import (
     AccountBalance,
     BrokerPosition,
-    Client,
     DealRejectedException,
 )
+from tradedesk.execution.client import Client
+from tradedesk.types import Candle
 
 from .price_streamer import Lightstreamer
 from .settings import settings

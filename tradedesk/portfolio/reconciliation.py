@@ -5,8 +5,9 @@ from dataclasses import dataclass
 from enum import Enum
 from typing import Any, cast
 
-from ..events import DomainEvent
+from ..events import DomainEvent, get_dispatcher
 from ..execution import BrokerPosition
+from ..marketdata import CandleClosedEvent
 from ..types import Direction
 from .journal import JournalEntry, PositionJournal
 from .runner import PortfolioRunner
@@ -252,9 +253,6 @@ class ReconciliationManager:
 
         # Self-subscribe to events if enabled
         if enable_event_subscription:
-            from tradedesk.events import get_dispatcher
-            from tradedesk.marketdata.events import CandleClosedEvent
-
             dispatcher = get_dispatcher()
             dispatcher.subscribe(CandleClosedEvent, self._on_candle_closed)
             log.debug(
@@ -264,8 +262,6 @@ class ReconciliationManager:
 
     async def _on_candle_closed(self, event: DomainEvent) -> None:
         """Handle target-period candle events for periodic reconciliation."""
-        from tradedesk.marketdata.events import CandleClosedEvent
-
         if (
             not isinstance(event, CandleClosedEvent)
             or event.timeframe != self._target_period

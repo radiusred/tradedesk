@@ -5,9 +5,10 @@ from dataclasses import dataclass
 from datetime import datetime
 from typing import Iterable
 
-from tradedesk import Candle
-from tradedesk.recording.metrics import RoundTrip
 from tradedesk.time_utils import parse_timestamp
+from tradedesk.types import Candle
+
+from .metrics import RoundTrip
 
 
 @dataclass(frozen=True)
