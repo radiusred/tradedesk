@@ -6,6 +6,7 @@ import pytest
 
 from tradedesk import Direction
 from tradedesk.execution.broker import BrokerPosition
+from tradedesk.portfolio.journal import JournalEntry
 from tradedesk.portfolio.reconciliation import (
     DiscrepancyType,
     ReconciliationManager,
@@ -14,7 +15,6 @@ from tradedesk.portfolio.reconciliation import (
     reconcile,
 )
 from tradedesk.portfolio.types import Instrument
-from tradedesk.recording.journal import JournalEntry
 
 
 def _journal_entry(instrument="USDJPY", direction="long", size=1.0):

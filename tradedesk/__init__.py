@@ -1,13 +1,19 @@
 # tradedesk/__init__.py
 """
-Tradedesk - Trading infrastructure library for IG Markets.
+Tradedesk - Trading infrastructure library for algorithmic trading strategies.
 Copyright 2026 Radius Red Ltd.
 
 Provides authenticated API access, Lightstreamer streaming, and a base
 framework for implementing trading strategies.
 """
 
-from .events import DomainEvent, event, get_dispatcher
+from .events import (
+    DomainEvent,
+    SessionEndedEvent,
+    SessionStartedEvent,
+    event,
+    get_dispatcher,
+)
 from .runner import run_strategies
 from .types import (
     Candle,
@@ -28,6 +34,8 @@ __all__ = [
     "DomainEvent",
     "OrderRequest",
     "OrderResult",
+    "SessionEndedEvent",
+    "SessionStartedEvent",
     "StreamConsumer",
     "event",
     "get_dispatcher",

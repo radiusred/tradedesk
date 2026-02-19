@@ -10,9 +10,8 @@ import pytest
 from tradedesk import Direction
 from tradedesk.execution import BrokerPosition
 from tradedesk.execution.position import PositionTracker
-from tradedesk.portfolio import Instrument
+from tradedesk.portfolio import Instrument, JournalEntry, PositionJournal
 from tradedesk.portfolio.reconciliation import ReconciliationManager
-from tradedesk.recording.journal import JournalEntry, PositionJournal
 from tradedesk.types import Candle
 
 # ---------------------------------------------------------------------------

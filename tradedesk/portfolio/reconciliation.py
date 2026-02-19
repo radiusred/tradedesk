@@ -5,11 +5,10 @@ from dataclasses import dataclass
 from enum import Enum
 from typing import Any, cast
 
-from tradedesk.recording import JournalEntry, PositionJournal
-
 from ..events import DomainEvent
 from ..execution import BrokerPosition
 from ..types import Direction
+from .journal import JournalEntry, PositionJournal
 from .runner import PortfolioRunner
 from .types import Instrument, ReconcilableStrategy
 

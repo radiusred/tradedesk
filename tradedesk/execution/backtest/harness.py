@@ -3,7 +3,9 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Callable
 
-from tradedesk.recording import EquityRecord, TradeLedger, compute_metrics
+from tradedesk.recording.ledger import TradeLedger
+from tradedesk.recording.metrics import compute_metrics
+from tradedesk.recording.types import EquityRecord
 from tradedesk.types import StreamConsumer
 
 from .client import BacktestClient

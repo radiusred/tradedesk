@@ -2,6 +2,7 @@
 
 from .config import BacktestPortfolioConfig, LivePortfolioConfig, PortfolioConfig
 from .events import event
+from .journal import JournalEntry, PositionJournal
 from .metrics_tracker import InstrumentWindow, WeightedRollingTracker
 from .reconciliation import (
     DiscrepancyType,
@@ -25,10 +26,12 @@ __all__ = [
     "EqualSplitRiskPolicy",
     "Instrument",
     "InstrumentWindow",
+    "JournalEntry",
     "LivePortfolioConfig",
     "PortfolioConfig",
     "PortfolioRunner",
     "PortfolioStrategy",
+    "PositionJournal",
     "ReconcilableStrategy",
     "ReconciliationEntry",
     "ReconciliationManager",

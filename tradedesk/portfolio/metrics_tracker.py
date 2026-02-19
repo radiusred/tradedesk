@@ -5,7 +5,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Mapping
 
-from tradedesk.recording import round_trips_from_fills
+from tradedesk.recording.metrics import round_trips_from_fills
 
 from .types import Instrument
 

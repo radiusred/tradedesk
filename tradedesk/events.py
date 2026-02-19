@@ -21,6 +21,16 @@ def event(cls: type[_T]) -> type[_T]:
 class DomainEvent(ABC):
     timestamp: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
 
+@event
+class SessionStartedEvent(DomainEvent):
+    """Event fired when a new backtest or live session starts."""
+    pass
+
+@event
+class SessionEndedEvent(DomainEvent):
+    """Event fired when a backtest or live session ends."""
+    pass
+
 
 class EventDispatcher:
     """Async event dispatcher for domain events.
@@ -37,7 +47,7 @@ class EventDispatcher:
     def subscribe(
         self,
         event_type: type[DomainEvent],
-        handler: Callable[[DomainEvent], None | Awaitable[None]],
+        handler: Callable[..., None | Awaitable[None]],
     ) -> None:
         """Register a handler for an event type.
 
@@ -50,7 +60,7 @@ class EventDispatcher:
     def unsubscribe(
         self,
         event_type: type[DomainEvent],
-        handler: Callable[[DomainEvent], None | Awaitable[None]],
+        handler: Callable[..., None | Awaitable[None]],
     ) -> None:
         """Unregister a handler from an event type."""
         if handler in self._handlers[event_type]:
