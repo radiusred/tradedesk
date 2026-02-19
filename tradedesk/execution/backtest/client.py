@@ -4,9 +4,10 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-from tradedesk import Candle, Direction
+from tradedesk import Candle, Direction, get_dispatcher
 from tradedesk.execution import AccountBalance, BrokerPosition, Client
 from tradedesk.marketdata import MarketData
+from tradedesk.recording import PositionClosedEvent, PositionOpenedEvent
 
 from .streamer import (
     BacktestStreamer,
@@ -374,6 +375,16 @@ class BacktestClient(Client):
                 size=float(size),
                 entry_price=price,
             )
+            # Emit PositionOpenedEvent
+            await get_dispatcher().publish(
+                PositionOpenedEvent(
+                    instrument=instrument,
+                    direction="BUY" if _direction == Direction.LONG else "SELL",
+                    size=float(size),
+                    entry_price=price,
+                    timestamp=self._current_timestamp or "",
+                )
+            )
         else:
             if pos.direction == _direction:
                 # Increase position: weighted avg entry
@@ -386,13 +397,30 @@ class BacktestClient(Client):
                 # Opposite direction: close (only supports full close or reduce; compute realised
                 # on reduced amount)
                 close_size = min(pos.size, float(size))
+
+                # Compute PnL for the closed portion
                 if pos.direction == Direction.LONG:
-                    self.realised_pnl += (price - pos.entry_price) * close_size
+                    closed_pnl = (price - pos.entry_price) * close_size
                 else:
-                    self.realised_pnl += (pos.entry_price - price) * close_size
+                    closed_pnl = (pos.entry_price - price) * close_size
+
+                self.realised_pnl += closed_pnl
 
                 pos.size -= close_size
                 if pos.size <= 0:
+                    # Position fully closed - emit event
+                    await get_dispatcher().publish(
+                        PositionClosedEvent(
+                            instrument=instrument,
+                            direction="BUY" if pos.direction == Direction.LONG else "SELL",
+                            size=close_size,
+                            entry_price=pos.entry_price,
+                            exit_price=price,
+                            pnl=closed_pnl,
+                            exit_reason="market_order",
+                            timestamp=self._current_timestamp or "",
+                        )
+                    )
                     self.positions.pop(instrument, None)
                 # If order size > position size, open residual opposite position
                 residual = float(size) - close_size
@@ -402,6 +430,16 @@ class BacktestClient(Client):
                         direction=_direction,
                         size=residual,
                         entry_price=price,
+                    )
+                    # Emit PositionOpenedEvent for the new residual position
+                    await get_dispatcher().publish(
+                        PositionOpenedEvent(
+                            instrument=instrument,
+                            direction="BUY" if _direction == Direction.LONG else "SELL",
+                            size=residual,
+                            entry_price=price,
+                            timestamp=self._current_timestamp or "",
+                        )
                     )
 
         return {
