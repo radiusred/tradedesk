@@ -1,10 +1,10 @@
-"""Tests for tradedesk.recording.journal – position journal for crash recovery."""
+"""Tests for tradedesk.portfolio.journal – position journal for crash recovery."""
 
 import json
 
 import pytest
 
-from tradedesk.recording.journal import JournalEntry, PositionJournal
+from tradedesk.portfolio.journal import JournalEntry, PositionJournal
 
 
 @pytest.fixture

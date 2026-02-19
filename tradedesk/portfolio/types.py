@@ -11,8 +11,8 @@ from typing import TYPE_CHECKING, Any, NewType, Protocol
 if TYPE_CHECKING:
     from ..execution import PositionTracker
     from ..marketdata import CandleClosedEvent
-    from ..recording import JournalEntry
     from ..types import Candle
+    from .journal import JournalEntry
 
 Instrument = NewType("Instrument", str)
 
