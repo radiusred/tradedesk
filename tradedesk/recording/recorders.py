@@ -1,8 +1,7 @@
-"""Backtest observers – collaborators extracted from the orchestrator.
+"""Event-driven recorders for backtest and live trading.
 
-Each class handles a single concern that was previously inline in
-``PortfolioOrchestrator``.  They are designed as thin, stateful objects
-that the orchestrator delegates to on each candle close.
+Each class handles a specific recording concern through event subscription.
+They are designed as thin, stateful observers that react to domain events.
 """
 
 from __future__ import annotations
@@ -10,13 +9,15 @@ from __future__ import annotations
 import logging
 from typing import TYPE_CHECKING, Any
 
-from tradedesk import DomainEvent
-from tradedesk.recording.ledger import TradeLedger, trade_rows_from_trades
-from tradedesk.recording.metrics import RoundTrip, round_trips_from_fills
+from tradedesk import DomainEvent, get_dispatcher
+from tradedesk.marketdata.events import CandleClosedEvent
+from tradedesk.recording.ledger import TradeLedger
 from tradedesk.recording.types import EquityRecord
 from tradedesk.time_utils import parse_timestamp
 
-from .equity import compute_equity
+from .equity import compute_equity, compute_unrealised_pnl
+from .events import EquitySampledEvent, ExcursionSampledEvent, PositionClosedEvent, PositionOpenedEvent
+from .excursions import CandleIndex
 
 if TYPE_CHECKING:
     from tradedesk import Candle
@@ -25,7 +26,142 @@ log = logging.getLogger(__name__)
 
 
 # ---------------------------------------------------------------------------
-# Recording
+# EquityRecorder - Samples equity and publishes EquitySampledEvent
+# ---------------------------------------------------------------------------
+
+
+class EquityRecorder:
+    """Samples portfolio equity on candle close and publishes EquitySampledEvent.
+
+    This recorder subscribes to CandleClosedEvent for a specific target period
+    and computes current equity (realised + unrealised PnL), then publishes
+    an EquitySampledEvent for other subscribers to consume.
+    """
+
+    def __init__(self, client: Any, target_period: str):
+        """Initialize equity recorder with auto-subscription.
+
+        Args:
+            client: BacktestClient or IGClient (any client with positions/realised_pnl)
+            target_period: Only sample equity on this period's candles (e.g. "15MINUTE")
+        """
+        self._client = client
+        self._target_period = target_period
+
+        # Self-subscribe to CandleClosedEvent
+        dispatcher = get_dispatcher()
+        dispatcher.subscribe(CandleClosedEvent, self._on_candle_closed)
+        log.debug(f"EquityRecorder subscribed to CandleClosedEvent (target_period={target_period})")
+
+    async def _on_candle_closed(self, event: CandleClosedEvent) -> None:
+        """Handle candle close: compute and publish equity sample."""
+        if event.timeframe != self._target_period:
+            return
+
+        # Compute equity using recording.equity functions
+        try:
+            equity = compute_equity(self._client)
+            unrealised = compute_unrealised_pnl(self._client)
+            realised = self._client.realised_pnl
+
+            # Publish EquitySampledEvent
+            await get_dispatcher().publish(EquitySampledEvent(
+                equity=equity,
+                realised_pnl=realised,
+                unrealised_pnl=unrealised,
+                timestamp=event.timestamp,
+            ))
+        except Exception:
+            log.exception(f"Failed to sample equity at {event.timestamp}")
+
+
+# ---------------------------------------------------------------------------
+# ExcursionComputer - Computes MFE/MAE live during open positions
+# ---------------------------------------------------------------------------
+
+
+class ExcursionComputer:
+    """Computes Maximum Favorable/Adverse Excursion live and publishes ExcursionSampledEvent.
+
+    Subscribes to position lifecycle events and candle closes to track how far
+    each open position moves in favorable and adverse directions from entry.
+    """
+
+    def __init__(self, candle_index: CandleIndex):
+        """Initialize excursion computer with auto-subscription.
+
+        Args:
+            candle_index: Pre-built index of historical candles for excursion lookup
+        """
+        self._index = candle_index
+        self._open_positions: dict[str, PositionOpenedEvent] = {}
+
+        # Subscribe to position lifecycle and candle events
+        dispatcher = get_dispatcher()
+        dispatcher.subscribe(PositionOpenedEvent, self._on_position_opened)
+        dispatcher.subscribe(PositionClosedEvent, self._on_position_closed)
+        dispatcher.subscribe(CandleClosedEvent, self._on_candle_closed)
+        log.debug("ExcursionComputer subscribed to position and candle events")
+
+    async def _on_position_opened(self, event: PositionOpenedEvent) -> None:
+        """Track newly opened position for excursion computation."""
+        self._open_positions[event.instrument] = event
+        log.debug(f"ExcursionComputer tracking: {event.instrument}")
+
+    async def _on_position_closed(self, event: PositionClosedEvent) -> None:
+        """Stop tracking closed position."""
+        self._open_positions.pop(event.instrument, None)
+
+    async def _on_candle_closed(self, event: CandleClosedEvent) -> None:
+        """Compute and publish excursions for open positions on this instrument."""
+        pos_event = self._open_positions.get(event.instrument)
+        if pos_event is None:
+            return  # No open position for this instrument
+
+        try:
+            # Compute MFE/MAE from entry to current candle
+            entry_ts = pos_event.timestamp
+            current_ts = event.timestamp
+
+            # Find candles between entry and now
+            from bisect import bisect_left, bisect_right
+
+            i = bisect_left(self._index.ts, entry_ts)
+            j = bisect_right(self._index.ts, current_ts)
+
+            if i >= j:
+                # No candles yet or alignment issue
+                return
+
+            max_high = max(self._index.high[i:j])
+            min_low = min(self._index.low[i:j])
+
+            # Compute excursion based on position direction
+            if pos_event.direction == "BUY":
+                mfe_points = max_high - pos_event.entry_price
+                mae_points = min_low - pos_event.entry_price  # negative if adverse
+            else:  # SELL
+                mfe_points = pos_event.entry_price - min_low
+                mae_points = pos_event.entry_price - max_high  # negative if adverse
+
+            mfe_pnl = mfe_points * pos_event.size
+            mae_pnl = mae_points * pos_event.size
+
+            # Publish ExcursionSampledEvent
+            await get_dispatcher().publish(ExcursionSampledEvent(
+                instrument=event.instrument,
+                mfe_points=float(mfe_points),
+                mae_points=float(mae_points),
+                mfe_pnl=float(mfe_pnl),
+                mae_pnl=float(mae_pnl),
+                timestamp=event.timestamp,
+            ))
+        except Exception:
+            log.exception(f"Failed to compute excursions for {event.instrument}")
+
+
+# ---------------------------------------------------------------------------
+# BacktestRecorder (Legacy) - To be deprecated in favor of EquityRecorder
 # ---------------------------------------------------------------------------
 
 
@@ -138,81 +274,56 @@ class ProgressLogger:
 
 
 class TrackerSync:
-    """Incrementally syncs completed round-trips to the policy tracker.
+    """Feeds completed round trips into the policy tracker as positions close.
 
-    Can optionally self-subscribe to CandleClosedEvent when target_period is
-    provided during initialization.
+    Subscribes to position lifecycle events to update the tracker immediately
+    when positions close, replacing the old polling approach.
     """
 
-    def __init__(
-        self, ledger: TradeLedger, policy: Any, *, target_period: str | None = None
-    ) -> None:
-        self._ledger = ledger
+    def __init__(self, policy: Any) -> None:
+        """Initialize tracker sync with auto-subscription.
+
+        Args:
+            policy: Policy instance with a tracker attribute
+        """
         self._policy = policy
-        self._target_period = target_period
-        self._last_extracted_trade_count: int = 0
-        self._all_round_trips: list[RoundTrip] = []
+        self._open_positions: dict[str, PositionOpenedEvent] = {}
 
-        # Self-subscribe to events if target_period provided
-        if target_period is not None:
-            from tradedesk.events import get_dispatcher
-            from tradedesk.marketdata.events import CandleClosedEvent
+        # Subscribe to position lifecycle events
+        dispatcher = get_dispatcher()
+        dispatcher.subscribe(PositionOpenedEvent, self._on_position_opened)
+        dispatcher.subscribe(PositionClosedEvent, self._on_position_closed)
+        log.debug("TrackerSync subscribed to position events")
 
-            dispatcher = get_dispatcher()
-            dispatcher.subscribe(CandleClosedEvent, self._on_candle_closed)
-            log.debug(
-                "TrackerSync subscribed to CandleClosedEvent (target_period=%s)",
-                target_period,
-            )
+    async def _on_position_opened(self, event: PositionOpenedEvent) -> None:
+        """Track opened position for entry timestamp."""
+        self._open_positions[event.instrument] = event
 
-    def _on_candle_closed(self, event: DomainEvent) -> None:
-        """Handle target-period candle events for tracker sync."""
-        from tradedesk.marketdata.events import CandleClosedEvent
-
-        if (
-            isinstance(event, CandleClosedEvent)
-            and self._target_period is not None
-            and event.timeframe == self._target_period
-        ):
-            self.sync()
-
-    def sync(self) -> None:
-        """Push new round-trips (if any) into the policy's tracker."""
+    async def _on_position_closed(self, event: PositionClosedEvent) -> None:
+        """Update policy tracker immediately when position closes."""
         tracker = getattr(self._policy, "tracker", None)
         if tracker is None:
             return
 
-        current_count = len(self._ledger.trades)
-        if current_count < self._last_extracted_trade_count + 10:
+        # Get the entry event to compute hold time
+        entry_event = self._open_positions.pop(event.instrument, None)
+        if entry_event is None:
+            log.warning(f"No entry event found for closed position: {event.instrument}")
             return
 
-        all_rows = trade_rows_from_trades(self._ledger.trades)
-        all_rts = round_trips_from_fills(all_rows)
+        # Compute hold time
+        entry_dt = parse_timestamp(entry_event.timestamp)
+        exit_dt = parse_timestamp(event.timestamp)
+        hold_minutes = (exit_dt - entry_dt).total_seconds() / 60.0
 
-        new_rts = all_rts[len(self._all_round_trips) :]
-        self._all_round_trips = all_rts
-        self._last_extracted_trade_count = current_count
+        # Update tracker with this round trip
+        trade = {
+            "instrument": event.instrument,
+            "pnl": float(event.pnl),
+            "entry_ts": entry_event.timestamp,
+            "exit_ts": event.timestamp,
+            "hold_minutes": hold_minutes,
+        }
 
-        if not new_rts:
-            return
-
-        trades = []
-        for rt in new_rts:
-            entry_dt = parse_timestamp(rt.entry_ts)
-            exit_dt = parse_timestamp(rt.exit_ts)
-            trades.append(
-                {
-                    "instrument": rt.instrument,
-                    "pnl": float(rt.pnl),
-                    "entry_ts": rt.entry_ts,
-                    "exit_ts": rt.exit_ts,
-                    "hold_minutes": (exit_dt - entry_dt).total_seconds() / 60.0,
-                }
-            )
-
-        tracker.update_from_trades(trades)
-        log.debug(
-            "Updated tracker with %d new round trips (total: %d)",
-            len(trades),
-            len(all_rts),
-        )
+        tracker.update_from_trades([trade])
+        log.debug(f"Updated tracker with closed position: {event.instrument} pnl={event.pnl:.2f}")
