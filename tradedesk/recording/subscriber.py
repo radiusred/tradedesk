@@ -8,10 +8,15 @@ from tradedesk import OrderRequest, SessionEndedEvent, SessionStartedEvent, get_
 from tradedesk.execution import OrderCompletedEvent, OrderRequestEvent
 from tradedesk.portfolio import PositionJournal
 
-from .events import ReportingCompleteEvent
+from .events import (
+    EquitySampledEvent,
+    PositionClosedEvent,
+    PositionOpenedEvent,
+    ReportingCompleteEvent,
+)
 from .ledger import TradeLedger, trade_rows_from_trades
 from .metrics import compute_metrics
-from .types import TradeRecord
+from .types import EquityRecord, TradeRecord
 
 log = logging.getLogger(__name__)
 
@@ -48,6 +53,8 @@ class RecordingSubscriber:
         # Track pending order requests so we can enrich OrderCompletedEvent
         # with the original OrderRequest information.
         self._pending_requests: dict[str, OrderRequest] = {}
+        # Track open positions for round trip pairing
+        self._open_positions: dict[str, PositionOpenedEvent] = {}
 
     def handle_session_started(self, event: SessionStartedEvent) -> None:
         """Handle session start: create timestamped output directory."""
@@ -145,6 +152,59 @@ class RecordingSubscriber:
 
         self.ledger.record_trade(tr)
 
+    async def handle_position_opened(self, event: PositionOpenedEvent) -> None:
+        """Handle position opened: track for round trip pairing."""
+        self._open_positions[event.instrument] = event
+        log.debug(f"Position opened: {event.instrument} {event.direction} size={event.size}")
+
+    async def handle_position_closed(self, event: PositionClosedEvent) -> None:
+        """Handle position closed: create trade records for entry and exit."""
+        # Remove from open positions
+        opened_event = self._open_positions.pop(event.instrument, None)
+
+        if opened_event is None:
+            log.warning(
+                f"Position closed event received for {event.instrument} but no "
+                f"corresponding open event found. Recording exit only."
+            )
+
+        # Record entry trade (if we have the open event)
+        if opened_event:
+            entry_trade = TradeRecord(
+                timestamp=opened_event.timestamp.isoformat(),
+                instrument=event.instrument,
+                direction=event.direction,  # BUY or SELL
+                size=event.size,
+                price=event.entry_price,
+                reason="entry",
+            )
+            self.ledger.record_trade(entry_trade)
+
+        # Record exit trade
+        exit_direction = "SELL" if event.direction == "BUY" else "BUY"
+        exit_trade = TradeRecord(
+            timestamp=event.timestamp.isoformat(),
+            instrument=event.instrument,
+            direction=exit_direction,
+            size=event.size,
+            price=event.exit_price,
+            reason=event.exit_reason,
+        )
+        self.ledger.record_trade(exit_trade)
+
+        log.debug(
+            f"Position closed: {event.instrument} pnl={event.pnl:.2f} "
+            f"reason={event.exit_reason}"
+        )
+
+    async def handle_equity_sampled(self, event: EquitySampledEvent) -> None:
+        """Handle equity sampled: record to ledger."""
+        equity_record = EquityRecord(
+            timestamp=event.timestamp.isoformat(),
+            equity=event.equity,
+        )
+        self.ledger.record_equity(equity_record)
+
 
 def register_recording_subscriber(
     ledger: Optional[TradeLedger] = None,
@@ -174,6 +234,9 @@ def register_recording_subscriber(
     dispatcher.subscribe(SessionStartedEvent, sub.handle_session_started)
     dispatcher.subscribe(OrderRequestEvent, sub.handle_order_request)
     dispatcher.subscribe(OrderCompletedEvent, sub.handle_order_completed)
+    dispatcher.subscribe(PositionOpenedEvent, sub.handle_position_opened)
+    dispatcher.subscribe(PositionClosedEvent, sub.handle_position_closed)
+    dispatcher.subscribe(EquitySampledEvent, sub.handle_equity_sampled)
     dispatcher.subscribe(SessionEndedEvent, sub.handle_session_ended)
 
     return sub
