@@ -14,7 +14,12 @@ from tradedesk.marketdata.events import CandleClosedEvent
 from tradedesk.time_utils import parse_timestamp
 
 from .equity import compute_equity, compute_unrealised_pnl
-from .events import EquitySampledEvent, ExcursionSampledEvent, PositionClosedEvent, PositionOpenedEvent
+from .events import (
+    EquitySampledEvent,
+    ExcursionSampledEvent,
+    PositionClosedEvent,
+    PositionOpenedEvent,
+)
 from .excursions import CandleIndex
 
 if TYPE_CHECKING:
@@ -253,17 +258,15 @@ class TrackerSync:
             log.warning(f"No entry event found for closed position: {event.instrument}")
             return
 
-        # Compute hold time
-        entry_dt = parse_timestamp(entry_event.timestamp)
-        exit_dt = parse_timestamp(event.timestamp)
-        hold_minutes = (exit_dt - entry_dt).total_seconds() / 60.0
+        # Compute hold time (timestamps are already datetime objects)
+        hold_minutes = (event.timestamp - entry_event.timestamp).total_seconds() / 60.0
 
         # Update tracker with this round trip
         trade = {
             "instrument": event.instrument,
             "pnl": float(event.pnl),
-            "entry_ts": entry_event.timestamp,
-            "exit_ts": event.timestamp,
+            "entry_ts": entry_event.timestamp.isoformat(),
+            "exit_ts": event.timestamp.isoformat(),
             "hold_minutes": hold_minutes,
         }
 

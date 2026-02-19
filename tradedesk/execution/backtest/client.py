@@ -8,6 +8,7 @@ from tradedesk import Candle, Direction, get_dispatcher
 from tradedesk.execution import AccountBalance, BrokerPosition, Client
 from tradedesk.marketdata import MarketData
 from tradedesk.recording import PositionClosedEvent, PositionOpenedEvent
+from tradedesk.time_utils import parse_timestamp
 
 from .streamer import (
     BacktestStreamer,
@@ -382,7 +383,7 @@ class BacktestClient(Client):
                     direction="BUY" if _direction == Direction.LONG else "SELL",
                     size=float(size),
                     entry_price=price,
-                    timestamp=self._current_timestamp or "",
+                    timestamp=parse_timestamp(self._current_timestamp or ""),
                 )
             )
         else:
@@ -418,7 +419,7 @@ class BacktestClient(Client):
                             exit_price=price,
                             pnl=closed_pnl,
                             exit_reason="market_order",
-                            timestamp=self._current_timestamp or "",
+                            timestamp=parse_timestamp(self._current_timestamp or ""),
                         )
                     )
                     self.positions.pop(instrument, None)
@@ -438,7 +439,7 @@ class BacktestClient(Client):
                             direction="BUY" if _direction == Direction.LONG else "SELL",
                             size=residual,
                             entry_price=price,
-                            timestamp=self._current_timestamp or "",
+                            timestamp=parse_timestamp(self._current_timestamp or ""),
                         )
                     )
 
