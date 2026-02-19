@@ -1,7 +1,9 @@
+"""Tests for tradedesk.recording.equity – equity tracking."""
+
 import pytest
 
 from tradedesk.execution.backtest.client import BacktestClient
-from tradedesk.execution.backtest.reporting import compute_equity
+from tradedesk.recording.equity import compute_equity
 
 
 @pytest.mark.asyncio
