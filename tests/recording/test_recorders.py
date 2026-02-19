@@ -1,53 +1,13 @@
-"""Tests for tradedesk.recording.recorders – recording, progress, tracker sync."""
+"""Tests for tradedesk.recording.recorders – progress logging."""
 
 from unittest.mock import MagicMock, patch
 
-from tradedesk.recording.ledger import TradeLedger
-from tradedesk.recording.recorders import (
-    BacktestRecorder,
-    ProgressLogger,
-    TrackerSync,
-)
-from tradedesk.recording.types import TradeRecord
+from tradedesk.recording.recorders import ProgressLogger
 from tradedesk.types import Candle
 
 
 def _candle(ts="2025-01-15T12:00:00Z"):
     return Candle(timestamp=ts, open=100.0, high=101.0, low=99.0, close=100.5)
-
-
-# ---------------------------------------------------------------------------
-# BacktestRecorder
-# ---------------------------------------------------------------------------
-
-
-class TestBacktestRecorder:
-    def test_sample_equity(self):
-        ledger = TradeLedger()
-        recorder = BacktestRecorder(ledger)
-
-        mock_inner = MagicMock()
-        mock_inner.positions = {}
-        mock_inner.realised_pnl = 100.0
-        mock_client = MagicMock()
-        mock_client._inner = mock_inner
-
-        with patch(
-            "tradedesk.recording.recorders.compute_equity", return_value=100.0
-        ):
-            recorder.sample_equity(_candle(), mock_client)
-
-        assert len(ledger.equity) == 1
-        assert ledger.equity[0].equity == 100.0
-
-    def test_sample_equity_no_inner(self):
-        """If client has no _inner attribute, should skip gracefully."""
-        ledger = TradeLedger()
-        recorder = BacktestRecorder(ledger)
-
-        mock_client = MagicMock(spec=[])  # no _inner
-        recorder.sample_equity(_candle(), mock_client)
-        assert len(ledger.equity) == 0
 
 
 # ---------------------------------------------------------------------------

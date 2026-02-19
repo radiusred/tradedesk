@@ -11,8 +11,6 @@ from typing import TYPE_CHECKING, Any
 
 from tradedesk import DomainEvent, get_dispatcher
 from tradedesk.marketdata.events import CandleClosedEvent
-from tradedesk.recording.ledger import TradeLedger
-from tradedesk.recording.types import EquityRecord
 from tradedesk.time_utils import parse_timestamp
 
 from .equity import compute_equity, compute_unrealised_pnl
@@ -158,62 +156,6 @@ class ExcursionComputer:
             ))
         except Exception:
             log.exception(f"Failed to compute excursions for {event.instrument}")
-
-
-# ---------------------------------------------------------------------------
-# BacktestRecorder (Legacy) - To be deprecated in favor of EquityRecorder
-# ---------------------------------------------------------------------------
-
-
-class BacktestRecorder:
-    """Records opportunity snapshots and equity samples during a backtest.
-
-    Can optionally self-subscribe to CandleClosedEvent when target_period and
-    client are provided during initialization.
-    """
-
-    def __init__(
-        self,
-        ledger: TradeLedger,
-        *,
-        target_period: str | None = None,
-        client: Any | None = None,
-    ) -> None:
-        self._ledger = ledger
-        self._target_period = target_period
-        self._client = client
-
-        # Self-subscribe to events if both target_period and client provided
-        if target_period is not None and client is not None:
-            from tradedesk.events import get_dispatcher
-            from tradedesk.marketdata.events import CandleClosedEvent
-
-            dispatcher = get_dispatcher()
-            dispatcher.subscribe(CandleClosedEvent, self._on_candle_closed)
-            log.debug(
-                "BacktestRecorder subscribed to CandleClosedEvent (target_period=%s)",
-                target_period,
-            )
-
-    def _on_candle_closed(self, event: DomainEvent) -> None:
-        """Handle target-period candle events for equity sampling."""
-        from tradedesk.marketdata.events import CandleClosedEvent
-
-        if (
-            isinstance(event, CandleClosedEvent)
-            and self._target_period is not None
-            and event.timeframe == self._target_period
-        ):
-            self.sample_equity(event.candle, self._client)
-
-    def sample_equity(self, candle: Candle, client: Any) -> None:
-        """Sample current equity from the backtest client into the ledger."""
-        inner = getattr(client, "_inner", None)
-        if inner is None:
-            return
-        eq = compute_equity(inner)
-        ts = candle.candle_with_iso_timestamp().timestamp
-        self._ledger.record_equity(EquityRecord(timestamp=ts, equity=float(eq)))
 
 
 # ---------------------------------------------------------------------------
