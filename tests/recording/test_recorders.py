@@ -47,6 +47,8 @@ class TestEquityRecorder:
         client = MagicMock()
         client.realised_pnl = 100.0
         client.positions = {}
+        client.compute_equity = MagicMock(return_value=150.0)
+        client.compute_unrealised_pnl = MagicMock(return_value=50.0)
         return client
 
     @pytest.fixture
@@ -112,17 +114,17 @@ class TestEquityRecorder:
         dispatcher = get_dispatcher()
         dispatcher.subscribe(EquitySampledEvent, capture_event)
 
-        # Mock equity computation
-        with patch("tradedesk.recording.recorders.compute_equity", return_value=1234.56):
-            with patch("tradedesk.recording.recorders.compute_unrealised_pnl", return_value=34.56):
-                mock_client.realised_pnl = 1200.0
+        # Configure mock client to return specific values
+        mock_client.compute_equity.return_value = 1234.56
+        mock_client.compute_unrealised_pnl.return_value = 34.56
+        mock_client.realised_pnl = 1200.0
 
-                event = CandleClosedEvent(
-                    instrument="EURUSD",
-                    timeframe="15MINUTE",
-                    candle=_candle("2025-01-15T12:15:00Z"),
-                )
-                await dispatcher.publish(event)
+        event = CandleClosedEvent(
+            instrument="EURUSD",
+            timeframe="15MINUTE",
+            candle=_candle("2025-01-15T12:15:00Z"),
+        )
+        await dispatcher.publish(event)
 
         assert len(published_events) == 1
         equity_event = published_events[0]
@@ -143,19 +145,20 @@ class TestEquityRecorder:
         dispatcher.subscribe(EquitySampledEvent, capture_event)
 
         # Make compute_equity raise an exception
-        with patch("tradedesk.recording.recorders.compute_equity", side_effect=RuntimeError("Test error")):
-            with patch("tradedesk.recording.recorders.log") as mock_log:
-                event = CandleClosedEvent(
-                    instrument="EURUSD",
-                    timeframe="15MINUTE",
-                    candle=_candle("2025-01-15T12:15:00Z"),
-                )
-                await dispatcher.publish(event)
+        mock_client.compute_equity.side_effect = RuntimeError("Test error")
 
-                # Should not publish equity event
-                assert len(published_events) == 0
-                # Should log exception
-                assert mock_log.exception.called
+        with patch("tradedesk.recording.recorders.log") as mock_log:
+            event = CandleClosedEvent(
+                instrument="EURUSD",
+                timeframe="15MINUTE",
+                candle=_candle("2025-01-15T12:15:00Z"),
+            )
+            await dispatcher.publish(event)
+
+            # Should not publish equity event
+            assert len(published_events) == 0
+            # Should log exception
+            assert mock_log.exception.called
 
 
 # ---------------------------------------------------------------------------

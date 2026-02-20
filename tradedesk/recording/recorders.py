@@ -13,7 +13,6 @@ from tradedesk.events import DomainEvent, get_dispatcher
 from tradedesk.marketdata import CandleClosedEvent
 from tradedesk.time_utils import parse_timestamp
 
-from .equity import compute_equity, compute_unrealised_pnl
 from .events import (
     EquitySampledEvent,
     ExcursionSampledEvent,
@@ -61,10 +60,10 @@ class EquityRecorder:
         if event.timeframe != self._target_period:
             return
 
-        # Compute equity using recording.equity functions
+        # Compute equity using client methods
         try:
-            equity = compute_equity(self._client)
-            unrealised = compute_unrealised_pnl(self._client)
+            equity = self._client.compute_equity()
+            unrealised = self._client.compute_unrealised_pnl()
             realised = self._client.realised_pnl
 
             # Publish EquitySampledEvent
