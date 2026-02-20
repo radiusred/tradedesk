@@ -81,7 +81,7 @@ class WeightedRollingTracker:
         trades_by_instrument: dict[str, list[dict[str, str | float]]] = {}
 
         for trade in trades:
-            instrument = trade["instrument"]
+            instrument = str(trade["instrument"])
             if instrument not in trades_by_instrument:
                 trades_by_instrument[instrument] = []
             trades_by_instrument[instrument].append(trade)
