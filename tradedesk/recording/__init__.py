@@ -1,6 +1,4 @@
 # Events
-# Equity functions
-from .equity import compute_equity, compute_unrealised_pnl
 from .events import (
     EquitySampledEvent,
     ExcursionSampledEvent,
@@ -12,13 +10,15 @@ from .events import (
 # Excursions
 from .excursions import (
     CandleIndex,
-    Excursions,
     build_candle_index,
     compute_excursions,
 )
 
 # Ledger
 from .ledger import TradeLedger, trade_rows_from_trades
+
+# Loader
+from .loader import load_trades_from_backtest
 
 # Metrics
 from .metrics import (
@@ -57,6 +57,8 @@ __all__ = [
     # Ledger
     "TradeLedger",
     "trade_rows_from_trades",
+    # Loader
+    "load_trades_from_backtest",
     # Metrics
     "Metrics",
     "RoundTrip",
@@ -65,7 +67,6 @@ __all__ = [
     "equity_rows_from_round_trips",
     # Excursions
     "CandleIndex",
-    "Excursions",
     "build_candle_index",
     "compute_excursions",
     # Recorders
@@ -75,7 +76,4 @@ __all__ = [
     "TrackerSync",
     # Subscriber
     "register_recording_subscriber",
-    # Equity functions
-    "compute_equity",
-    "compute_unrealised_pnl",
 ]

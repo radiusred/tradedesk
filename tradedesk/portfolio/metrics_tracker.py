@@ -5,8 +5,6 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Mapping
 
-from tradedesk.recording import round_trips_from_fills
-
 from .types import Instrument
 
 
@@ -69,75 +67,34 @@ class WeightedRollingTracker:
         Initialize windows from a backtest using the ledger's trade data.
 
         Loads the most recent window_size trades per instrument from the backtest.
-        Uses the canonical tradedesk.metrics.round_trips_from_fills() to avoid
-        brittle CSV parsing dependencies.
+        Uses recording.load_trades_from_backtest() to avoid CSV parsing dependencies.
 
         Args:
             backtest_dir: Path to backtest results directory containing trades.csv
         """
-        import csv
+        from tradedesk.recording import load_trades_from_backtest
 
-        trades_csv_path = backtest_dir / "trades.csv"
-
-        if not trades_csv_path.exists():
-            raise FileNotFoundError(
-                f"trades.csv not found in {backtest_dir}. "
-                "Ensure the directory contains a valid backtest."
-            )
-
-        # Read fills from trades.csv
-        fills_dicts = []
-
-        with open(trades_csv_path, "r") as f:
-            reader = csv.DictReader(f)
-            for row in reader:
-                # Support both 'instrument' and legacy 'epic' column names
-                instrument = row.get("instrument") or row.get("epic", "")
-                fills_dicts.append(
-                    {
-                        "instrument": instrument,
-                        "direction": row["direction"],
-                        "timestamp": row["timestamp"],
-                        "price": row["price"],
-                        "size": row["size"],
-                    }
-                )
-
-        if not fills_dicts:
-            raise ValueError(f"No trades found in {trades_csv_path}")
-
-        # Convert fills to round trips using canonical function
-        round_trips = round_trips_from_fills(fills_dicts)
+        # Load trades using recording domain API
+        trades = load_trades_from_backtest(backtest_dir)
 
         # Group by instrument
         trades_by_instrument: dict[str, list[dict[str, str | float]]] = {}
 
-        for trip in round_trips:
-            instrument = trip.instrument
+        for trade in trades:
+            instrument = trade["instrument"]
             if instrument not in trades_by_instrument:
                 trades_by_instrument[instrument] = []
-
-            trade = {
-                "instrument": instrument,
-                "direction": trip.direction.value,
-                "entry_ts": trip.entry_ts,
-                "exit_ts": trip.exit_ts,
-                "entry_price": trip.entry_price,
-                "exit_price": trip.exit_price,
-                "size": trip.size,
-                "pnl": trip.pnl,
-            }
             trades_by_instrument[instrument].append(trade)
 
         # Initialize windows with most recent window_size trades per instrument
-        for instrument, trades in trades_by_instrument.items():
+        for instrument, instrument_trades in trades_by_instrument.items():
             window = InstrumentWindow(max_size=self.window_size)
 
             # Take last window_size trades (most recent)
             recent_trades = (
-                trades[-self.window_size :]
-                if len(trades) > self.window_size
-                else trades
+                instrument_trades[-self.window_size :]
+                if len(instrument_trades) > self.window_size
+                else instrument_trades
             )
 
             for trade in recent_trades:

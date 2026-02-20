@@ -326,6 +326,29 @@ class BacktestClient(Client):
     def get_mark_price(self, instrument: str) -> float | None:
         return self._mark_price.get(instrument)
 
+    def compute_unrealised_pnl(self) -> float:
+        """Compute unrealised PnL for all open positions using the latest mark price."""
+        unreal = 0.0
+        for instrument, pos in self.positions.items():
+            mark = self.get_mark_price(instrument)
+            if mark is None:
+                raise RuntimeError(
+                    f"No mark price available for {instrument} (no data replayed yet)"
+                )
+
+            if pos.direction == Direction.LONG:
+                unreal += (mark - pos.entry_price) * pos.size
+            elif pos.direction == Direction.SHORT:
+                unreal += (pos.entry_price - mark) * pos.size
+            else:
+                raise ValueError(f"Unknown position direction: {pos.direction!r}")
+
+        return float(unreal)
+
+    def compute_equity(self) -> float:
+        """Equity = realised PnL + unrealised PnL."""
+        return float(self.realised_pnl + self.compute_unrealised_pnl())
+
     async def get_market_snapshot(self, instrument: str) -> dict[str, Any]:
         price = self._get_mark_price(instrument)
         # Backtest uses mid-price; bid/offer equal for now.

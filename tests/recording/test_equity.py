@@ -1,9 +1,8 @@
-"""Tests for tradedesk.recording.equity – equity tracking."""
+"""Tests for equity computation – now on BacktestClient."""
 
 import pytest
 
 from tradedesk.execution.backtest.client import BacktestClient
-from tradedesk.recording.equity import compute_equity
 
 
 @pytest.mark.asyncio
@@ -17,11 +16,11 @@ async def test_compute_equity_realised_plus_unrealised():
     client._set_mark_price(instrument, 105.0)
 
     # Unrealised: (105-100)*2 = 10
-    assert compute_equity(client) == 10.0
+    assert client.compute_equity() == 10.0
 
     # Close the position at 105 => realised becomes 10, unrealised 0
     await client.place_market_order(instrument, "SELL", 2.0)
-    assert compute_equity(client) == 10.0
+    assert client.compute_equity() == 10.0
 
 
 @pytest.mark.asyncio
@@ -35,7 +34,7 @@ async def test_compute_equity_short_position_unrealised():
     client._set_mark_price(instrument, 95.0)
 
     # Short unrealised: (entry - mark)*size = (100-95)*2 = 10
-    assert compute_equity(client) == 10.0
+    assert client.compute_equity() == 10.0
 
 
 @pytest.mark.asyncio
@@ -51,7 +50,7 @@ async def test_compute_equity_raises_on_unknown_position_direction():
     object.__setattr__(client.positions[instrument], "direction", "SIDEWAYS")
 
     with pytest.raises(ValueError, match="Unknown position direction"):
-        compute_equity(client)
+        client.compute_equity()
 
 
 @pytest.mark.asyncio
@@ -67,4 +66,4 @@ async def test_compute_equity_requires_mark_price_for_open_positions():
     client._mark_price.clear()
 
     with pytest.raises(RuntimeError):
-        compute_equity(client)
+        client.compute_equity()
