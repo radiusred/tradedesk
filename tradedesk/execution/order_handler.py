@@ -107,6 +107,7 @@ class OrderExecutionHandler:
                 size=q_size,
                 currency=request.currency,
                 force_open=request.force_open,
+                exit_reason=request.exit_reason,
             )
 
             # Extract fill price (IG uses "level"; others may use "price")

@@ -175,6 +175,7 @@ class OrderRequest:
     size: float
     currency: str = "USD"
     force_open: bool = True
+    exit_reason: str = ""
 
 
 @dataclass(frozen=True, kw_only=True)

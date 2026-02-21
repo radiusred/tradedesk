@@ -369,6 +369,7 @@ class BacktestClient(Client):
         size: float,
         currency: str = "USD",
         force_open: bool = True,
+        exit_reason: str = "",
     ) -> dict[str, Any]:
         if not self._started:
             raise RuntimeError("BacktestClient not started")
@@ -443,7 +444,7 @@ class BacktestClient(Client):
                             entry_price=pos.entry_price,
                             exit_price=price,
                             pnl=closed_pnl,
-                            exit_reason="market_order",
+                            exit_reason=exit_reason or "market_order",
                             timestamp=parse_timestamp(self._current_timestamp or ""),
                         )
                     )
@@ -485,9 +486,11 @@ class BacktestClient(Client):
         size: float,
         currency: str = "USD",
         force_open: bool = True,
+        exit_reason: str = "",
     ) -> dict[str, Any]:
         return await self.place_market_order(
-            instrument, direction, size, currency=currency, force_open=force_open
+            instrument, direction, size, currency=currency, force_open=force_open,
+            exit_reason=exit_reason,
         )
 
     async def get_positions(self) -> list["BrokerPosition"]:
