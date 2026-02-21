@@ -576,6 +576,7 @@ class IGClient(Client):
         expiry: str = "-",
         time_in_force: str = "FILL_OR_KILL",
         guaranteed_stop: bool = False,
+        exit_reason: str = "",
     ) -> dict[str, Any]:
         """
         Submit a simple OTC market order.
@@ -678,6 +679,7 @@ class IGClient(Client):
         guaranteed_stop: bool = False,
         confirm_timeout_s: float = 10.0,
         confirm_poll_s: float = 0.25,
+        exit_reason: str = "",
     ) -> dict[str, Any]:
         res = await self.place_market_order(
             instrument=instrument,

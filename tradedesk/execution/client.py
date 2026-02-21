@@ -57,6 +57,7 @@ class Client(abc.ABC):
         size: float,
         currency: str = "USD",
         force_open: bool = True,
+        exit_reason: str = "",
     ) -> dict[str, Any]:
         """Place a market order without requiring confirmation.
 
@@ -69,6 +70,8 @@ class Client(abc.ABC):
             currency: The currency code (default "USD").
             force_open: If True, opens a new position even if an opposing
                 position exists (netting vs hedging).
+            exit_reason: Strategy-provided reason for closing (e.g. "regime_off",
+                "stop_loss"). Propagated to PositionClosedEvent for recording.
 
         Returns:
             A dictionary containing the deal reference or order ID.
@@ -83,6 +86,7 @@ class Client(abc.ABC):
         size: float,
         currency: str = "USD",
         force_open: bool = True,
+        exit_reason: str = "",
     ) -> dict[str, Any]:
         """Place a market order and confirm its execution.
 
@@ -95,6 +99,8 @@ class Client(abc.ABC):
             currency: The currency code (default "USD").
             force_open: If True, opens a new position even if an opposing
                 position exists.
+            exit_reason: Strategy-provided reason for closing (e.g. "regime_off",
+                "stop_loss"). Propagated to PositionClosedEvent for recording.
 
         Returns:
             A dictionary containing the full deal confirmation details.
