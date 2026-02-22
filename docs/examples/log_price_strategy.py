@@ -17,7 +17,6 @@ Requirements:
     - tradedesk library installed
 """
 
-import json
 import logging
 
 from tradedesk import run_strategies
@@ -67,9 +66,7 @@ class LogPriceStrategy(BaseStrategy):
         # Only log when mid price changes
         if self._last_mid is None or mid != self._last_mid:
             self._last_mid = mid
-            
-            # Log as structured JSON for easy parsing
-            log.warning("price_update %s", json.dumps(market_data))
+            log.info("price_update %s", market_data)
 
 if __name__ == "__main__":
     run_strategies(
