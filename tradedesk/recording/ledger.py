@@ -6,7 +6,13 @@ from typing import Any
 
 from tradedesk.time_utils import parse_timestamp
 
-from .metrics import round_trips_from_fills
+from .excursions import CandleIndex, compute_excursions
+from .metrics import (
+    Metrics,
+    compute_metrics,
+    equity_rows_from_round_trips,
+    round_trips_from_fills,
+)
 from .opportunity import OpportunityRecorder
 from .types import EquityRecord, RecordingMode, TradeRecord
 
@@ -40,6 +46,7 @@ class TradeLedger:
     _open_positions: dict[str, dict[str, Any]] = field(
         default_factory=dict
     )  # Track positions for P&L calc
+    candle_indices: dict[str, CandleIndex] = field(default_factory=dict)
     _last_equity_date: str | None = None  # Track last daily equity write (YYYY-MM-DD)
 
     def __post_init__(self) -> None:
@@ -56,9 +63,9 @@ class TradeLedger:
         out_dir.mkdir(parents=True, exist_ok=True)
 
         if self.mode == RecordingMode.BACKTEST:
-            # Backtest: write all 6 files
             self.write_trades_csv(out_dir / "trades.csv")
             self.write_round_trips_csv(out_dir / "round_trips.csv")
+            self.write_metrics_csv(out_dir / "metrics.csv")
             self.write_equity_csv(out_dir / "equity.csv")
             self.write_equity_daily_csv(out_dir / "equity_daily.csv")
             self.write_exposure_csv(out_dir / "exposure.csv")
@@ -110,12 +117,15 @@ class TradeLedger:
                 )
 
     def write_round_trips_csv(self, path: Path) -> None:
-        """Write reconstructed round trips.
+        """Write reconstructed round trips with optional MFE/MAE excursions.
 
         This is derived from trades.csv fills using the same pairing logic as metrics.
+        When ``self.candle_indices`` contains a :class:`CandleIndex` for a trip's
+        instrument, MFE/MAE columns are populated; otherwise they are left blank.
 
         Output schema:
-        instrument,direction,entry_ts,exit_ts,entry_price,exit_price,size,pnl,hold_minutes,exit_reason
+        instrument,direction,entry_ts,exit_ts,entry_price,exit_price,size,pnl,
+        hold_minutes,exit_reason,mfe_points,mae_points,mfe_pnl,mae_pnl
         """
         path.parent.mkdir(parents=True, exist_ok=True)
 
@@ -147,6 +157,10 @@ class TradeLedger:
                     "pnl",
                     "hold_minutes",
                     "exit_reason",
+                    "mfe_points",
+                    "mae_points",
+                    "mfe_pnl",
+                    "mae_pnl",
                 ]
             )
 
@@ -158,6 +172,18 @@ class TradeLedger:
                     ).total_seconds() / 60.0
                 except Exception:
                     hold = ""
+
+                mfe_pts: float | str = ""
+                mae_pts: float | str = ""
+                mfe_pnl_val: float | str = ""
+                mae_pnl_val: float | str = ""
+                idx = self.candle_indices.get(t.instrument)
+                if idx is not None:
+                    exc = compute_excursions(trip=t, idx=idx)
+                    mfe_pts = round(exc.mfe_points, 2)
+                    mae_pts = round(exc.mae_points, 2)
+                    mfe_pnl_val = round(exc.mfe_pnl, 2)
+                    mae_pnl_val = round(exc.mae_pnl, 2)
 
                 w.writerow(
                     [
@@ -171,8 +197,86 @@ class TradeLedger:
                         round(t.pnl, 2),
                         hold,
                         t.exit_reason or "",
+                        mfe_pts,
+                        mae_pts,
+                        mfe_pnl_val,
+                        mae_pnl_val,
                     ]
                 )
+
+    def write_metrics_csv(self, path: Path) -> None:
+        """Write per-instrument and portfolio-aggregate performance metrics.
+
+        Output schema:
+        instrument,fills,round_trips,final_equity,max_dd,win_rate,avg_win,
+        avg_loss,profit_factor,expectancy,avg_hold_min
+        """
+        path.parent.mkdir(parents=True, exist_ok=True)
+
+        equity_rows = [
+            {"timestamp": e.timestamp, "equity": str(e.equity)} for e in self.equity
+        ]
+        trade_rows = trade_rows_from_trades(self.trades)
+
+        m = compute_metrics(
+            equity_rows=equity_rows, trade_rows=trade_rows, reporting_scale=1.0
+        )
+
+        # For BROKER mode, equity includes initial_balance; subtract to get PnL
+        portfolio_pnl = m.final_equity
+        if self.mode == RecordingMode.BROKER:
+            portfolio_pnl -= self.initial_balance
+
+        header = [
+            "instrument",
+            "fills",
+            "round_trips",
+            "final_equity",
+            "max_dd",
+            "win_rate",
+            "avg_win",
+            "avg_loss",
+            "profit_factor",
+            "expectancy",
+            "avg_hold_min",
+        ]
+
+        def _metrics_row(
+            label: str, 
+            met: Metrics, 
+            pnl_override: float | None = None
+        ) -> list[object]:
+            return [
+                label,
+                met.trades,
+                met.round_trips,
+                round(pnl_override if pnl_override is not None else met.final_equity, 2),
+                round(met.max_drawdown, 2),
+                round(met.win_rate, 2),
+                round(met.avg_win, 2),
+                round(met.avg_loss, 2),
+                round(met.profit_factor, 2),
+                round(met.expectancy, 2),
+                round(met.avg_hold_minutes, 2),
+            ]
+
+        with path.open("w", newline="") as f:
+            w = csv.writer(f)
+            w.writerow(header)
+            w.writerow(_metrics_row("PORTFOLIO", m, pnl_override=portfolio_pnl))
+
+            # Per-instrument breakdown
+            instruments = sorted({t.instrument for t in self.trades})
+            for inst in instruments:
+                inst_trades = [r for r in trade_rows if r["instrument"] == inst]
+                trips = round_trips_from_fills(inst_trades)
+                inst_equity = equity_rows_from_round_trips(trips, starting_equity=0.0)
+                inst_m = compute_metrics(
+                    equity_rows=inst_equity,
+                    trade_rows=inst_trades,
+                    reporting_scale=1.0,
+                )
+                w.writerow(_metrics_row(inst, inst_m))
 
     def write_equity_csv(self, path: Path) -> None:
         path.parent.mkdir(parents=True, exist_ok=True)

@@ -96,6 +96,16 @@ class RecordingSubscriber:
         else:
             log.info("No trades recorded in session")
 
+        # Generate analysis report if we have an output directory and trades
+        if self._run_output_dir is not None and self.ledger.trades:
+            try:
+                from .report import generate_analysis_report
+
+                generate_analysis_report(self._run_output_dir)
+                log.info(f"Analysis report written to {self._run_output_dir / 'analysis.md'}")
+            except Exception:
+                log.exception("Failed to generate analysis report")
+
         # Emit completion event
         await get_dispatcher().publish(ReportingCompleteEvent())
 
