@@ -37,7 +37,7 @@ class Metrics:
     expectancy: float
     max_drawdown: float
     final_equity: float
-    avg_hold_minutes: float | None
+    avg_hold_minutes: float
     exits_by_reason: dict[str, int]
 
 
