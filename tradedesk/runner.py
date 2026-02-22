@@ -229,7 +229,11 @@ def run_strategies(
         log.info("Interrupted by user - shutting down gracefully")
 
     except Exception as e:
-        log.exception("Fatal error in strategy runner: %s", e)
+        if log.getEffectiveLevel() <= logging.DEBUG:
+            log.exception("Fatal error in strategy runner", exc_info=e)
+        else:
+            log.error("Fatal error in strategy runner: %s", e)
+            log.error("Run with DEBUG logging for more details")
         exit_code = 1
 
     finally:
