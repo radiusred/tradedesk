@@ -93,8 +93,12 @@ class IGClient(Client):
         """Initialize the client and authenticate."""
         if self._session is None:
             self._session = aiohttp.ClientSession(headers=self.headers)
-        await self._authenticate()
-
+        try:
+            await self._authenticate()
+        except Exception as _e:
+            await self.close()  # Ensure session is closed on failure
+            raise
+        
     async def close(self) -> None:
         """Close the session."""
         if self._session:
