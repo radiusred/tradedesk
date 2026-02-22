@@ -10,11 +10,11 @@ Usage:
 import logging
 from collections import deque
 
-from tradedesk import BaseStrategy, run_strategies
+from tradedesk import run_strategies
 from tradedesk.execution import Client
 from tradedesk.execution.ig import IGClient
-from tradedesk.marketdata.instrument import MarketData
-from tradedesk.marketdata.subscriptions import MarketSubscription
+from tradedesk.marketdata import MarketData, MarketSubscription
+from tradedesk.strategy import BaseStrategy
 
 log = logging.getLogger(__name__)
 
