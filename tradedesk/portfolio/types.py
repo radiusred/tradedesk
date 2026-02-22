@@ -6,7 +6,7 @@ instruments.
 """
 
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Any, NewType, Protocol
+from typing import TYPE_CHECKING, Any, Callable, NewType, Protocol
 
 if TYPE_CHECKING:
     from ..execution import PositionTracker
@@ -35,7 +35,7 @@ class StrategySpec:
 
     instrument: str
     period: str
-    strategy_cls: type
+    strategy_cls: Callable[..., Any]
     kwargs: dict[str, Any]
 
 
