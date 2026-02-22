@@ -15,33 +15,33 @@ Optional environment variables:
 """
 
 import os
-from dataclasses import dataclass
 from typing import Literal
 
 
-@dataclass
 class Settings:
     """
     Global settings for the tradedesk library.
 
-    Values are loaded from environment variables on initialization.
-    Users can override these programmatically if needed:
-
-        from tradedesk.config import settings
-        settings.ig_api_key = "custom_key"
+    Values are read from environment variables on each access, so env vars
+    set after import (e.g. via export_ig_env_from_config) are picked up
+    correctly.
     """
 
-    ig_api_key: str = ""
-    ig_username: str = ""
-    ig_password: str = ""
-    ig_environment: Literal["DEMO", "LIVE"] = "DEMO"
+    @property
+    def ig_api_key(self) -> str:
+        return os.getenv("IG_API_KEY", "")
 
-    def __post_init__(self) -> None:
-        # Populate from environment at import-time.
-        self.ig_api_key = os.getenv("IG_API_KEY", "")
-        self.ig_username = os.getenv("IG_USERNAME", "")
-        self.ig_password = os.getenv("IG_PASSWORD", "")
-        self.ig_environment = os.getenv("IG_ENVIRONMENT", self.ig_environment).upper()  # type: ignore
+    @property
+    def ig_username(self) -> str:
+        return os.getenv("IG_USERNAME", "")
+
+    @property
+    def ig_password(self) -> str:
+        return os.getenv("IG_PASSWORD", "")
+
+    @property
+    def ig_environment(self) -> Literal["DEMO", "LIVE"]:
+        return os.getenv("IG_ENVIRONMENT", "DEMO").upper()  # type: ignore[return-value]
 
     def validate(self) -> None:
         missing: list[str] = []
@@ -64,5 +64,5 @@ class Settings:
             )
 
 
-# Global settings instance - loaded when module is imported
+# Global settings instance
 settings = Settings()
