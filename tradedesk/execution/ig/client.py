@@ -358,7 +358,7 @@ class IGClient(Client):
         # 1. Check if it's a rate limit (unrecoverable)
         try:
             body = await resp.json()
-            if body.get("errorCode") == "error.public-api.exceeded-api-key-allowance":
+            if isinstance(body, dict) and body.get("errorCode") == "error.public-api.exceeded-api-key-allowance":
                 raise RuntimeError("IG API rate limit exceeded.")
         except (ValueError, KeyError):
             pass
