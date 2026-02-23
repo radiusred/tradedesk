@@ -1,4 +1,4 @@
-from unittest.mock import AsyncMock
+from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
@@ -12,6 +12,20 @@ class FakeResp:
 
     async def json(self):
         return self._body
+
+    async def __aenter__(self):
+        return self
+
+    async def __aexit__(self, *args):
+        pass
+
+
+def _make_session(resp: FakeResp) -> MagicMock:
+    """Return a minimal mock ClientSession whose request() is a CM yielding resp."""
+    session = MagicMock()
+    session.headers = {}
+    session.request = MagicMock(return_value=resp)
+    return session
 
 
 @pytest.mark.asyncio
@@ -57,3 +71,51 @@ async def test_confirm_deal_retries_404_deal_not_found_then_succeeds():
     res = await c.confirm_deal("ABC", timeout_s=1.0, poll_s=0.0)
     assert res["dealStatus"] == "ACCEPTED"
     assert c._request.await_count == 2
+
+
+# ---------------------------------------------------------------------------
+# _request: null / non-dict JSON body
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_request_returns_empty_dict_when_json_body_is_null():
+    """_request must return {} when resp.json() is None (e.g. IG returns null body).
+
+    Before the fix _request returned None, which propagated into confirm_deal
+    and caused: AttributeError: 'NoneType' object has no attribute 'get'
+    """
+    c = IGClient()
+    c._session = _make_session(FakeResp(status=200, body=None))
+
+    result = await c._request("GET", "/confirms/FAKE")
+
+    assert result == {}
+    assert isinstance(result, dict)
+
+
+@pytest.mark.asyncio
+async def test_request_returns_empty_dict_when_json_body_is_non_dict():
+    """_request must return {} for any non-dict JSON (list, scalar, etc.)."""
+    c = IGClient()
+    c._session = _make_session(FakeResp(status=200, body=["unexpected", "list"]))
+
+    result = await c._request("GET", "/some/path")
+
+    assert result == {}
+    assert isinstance(result, dict)
+
+
+@pytest.mark.asyncio
+async def test_confirm_deal_null_body_raises_timeout_not_attribute_error():
+    """confirm_deal with a null confirm response must raise TimeoutError, not AttributeError.
+
+    Before the fix: _request returned None → payload.get() → AttributeError.
+    After the fix: _request returns {} → dealStatus never set → TimeoutError.
+    """
+    c = IGClient()
+    # Simulate the fixed _request always returning {} (null body scenario)
+    c._request = AsyncMock(return_value={})
+
+    with pytest.raises(TimeoutError):
+        await c.confirm_deal("REF", timeout_s=0.01, poll_s=0.0)

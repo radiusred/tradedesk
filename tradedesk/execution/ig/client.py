@@ -344,8 +344,8 @@ class IGClient(Client):
                         f"IG request failed: HTTP {resp.status}: {err_body}"
                     )
 
-                result: dict[str, Any] = await resp.json()
-                return result
+                result = await resp.json()
+                return result if isinstance(result, dict) else {}
 
         except aiohttp.ClientError as e:
             log.error("Request failed: %s %s - %s", method, url, e)
