@@ -119,3 +119,33 @@ async def test_confirm_deal_null_body_raises_timeout_not_attribute_error():
 
     with pytest.raises(TimeoutError):
         await c.confirm_deal("REF", timeout_s=0.01, poll_s=0.0)
+
+
+@pytest.mark.asyncio
+async def test_quantise_size_null_dealing_rules():
+    """quantise_size must not crash when the market snapshot has dealingRules: null.
+
+    IG DEMO can return {"dealingRules": null, ...}. dict.get("key", {}) returns None
+    (not {}) when the key is present but has a null value, causing:
+        AttributeError: 'NoneType' object has no attribute 'get'
+    """
+    c = IGClient()
+    # Snapshot with explicit null dealingRules (as IG DEMO sometimes returns)
+    c.get_instrument_metadata = AsyncMock(
+        return_value={"dealingRules": None, "instrument": {}}
+    )
+
+    result = await c.quantise_size("CS.D.GBPUSD.TODAY.IP", 1.0)
+    assert result == 1.0
+
+
+@pytest.mark.asyncio
+async def test_quantise_size_null_min_deal_size():
+    """quantise_size must not crash when minDealSize is present but null."""
+    c = IGClient()
+    c.get_instrument_metadata = AsyncMock(
+        return_value={"dealingRules": {"minDealSize": None}}
+    )
+
+    result = await c.quantise_size("CS.D.GBPUSD.TODAY.IP", 0.5)
+    assert result == 0.5

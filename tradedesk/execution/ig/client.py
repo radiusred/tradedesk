@@ -235,7 +235,7 @@ class IGClient(Client):
         Handles Version 3 Authentication (OAuth).
         Warning: Does NOT support Lightstreamer.
         """
-        oauth_token = body.get("oauthToken", {})
+        oauth_token = body.get("oauthToken") or {}
         access_token = oauth_token.get("access_token")
 
         if not access_token:
@@ -358,7 +358,9 @@ class IGClient(Client):
         # 1. Check if it's a rate limit (unrecoverable)
         try:
             body = await resp.json()
-            if isinstance(body, dict) and body.get("errorCode") == "error.public-api.exceeded-api-key-allowance":
+            if isinstance(body, dict) and body.get("errorCode") == (
+                "error.public-api.exceeded-api-key-allowance"
+            ):
                 raise RuntimeError("IG API rate limit exceeded.")
         except (ValueError, KeyError):
             pass
@@ -472,8 +474,8 @@ class IGClient(Client):
         """
 
         metadata = await self.get_instrument_metadata(epic)
-        dealing_rules = metadata.get("dealingRules", {})
-        min_value = dealing_rules.get("minDealSize", {}).get("value")
+        dealing_rules = metadata.get("dealingRules") or {}
+        min_value = (dealing_rules.get("minDealSize") or {}).get("value")
 
         # If no minimum deal size defined, return the original size
         if min_value is None:
@@ -528,8 +530,8 @@ class IGClient(Client):
 
         result: list[BrokerPosition] = []
         for p in positions:
-            market = p.get("market", {})
-            position = p.get("position", {})
+            market = p.get("market") or {}
+            position = p.get("position") or {}
             result.append(
                 BrokerPosition(
                     instrument=market.get("epic", ""),
@@ -561,7 +563,7 @@ class IGClient(Client):
                 f"Account {self.account_id} not found in /accounts response"
             )
 
-        bal = current.get("balance", {})
+        bal = current.get("balance") or {}
         return AccountBalance(
             balance=float(bal.get("balance", 0)),
             deposit=float(bal.get("deposit", 0)),
