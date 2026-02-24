@@ -1,111 +1,139 @@
-# tradedesk
 
 ![CI Build](https://github.com/radiusred/tradedesk/actions/workflows/ci.yml/badge.svg)
 [![PyPI Version](https://img.shields.io/pypi/v/tradedesk?label=PyPI)](https://pypi.python.org/pypi/tradedesk)
 
-## What tradedesk is
+# tradedesk
 
-`tradedesk` is a lightweight Python framework for developing, backtesting, and running systematic trading strategies across multiple data providers and execution environments.
+tradedesk is an event-driven trading framework for building, running,
+and evaluating systematic trading strategies across both backtesting and live
+broker environments.
 
 It provides:
 
-* A consistent strategy lifecycle
-* Explicit separation between market data, strategy logic, and execution
-* Minimal and flexible portfolio management types
-* Deterministic [backtesting](./docs/backtesting_guide.md) with identical strategy code
-* Live and DEMO execution via provider-specific clients
+-   Event-based strategy execution
+-   Unified backtest and live broker runtime model
+-   Market data aggregation and indicator framework
+-   Portfolio orchestration and risk management
+-   Trade recording, metrics, and reporting
 
-It is designed for research, validation, and controlled deployment of trading strategies rather than high-frequency or ultra-low-latency trading.
+The framework is designed so that strategies react to events --- not
+broker implementations --- enabling the same strategy code to run
+unchanged in both backtest and live environments.
 
-## What tradedesk is not
 
-`tradedesk` is intentionally *not*:
+## Core Concepts
 
-* A signal marketplace
-* A turnkey trading bot
-* A performance-optimised HFT engine
+### Event-Driven Architecture
 
-It REQUIRES the user to accept responsibility for strategy design, risk management, and operational controls.
+All major subsystems communicate via events:
 
-## High-level architecture
+-   Market data events (ticks, candles)
+-   Strategy events (signals)
+-   Execution events (orders, fills)
+-   Portfolio events (position updates)
+-   Recording events (trade lifecycle)
 
-At a high level, `tradedesk` consists of four layers:
+As a user, you primarily:
 
-1. **Providers** – Interfaces to external data/execution sources (e.g. IG, historical backtest data)
-2. **Clients** – Concrete implementations that fetch data and place orders
-3. **Strategies** – User-defined trading logic responding to market events
-4. **Runner** – Orchestrates lifecycle, subscriptions, warmup, and shutdown
+-   Implement a strategy that reacts to candle updates
+-   Optionally subscribe to events for custom analytics or logging
 
-Market data flows from the provider into the strategy, which emits execution decisions back through the client.
 
-## Core concepts
+## Basic Strategy Structure
 
-### Strategy lifecycle
+A strategy derives from the base strategy class and implements candle
+handling logic.
 
-A strategy progresses through the following phases:
+Typical flow:
 
-1. Construction
-2. Subscription registration
-3. Warmup (optional but strongly recommended)
-4. Live or replayed market data handling
-5. Order execution
-6. Graceful shutdown
+1.  Market data arrives (tick or candle)
+2.  Aggregation produces candles
+3.  Strategy receives `on_candle_update`
+4.  Strategy emits order requests
+5.  Execution layer processes orders
+6.  Portfolio updates positions
+7.  Recording captures trade lifecycle
 
-### Subscriptions
 
-Strategies explicitly declare their required data via subscriptions:
+## Running a Backtest
 
-* **MarketSubscription** – Tick-level price updates (bid/offer)
-* **ChartSubscription** – Aggregated candle data for a given timeframe
+Backtesting uses the same event model as live trading.
 
-Only subscribed data is delivered to the strategy.
+High-level flow:
 
-### Warmup
+-   CSV or historical provider feeds market data
+-   Backtest runner drives event loop
+-   Strategy executes normally
+-   Portfolio and recording operate identically to live mode
 
-Warmup allows a strategy to request historical data before live execution begins in order to initialise indicator state and internal windows.
+See `docs/backtesting_guide.md` for detailed usage.
 
-A strategy that does not warm up must be robust to partially initialised indicators and delayed signal readiness.
 
-### Backtest vs live execution
+## Live Trading (IG)
 
-The same strategy code can be run against:
+The IG execution module provides:
 
-* A live or DEMO provider
-* A deterministic [backtest](./docs/backtesting_guide.md) client that replays historical data
+-   REST client for order management
+-   Streaming price integration
+-   Position synchronization
+-   Retry and resilience handling
 
-Differences between environments are isolated to the client layer.
+Your strategy remains unchanged --- only the execution configuration
+differs.
 
-## Supported providers
 
-* **IG** – Live and DEMO trading via REST and streaming APIs
-* **BacktestClient** – Deterministic replay of historical data
+## Portfolio & Risk
 
-Historical data acquisition is handled by a companion project:
+The portfolio subsystem:
 
-* `tradedesk-dukascopy`
+-   Tracks positions
+-   Applies risk policies
+-   Reconciles fills
+-   Emits portfolio events
 
-## Quick start
+Risk controls can reject or modify orders before execution.
 
-1. Install dependencies
-2. Write or select a strategy
-3. Choose a client ([backtest](./docs/backtesting_guide.md) or live)
-4. Run via the `tradedesk` runner
 
-Detailed tutorials are provided in the documentation guides listed below.
+## Recording & Reporting
 
-## Project status and guarantees
+The recording subsystem:
 
-* APIs are evolving as the framework matures
-* Prior to a 1.0 release, there is NO guarantee of backward compatibility between
-    minor versions of the framework
-* The framework prioritises correctness and clarity over performance
+-   Tracks trades and equity curves
+-   Computes excursions and performance metrics
+-   Generates structured reports
 
-## Further reading
+Users can subscribe to recording events for custom reporting pipelines.
 
-* `docs/indicators.md` – Indicator concepts and mathematical foundations
-* `docs/strategy_writing_guide.md` – Step-by-step strategy tutorial
-* `docs/backtesting_guide.md` – Methodology for rigorous backtesting
 
+## Typical Project Structure
+
+
+    my_strategy/
+        strategy.py
+        run_backtest.py
+        config.py
+
+
+## Installation
+
+Install using your preferred environment manager. Ensure Python 3.11+.
+
+
+## Documentation
+
+See the `docs/` directory for:
+
+-   Backtesting guide
+-   Strategy guide
+-   Portfolio guide
+-   Indicator guide
+-   Aggregation guide
+-   Risk management guide
+-   Metrics guide
+
+
+tradedesk is designed for clarity, determinism, and event-level
+transparency.
 ---
 
 ## License
@@ -114,3 +142,4 @@ Licensed under the Apache License, Version 2.0.
 See: [https://www.apache.org/licenses/LICENSE-2.0](https://www.apache.org/licenses/LICENSE-2.0)
 
 Copyright 2026 [Radius Red Ltd.](https://github.com/radiusred)
+
