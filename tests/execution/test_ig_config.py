@@ -1,4 +1,4 @@
-# tests/test_config.py
+# tests/execution/test_ig_config.py
 """
 Tests for the config module.
 """
@@ -16,7 +16,6 @@ class TestSettings:
 
     def test_default_values(self):
         """Test that Settings has correct default values."""
-        # Temporarily clear environment variables
         with patch.dict(os.environ, {}, clear=True):
             test_settings = Settings()
 
@@ -42,43 +41,51 @@ class TestSettings:
             assert test_settings.ig_password == "test-pass"
             assert test_settings.ig_environment == "LIVE"
 
-    def test_validation_success(self):
-        """Test successful validation with all required values."""
-        test_settings = Settings()
-        test_settings.ig_api_key = "test-key"
-        test_settings.ig_username = "test-user"
-        test_settings.ig_password = "test-pass"
-        test_settings.ig_environment = "DEMO"
+    def test_validation_success_via_env(self):
+        """Test successful validation when environment variables are set."""
+        env_vars = {
+            "IG_API_KEY": "test-key",
+            "IG_USERNAME": "test-user",
+            "IG_PASSWORD": "test-pass",
+            "IG_ENVIRONMENT": "DEMO",
+        }
 
-        # Should not raise an exception
-        test_settings.validate()
-
-    def test_validation_missing_values(self):
-        """Test validation raises error for missing values."""
-        test_settings = Settings()
-        test_settings.ig_api_key = ""
-        test_settings.ig_username = "test-user"
-        test_settings.ig_password = ""
-
-        with pytest.raises(ValueError) as exc_info:
+        with patch.dict(os.environ, env_vars, clear=True):
+            test_settings = Settings()
+            # Should not raise an exception
             test_settings.validate()
 
-        assert "IG_API_KEY" in str(exc_info.value)
-        assert "IG_PASSWORD" in str(exc_info.value)
+    def test_validation_missing_values_via_env(self):
+        """Test validation raises error for missing values (using env)."""
+        env_vars = {
+            "IG_USERNAME": "test-user",
+            # IG_API_KEY and IG_PASSWORD intentionally omitted
+        }
 
-    def test_validation_invalid_environment(self):
-        """Test validation raises error for invalid environment."""
-        test_settings = Settings()
-        test_settings.ig_api_key = "test-key"
-        test_settings.ig_username = "test-user"
-        test_settings.ig_password = "test-pass"
-        test_settings.ig_environment = "INVALID"  # Invalid value
+        with patch.dict(os.environ, env_vars, clear=True):
+            test_settings = Settings()
+            with pytest.raises(ValueError) as exc_info:
+                test_settings.validate()
 
-        with pytest.raises(ValueError) as exc_info:
-            test_settings.validate()
+            assert "IG_API_KEY" in str(exc_info.value)
+            assert "IG_PASSWORD" in str(exc_info.value)
 
-        assert "IG_ENVIRONMENT" in str(exc_info.value)
-        assert "must be 'DEMO' or 'LIVE'" in str(exc_info.value)
+    def test_validation_invalid_environment_via_env(self):
+        """Test validation raises error for invalid environment (using env)."""
+        env_vars = {
+            "IG_API_KEY": "test-key",
+            "IG_USERNAME": "test-user",
+            "IG_PASSWORD": "test-pass",
+            "IG_ENVIRONMENT": "INVALID",
+        }
+
+        with patch.dict(os.environ, env_vars, clear=True):
+            test_settings = Settings()
+            with pytest.raises(ValueError) as exc_info:
+                test_settings.validate()
+
+            assert "IG_ENVIRONMENT" in str(exc_info.value)
+            assert "must be 'DEMO' or 'LIVE'" in str(exc_info.value)
 
     def test_global_settings_instance(self):
         """Test that the global settings instance is created."""
