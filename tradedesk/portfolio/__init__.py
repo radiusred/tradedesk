@@ -1,5 +1,6 @@
 """Portfolio management for multi-instrument trading."""
 
+from .base import BasePortfolio, Portfolio
 from .config import BacktestPortfolioConfig, LivePortfolioConfig, PortfolioConfig
 from .events import event
 from .journal import JournalEntry, PositionJournal
@@ -13,6 +14,7 @@ from .reconciliation import (
 )
 from .risk import EqualSplitRiskPolicy, RiskAllocationPolicy, atr_normalised_size
 from .runner import PortfolioRunner
+from .simple import SimplePortfolio
 from .types import (
     Instrument,
     PortfolioStrategy,
@@ -22,12 +24,14 @@ from .types import (
 
 __all__ = [
     "BacktestPortfolioConfig",
+    "BasePortfolio",
     "DiscrepancyType",
     "EqualSplitRiskPolicy",
     "Instrument",
     "InstrumentWindow",
     "JournalEntry",
     "LivePortfolioConfig",
+    "Portfolio",
     "PortfolioConfig",
     "PortfolioRunner",
     "PortfolioStrategy",
@@ -37,6 +41,7 @@ __all__ = [
     "ReconciliationManager",
     "ReconciliationResult",
     "RiskAllocationPolicy",
+    "SimplePortfolio",
     "StrategySpec",
     "WeightedRollingTracker",
     "atr_normalised_size",

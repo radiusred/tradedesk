@@ -24,7 +24,6 @@ def mock_register_subscriber():
 @pytest.fixture
 def mock_compute_metrics():
     with patch("tradedesk.execution.backtest.runner.compute_metrics") as mock:
-        # Return a dummy metrics object
         mock.return_value = MagicMock(
             trades=10,
             round_trips=5,
@@ -40,25 +39,14 @@ def mock_compute_metrics():
         yield mock
 
 
-@pytest.fixture
-def mock_dispatcher():
-    with patch("tradedesk.execution.backtest.runner.get_dispatcher") as mock:
-        dispatcher = MagicMock()
-        dispatcher.publish = AsyncMock()
-        mock.return_value = dispatcher
-        yield mock
-
-
 @pytest.mark.asyncio
 async def test_run_backtest_spread_adjustment(
-    mock_client_cls, mock_register_subscriber, mock_compute_metrics, mock_dispatcher, tmp_path
+    mock_client_cls, mock_register_subscriber, mock_compute_metrics, tmp_path
 ):
     """Test that half_spread_adjustment modifies candle OHLC."""
-    # Setup mock client instance
     client_instance = mock_client_cls.from_csv.return_value
     client_instance.start = AsyncMock()
 
-    # Setup a candle series
     candle = MagicMock(spec=Candle)
     candle.open = 100.0
     candle.high = 105.0
@@ -83,21 +71,17 @@ async def test_run_backtest_spread_adjustment(
         half_spread_adjustment=0.5,
     )
 
-    # Dummy strategy
-    strat = MagicMock()
-    strat._handle_event = AsyncMock()
+    mock_portfolio = MagicMock()
+    mock_portfolio.run = AsyncMock()
 
-    # Mock recorders to avoid instantiation issues
     with patch("tradedesk.execution.backtest.runner.EquityRecorder"), \
          patch("tradedesk.execution.backtest.runner.ProgressLogger"), \
          patch("tradedesk.execution.backtest.runner.build_candle_index"), \
          patch("tradedesk.execution.backtest.runner.ExcursionComputer"), \
-         patch("tradedesk.execution.backtest.runner.TradeLedger"), \
-         patch("tradedesk.execution.order_handler.OrderExecutionHandler"):
+         patch("tradedesk.execution.backtest.runner.TradeLedger"):
 
-        await run_backtest(spec=spec, out_dir=tmp_path, strategy_factory=lambda c: strat)
+        await run_backtest(spec=spec, out_dir=tmp_path, portfolio_factory=lambda c: mock_portfolio)
 
-    # Verify adjustment
     assert candle.open == 100.5
     assert candle.high == 105.5
     assert candle.low == 95.5
@@ -106,7 +90,7 @@ async def test_run_backtest_spread_adjustment(
 
 @pytest.mark.asyncio
 async def test_run_backtest_event_driven_recording(
-    mock_client_cls, mock_register_subscriber, mock_compute_metrics, mock_dispatcher, tmp_path
+    mock_client_cls, mock_register_subscriber, mock_compute_metrics, tmp_path
 ):
     """Test that event-driven recording is set up correctly."""
     client_instance = mock_client_cls.from_csv.return_value
@@ -120,30 +104,27 @@ async def test_run_backtest_event_driven_recording(
         instrument="TEST", period="1MIN", candle_csv=Path("dummy.csv")
     )
 
-    # Mock all recorder classes and dependencies
+    mock_portfolio = MagicMock()
+    mock_portfolio.run = AsyncMock()
+
     with patch("tradedesk.execution.backtest.runner.EquityRecorder") as mock_equity_recorder, \
          patch("tradedesk.execution.backtest.runner.ProgressLogger"), \
          patch("tradedesk.execution.backtest.runner.build_candle_index"), \
          patch("tradedesk.execution.backtest.runner.ExcursionComputer") as mock_excursion, \
-         patch("tradedesk.execution.backtest.runner.TradeLedger"), \
-         patch("tradedesk.execution.order_handler.OrderExecutionHandler"):
+         patch("tradedesk.execution.backtest.runner.TradeLedger"):
 
         await run_backtest(
-            spec=spec, out_dir=tmp_path, strategy_factory=lambda c: MagicMock()
+            spec=spec, out_dir=tmp_path, portfolio_factory=lambda c: mock_portfolio
         )
 
-        # Verify recorders were instantiated
         mock_equity_recorder.assert_called_once()
         mock_excursion.assert_called_once()
-
-        # Verify session events were published
-        dispatcher_instance = mock_dispatcher.return_value
-        assert dispatcher_instance.publish.call_count >= 2  # SessionStarted and SessionEnded
+        mock_portfolio.run.assert_awaited_once()
 
 
 @pytest.mark.asyncio
 async def test_run_backtest_metrics_output(
-    mock_client_cls, mock_register_subscriber, mock_compute_metrics, mock_dispatcher, tmp_path
+    mock_client_cls, mock_register_subscriber, mock_compute_metrics, tmp_path
 ):
     """Test that metrics are computed and returned as Metrics object."""
     client_instance = mock_client_cls.from_csv.return_value
@@ -155,19 +136,19 @@ async def test_run_backtest_metrics_output(
 
     spec = BacktestSpec(instrument="TEST", period="1MIN", candle_csv=Path("dummy.csv"))
 
-    # Mock all dependencies
+    mock_portfolio = MagicMock()
+    mock_portfolio.run = AsyncMock()
+
     with patch("tradedesk.execution.backtest.runner.EquityRecorder"), \
          patch("tradedesk.execution.backtest.runner.ProgressLogger"), \
          patch("tradedesk.execution.backtest.runner.build_candle_index"), \
          patch("tradedesk.execution.backtest.runner.ExcursionComputer"), \
-         patch("tradedesk.execution.backtest.runner.TradeLedger"), \
-         patch("tradedesk.execution.order_handler.OrderExecutionHandler"):
+         patch("tradedesk.execution.backtest.runner.TradeLedger"):
 
         result = await run_backtest(
-            spec=spec, out_dir=tmp_path, strategy_factory=lambda c: MagicMock()
+            spec=spec, out_dir=tmp_path, portfolio_factory=lambda c: mock_portfolio
         )
 
-    # Verify result is a Metrics object with expected attributes
     assert result.trades == 10
     assert result.round_trips == 5
     assert result.final_equity == 10500.0

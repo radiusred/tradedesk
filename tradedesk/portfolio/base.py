@@ -41,12 +41,18 @@ class BasePortfolio(ABC):
     def __init__(self, client: Client) -> None:
         self._client = client
         self.last_update = datetime.now(timezone.utc)
+        self.subscriptions: list = []
+        self.watchdog_threshold: float = 60.0
 
     @abstractmethod
     async def on_candle_close(self, event: CandleClosedEvent) -> None:
         """Process a completed candle. Subclasses delegate to PortfolioRunner or
         individual strategy on_candle_close as appropriate."""
         ...
+
+    async def on_price_update(self, data: MarketData) -> None:
+        """Handle a tick-level price update. Subclasses may override."""
+        pass
 
     async def _handle_event(self, event: object) -> None:
         """StreamConsumer interface — called by the streamer on each market event."""
@@ -56,6 +62,7 @@ class BasePortfolio(ABC):
             await self.on_candle_close(event)
         elif isinstance(event, MarketData):
             await dispatcher.publish(MarketDataReceivedEvent(data=event))
+            await self.on_price_update(event)
         else:
             raise TypeError(f"Unsupported event type: {type(event)!r}")
         self.last_update = datetime.now(timezone.utc)
