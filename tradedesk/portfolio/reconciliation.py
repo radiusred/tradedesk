@@ -6,7 +6,7 @@ from enum import Enum
 from typing import Any, cast
 
 from ..events import DomainEvent, SessionReadyEvent, SessionStartedEvent, get_dispatcher
-from ..execution import BrokerPosition
+from ..execution import BrokerPosition, OrderCompletedEvent
 from ..marketdata import CandleClosedEvent
 from ..types import Direction
 from .journal import JournalEntry, PositionJournal
@@ -258,6 +258,7 @@ class ReconciliationManager:
             dispatcher.subscribe(SessionStartedEvent, self._on_session_started)
             dispatcher.subscribe(SessionReadyEvent, self._on_session_ready)
             dispatcher.subscribe(CandleClosedEvent, self._on_candle_closed)
+            dispatcher.subscribe(OrderCompletedEvent, self._on_order_completed)
             log.debug(
                 "ReconciliationManager subscribed to session and candle events (target_period=%s)",
                 target_period,
@@ -286,7 +287,6 @@ class ReconciliationManager:
         # Check if reconciliation needed
         if self._should_reconcile_now():
             await self.periodic_reconcile()
-            await self.log_margin_status()
 
     def _should_reconcile_now(self) -> bool:
         """Internal check if reconciliation threshold reached (without incrementing)."""
@@ -294,6 +294,9 @@ class ReconciliationManager:
             self._journal is not None
             and self._candle_count % self._reconcile_interval == 0
         )
+    
+    async def _on_order_completed(self, _event: OrderCompletedEvent) -> None:
+        await self.log_margin_status()
 
     # ------------------------------------------------------------------
     # Startup reconciliation
