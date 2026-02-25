@@ -87,6 +87,7 @@ class BacktestStreamer(Streamer):
                             instrument=cseries.instrument,
                             timeframe=cseries.period,
                             candle=c,
+                            timestamp=ts,
                         ),
                     )
                 )

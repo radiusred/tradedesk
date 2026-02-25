@@ -6,6 +6,7 @@ import tradedesk.strategy.base as strategy_module
 from tradedesk.execution.ig import price_streamer
 from tradedesk.execution.ig.price_streamer import Lightstreamer
 from tradedesk.marketdata.subscriptions import ChartSubscription, MarketSubscription
+from tradedesk.portfolio.simple import SimplePortfolio
 
 
 class FakeUpdate:
@@ -99,7 +100,8 @@ class TestRunStreaming:
                 "get_streamer": lambda self: Lightstreamer(self),
             },
         )
-        strat = Strat(data_provider=ClientStub())
+        client_stub = ClientStub()
+        strat = Strat(data_provider=client_stub)
 
         seen_market = []
         seen_candles = []
@@ -114,7 +116,8 @@ class TestRunStreaming:
         strat.on_price_update = on_price_update  # type: ignore
         strat.on_candle_close = on_candle_close  # type: ignore
 
-        task = asyncio.create_task(strat._run_streaming())
+        portfolio = SimplePortfolio(client_stub, strat)
+        task = asyncio.create_task(portfolio._run_streaming())
 
         try:
             # Wait for LS client instance and subscriptions

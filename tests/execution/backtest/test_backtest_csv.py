@@ -3,7 +3,7 @@ from unittest.mock import patch
 
 import pytest
 
-from tradedesk import run_strategies
+from tradedesk import SimplePortfolio, run_portfolio
 from tradedesk.execution.backtest.client import BacktestClient
 from tradedesk.execution.backtest.streamer import _parse_ts
 from tradedesk.marketdata.events import CandleClosedEvent
@@ -75,8 +75,8 @@ def test_backtest_from_csv_replays_and_trades(tmp_path: Path):
         return c
 
     with patch("sys.exit") as _:
-        run_strategies(
-            strategy_specs=[TradeOnFirstLast],
+        run_portfolio(
+            portfolio_factory=lambda c: SimplePortfolio(c, TradeOnFirstLast(c)),
             client_factory=factory,
             setup_logging=False,
         )
@@ -160,8 +160,10 @@ def test_backtest_market_csvs_drive_price_updates_and_signals(tmp_path: Path):
         return c
 
     with patch("sys.exit") as _:
-        run_strategies(
-            strategy_specs=[MomentumLike], client_factory=factory, setup_logging=False
+        run_portfolio(
+            portfolio_factory=lambda c: SimplePortfolio(c, MomentumLike(c)),
+            client_factory=factory,
+            setup_logging=False,
         )
 
     # Verify at least one UP for GBP and one DOWN for EUR occurred

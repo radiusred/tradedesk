@@ -10,11 +10,13 @@ framework for implementing trading strategies.
 from .events import (
     DomainEvent,
     SessionEndedEvent,
+    SessionReadyEvent,
     SessionStartedEvent,
     event,
     get_dispatcher,
 )
-from .runner import run_strategies
+from .portfolio import BasePortfolio, Portfolio, SimplePortfolio
+from .runner import run_portfolio
 from .types import (
     Candle,
     DataProvider,
@@ -24,20 +26,24 @@ from .types import (
     StreamConsumer,
 )
 
-__version__ = "0.4.0"
+__version__ = "0.5.0"
 
 __all__ = [
     "__version__",
+    "BasePortfolio",
     "Candle",
     "DataProvider",
     "Direction",
     "DomainEvent",
     "OrderRequest",
     "OrderResult",
+    "Portfolio",
     "SessionEndedEvent",
+    "SessionReadyEvent",
     "SessionStartedEvent",
+    "SimplePortfolio",
     "StreamConsumer",
     "event",
     "get_dispatcher",
-    "run_strategies",
+    "run_portfolio",
 ]

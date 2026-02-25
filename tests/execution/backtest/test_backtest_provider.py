@@ -2,7 +2,7 @@ from unittest.mock import patch
 
 import pytest
 
-from tradedesk import Direction, run_strategies
+from tradedesk import Direction, SimplePortfolio, run_portfolio
 from tradedesk.execution.backtest.client import BacktestClient
 from tradedesk.marketdata.events import CandleClosedEvent
 from tradedesk.marketdata.instrument import MarketData
@@ -78,8 +78,8 @@ def test_backtest_replays_candles_and_executes_virtual_trades():
 
     # Avoid sys.exit() if something goes wrong; we want a clean test failure instead.
     with patch("sys.exit") as _:
-        run_strategies(
-            strategy_specs=[TradeOnFirstLast],
+        run_portfolio(
+            portfolio_factory=lambda c: SimplePortfolio(c, TradeOnFirstLast(c)),
             client_factory=factory,
             setup_logging=False,
         )

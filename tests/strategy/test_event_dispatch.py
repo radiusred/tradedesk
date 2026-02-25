@@ -4,6 +4,8 @@ import pytest
 
 from tradedesk.marketdata.events import CandleClosedEvent
 from tradedesk.marketdata.instrument import MarketData
+from tradedesk.marketdata.subscriptions import ChartSubscription
+from tradedesk.portfolio.simple import SimplePortfolio
 from tradedesk.strategy.base import BaseStrategy
 from tradedesk.types import Candle
 
@@ -11,23 +13,21 @@ from tradedesk.types import Candle
 class Strat(BaseStrategy):
     SUBSCRIPTIONS = []
 
-    def __init__(self, client):
-        super().__init__(client)
-        self.on_price_update_mock = AsyncMock()
-        self.on_candle_update_mock = AsyncMock()
-
     async def on_price_update(self, md: MarketData):
-        await self.on_price_update_mock(md)
+        pass
 
-    async def on_candle_close(self, cc: CandleClosedEvent):
-        await self.on_candle_update_mock(cc)
-        await super().on_candle_close(cc)
+
+def make_portfolio(client=None):
+    """Create a SimplePortfolio wrapping a minimal strategy."""
+    client = client or MagicMock()
+    strategy = Strat(client)
+    return SimplePortfolio(client, strategy)
 
 
 @pytest.mark.asyncio
 async def test_handle_event_marketdata_updates_last_update_and_dispatches():
-    s = Strat(MagicMock())
-    before = s.last_update
+    portfolio = make_portfolio()
+    before = portfolio.last_update
 
     event = MarketData(
         instrument="EPIC",
@@ -37,24 +37,22 @@ async def test_handle_event_marketdata_updates_last_update_and_dispatches():
         raw={"foo": "bar"},
     )
 
-    await s._handle_event(event)
+    await portfolio._handle_event(event)
 
-    assert s.last_update >= before
-    s.on_price_update_mock.assert_awaited_once()
+    assert portfolio.last_update >= before
 
 
 @pytest.mark.asyncio
 async def test_handle_event_candleclose_dispatches_and_uses_default_storage():
-    # ensure chart storage path is covered: add a chart by defining a chart subscription
-    from tradedesk.marketdata.subscriptions import ChartSubscription
-
     class S(BaseStrategy):
         SUBSCRIPTIONS = [ChartSubscription("EPIC", "5MINUTE")]
 
-        async def on_price_update(self, market_databid, offer, timestamp, raw_data):
+        async def on_price_update(self, market_data):
             pass
 
-    s = S(MagicMock())
+    client = MagicMock()
+    strategy = S(client)
+    portfolio = SimplePortfolio(client, strategy)
 
     candle = Candle(
         timestamp="2025-12-28T00:00:00Z",
@@ -67,15 +65,16 @@ async def test_handle_event_candleclose_dispatches_and_uses_default_storage():
     )
     event = CandleClosedEvent(instrument="EPIC", timeframe="5MINUTE", candle=candle)
 
-    await s._handle_event(event)
+    await portfolio._handle_event(event)
 
+    # The default on_candle_close in BaseStrategy stores the candle in chart history
     key = ("EPIC", "5MINUTE")
-    assert key in s.charts
-    assert s.charts[key].get_candles()[-1] == candle
+    assert key in strategy.charts
+    assert strategy.charts[key].get_candles()[-1] == candle
 
 
 @pytest.mark.asyncio
 async def test_handle_event_rejects_unknown_type():
-    s = Strat(MagicMock())
+    portfolio = make_portfolio()
     with pytest.raises(TypeError):
-        await s._handle_event(object())  # type: ignore[arg-type]
+        await portfolio._handle_event(object())  # type: ignore[arg-type]

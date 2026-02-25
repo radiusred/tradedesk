@@ -1,11 +1,15 @@
 # tradedesk/execution/backtest/runner.py
 """Event-driven backtest runner."""
 
+from __future__ import annotations
+
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Callable
+from typing import TYPE_CHECKING, Callable
 
-from tradedesk.portfolio.base import BasePortfolio
+if TYPE_CHECKING:
+    from tradedesk.portfolio.base import BasePortfolio
+
 from tradedesk.recording import (
     EquityRecorder,
     ExcursionComputer,
