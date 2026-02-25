@@ -2,29 +2,22 @@
 """
 Base strategy framework for trading strategies.
 
-Provides infrastructure for:
-- Lightstreamer streaming (real-time price feeds)
-- REST polling fallback (for testing/backup)
-- Multi-instrument subscription management
-
 Strategies implement trading logic by subclassing BaseStrategy and
-overriding on_price_update() and/or on_candle_update().
+overriding on_price_update() and/or on_candle_close().
 """
 
 import abc
-import asyncio
 import logging
 from datetime import datetime, timezone
 from enum import Enum
 
-from tradedesk.events import get_dispatcher
+from tradedesk.events import SessionStartedEvent, get_dispatcher
 from tradedesk.marketdata import (
     CandleClosedEvent,
     ChartHistory,
     ChartSubscription,
     Indicator,
     MarketData,
-    MarketDataReceivedEvent,
     MarketSubscription,
 )
 
@@ -73,9 +66,6 @@ class BaseStrategy(abc.ABC):
     # Subclasses should define which data streams they want
     SUBSCRIPTIONS: list[MarketSubscription | ChartSubscription] = []
 
-    # Default polling interval when streamer is unavailable
-    POLL_INTERVAL = 5  # seconds
-
     def __init__(
         self,
         data_provider: DataProvider | None = None,
@@ -120,6 +110,8 @@ class BaseStrategy(abc.ABC):
                 "%s has no subscriptions. Set SUBSCRIPTIONS or set subscriptions in __init__.",
                 self.__class__.__name__,
             )
+
+        get_dispatcher().subscribe(SessionStartedEvent, self._on_session_started)
 
     def _chart_key(self, sub: ChartSubscription) -> tuple[str, str]:
         return (sub.instrument, sub.period)
@@ -261,9 +253,6 @@ class BaseStrategy(abc.ABC):
             for ind in indicators:
                 ind.update(candle)
 
-    def _has_streamer(self) -> bool:
-        return self.client.get_streamer() is not None  # type: ignore[union-attr]
-
     async def on_price_update(self, market_data: MarketData) -> None:
         """
         Handle a tick-level price update for a subscribed instrument.
@@ -295,125 +284,10 @@ class BaseStrategy(abc.ABC):
         if key in self.charts:
             self.charts[key].add_candle(candle_close.candle)
 
-    async def run(self) -> None:
-        """
-        Start the strategy; runs until cancelled.
-
-        Note: This method is typically called by the runner, not directly.
-        The runner orchestrates multiple strategies with a shared connection.
-        """
-        # Build display string for subscriptions
-        sub_display = []
-        for sub in self.subscriptions:
-            if isinstance(sub, MarketSubscription):
-                sub_display.append(f"MARKET:{sub.instrument}")
-            elif isinstance(sub, ChartSubscription):
-                sub_display.append(f"CHART:{sub.instrument}:{sub.period}")
-
-        log.info("%s started for %s", self.__class__.__name__, ", ".join(sub_display))
-
+    async def _on_session_started(self, event: SessionStartedEvent) -> None:
+        """Run warmup when the portfolio fires SessionStartedEvent."""
         try:
             await self.warmup()
         except Exception:
             log.exception("Warmup failed; continuing without warmup")
 
-        # Check if Lightstreamer is available
-        if self._has_streamer():
-            await self._run_streaming()
-        else:
-            log.info("Falling back to polling mode (Lightstreamer not available)")
-            await self._run_polling()
-
-    async def _run_polling(self) -> None:
-        """
-        Fallback polling mode - fetches market snapshots at regular intervals.
-        Used when Lightstreamer is unavailable (typically in tests).
-
-        Note: Only polls MARKET subscriptions, not CHART subscriptions.
-        """
-        if self._data_provider is None:
-            log.error("Cannot poll without data provider")
-            return
-
-        # Only poll market subscriptions
-        market_instruments = [
-            sub.instrument
-            for sub in self.subscriptions
-            if isinstance(sub, MarketSubscription)
-        ]
-
-        if not market_instruments:
-            log.warning("No market subscriptions to poll")
-            await asyncio.Future()  # Wait forever
-            return
-
-        last_prices: dict[str, float | None] = {
-            instrument: None for instrument in market_instruments
-        }
-
-        while True:
-            for instrument in market_instruments:
-                try:
-                    snapshot = await self._data_provider.get_market_snapshot(instrument)
-                    bid = float(snapshot["snapshot"]["bid"])
-                    offer = float(snapshot["snapshot"]["offer"])
-                    mid = (bid + offer) / 2
-
-                    # Only notify on price changes
-                    if last_prices[instrument] != mid:
-                        last_prices[instrument] = mid
-                        timestamp = (
-                            datetime.now(timezone.utc).isoformat(timespec="seconds")
-                            + "Z"
-                        )
-                        market_data = MarketData(
-                            instrument=instrument,
-                            bid=bid,
-                            offer=offer,
-                            timestamp=timestamp,
-                            raw=snapshot,
-                        )
-                        await self.on_price_update(market_data)
-
-                except Exception:
-                    log.exception("Failed to fetch market snapshot for %s", instrument)
-
-            await asyncio.sleep(self.POLL_INTERVAL)
-
-    async def _run_streaming(self) -> None:
-        streamer = self.client.get_streamer()  # type: ignore[union-attr]
-        assert streamer is not None, "No streamer available"
-        await streamer.run(self)
-
-    async def _handle_event(self, event: object) -> None:
-        """
-        Internal event dispatcher - bridges to event bus and callbacks.
-
-        Streamer implementations should call this method only. It:
-        1. Dispatches events to the global event bus (for event-driven handlers)
-        2. Calls existing strategy callbacks (for backwards compatibility)
-        3. Updates common bookkeeping (e.g. last_update)
-        """
-        # Get the global event dispatcher
-        dispatcher = get_dispatcher()
-
-        # Dispatch to event bus AND call callbacks
-        # (Callbacks are for strategy logic; event bus is for cross-cutting concerns)
-        if isinstance(event, MarketData):
-            # Wrap MarketData in event and dispatch to event bus
-            await dispatcher.publish(MarketDataReceivedEvent(data=event))
-            # Call callback (stores candles in chart history, strategy logic)
-            await self.on_price_update(event)
-
-        elif isinstance(event, CandleClosedEvent):
-            # Dispatch event to event bus
-            await dispatcher.publish(event)
-            # Call callback (stores candles in chart history, strategy logic)
-            await self.on_candle_close(event)
-
-        else:
-            # Defensive: should never happen unless someone extends events incorrectly.
-            raise TypeError(f"Unsupported event type: {type(event)!r}")
-
-        # Update watchdog
-        self.last_update = datetime.now(timezone.utc)
