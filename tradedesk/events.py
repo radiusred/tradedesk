@@ -31,6 +31,11 @@ class SessionEndedEvent(DomainEvent):
     """Event fired when a backtest or live session ends."""
     pass
 
+@event
+class SessionReadyEvent(DomainEvent):
+    """Fired after all SessionStartedEvent handlers complete (warmup + reconciliation done)."""
+    pass
+
 
 class EventDispatcher:
     """Async event dispatcher for domain events.
