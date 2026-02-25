@@ -1,202 +1,242 @@
 # Backtesting Guide
 
-This guide walks through building and running a minimal but functional
-backtest using tradedesk.
+This guide covers running backtests with tradedesk using candle data loaded from
+CSV files or supplied in-memory.
 
-By the end, you will have:
+By the end you will have:
 
--   A working strategy
--   A CSV-driven backtest
--   Portfolio + recording enabled
--   A complete runnable script
+- A working strategy
+- A CSV-driven backtest via `run_portfolio`
+- A full recorded backtest via `run_backtest` (with metrics and trade output)
 
-The same strategy will later run live without modification.
+The same strategy runs live against a broker without modification.
 
-------------------------------------------------------------------------
+---
 
-# 1. Project Structure
+## 1. Project Structure
 
-Create a minimal structure:
-
-    my_backtest/
-        strategy.py
-        run_backtest.py
-        eurusd_ticks.csv
-
-------------------------------------------------------------------------
-
-# 2. Example Market Data (CSV)
-
-Your CSV should contain timestamped tick data:
-
-    timestamp,bid,ask
-    2024-01-01T00:00:00Z,1.1000,1.1002
-    2024-01-01T00:00:01Z,1.1001,1.1003
-
-Ticks will be aggregated into candles internally.
-
-------------------------------------------------------------------------
-
-# 3. Implement a Simple Strategy
-
-Create `strategy.py`:
-
-``` python
-from tradedesk.strategy.base import Strategy
-from tradedesk.types import Instrument
-
-
-class SimpleMomentumStrategy(Strategy):
-
-    def __init__(self, instrument: Instrument):
-        super().__init__(instrument)
-
-    def on_candle_update(self, candle):
-        if candle.close > candle.open:
-            self.buy(size=1)
-        elif candle.close < candle.open:
-            self.sell(size=1)
+```
+my_backtest/
+    strategy.py
+    run_backtest.py
+    candles.csv
 ```
 
-Key concepts:
+---
 
--   `on_candle_update` is your primary decision hook
--   `buy()` and `sell()` emit order requests (they do not directly place
-    orders)
--   Execution is handled by the backtest client
+## 2. Candle CSV Format
 
-------------------------------------------------------------------------
+```
+timestamp,open,high,low,close,volume
+2025-01-01T00:00:00Z,1.2500,1.2510,1.2490,1.2505,1000
+2025-01-01T00:05:00Z,1.2505,1.2520,1.2500,1.2515,800
+```
 
-# 4. Create the Backtest Runner
+Fields `volume` and `tick_count` are optional.
+Timestamps may use `-` or `/` as date separators, with or without a trailing `Z`.
 
-Create `run_backtest.py`:
+---
 
-``` python
-from tradedesk.execution.backtest.runner import BacktestRunner
+## 3. Implement a Strategy
+
+```python
+# strategy.py
+import logging
+from tradedesk.strategy import BaseStrategy
+from tradedesk.marketdata import CandleClosedEvent, ChartSubscription
+
+log = logging.getLogger(__name__)
+
+
+class SimpleMomentumStrategy(BaseStrategy):
+
+    SUBSCRIPTIONS = [ChartSubscription("CS.D.GBPUSD.TODAY.IP", "5MINUTE")]
+
+    async def on_candle_close(self, event: CandleClosedEvent) -> None:
+        candle = event.candle
+
+        if candle.close > candle.open:
+            log.info("Bullish candle — would buy")
+            # await self.client.place_market_order(event.instrument, "BUY", size=1.0)
+        elif candle.close < candle.open:
+            log.info("Bearish candle — would sell")
+            # await self.client.place_market_order(event.instrument, "SELL", size=1.0)
+
+        # Store candle in chart history (default behaviour)
+        await super().on_candle_close(event)
+```
+
+Key points:
+
+- Declare subscriptions via `SUBSCRIPTIONS` (or pass them to `__init__`).
+- `on_candle_close` fires for each completed candle.
+- Call `super().on_candle_close(event)` to keep chart history up to date.
+- `self.client.place_market_order(instrument, "BUY" | "SELL", size)` places orders.
+
+---
+
+## 4. Simple Backtest with `run_portfolio`
+
+Use `run_portfolio` for a quick, no-frills backtest that exercises the same
+code path as live trading.
+
+```python
+# run_backtest.py
+from tradedesk import SimplePortfolio, run_portfolio
 from tradedesk.execution.backtest.client import BacktestClient
-from tradedesk.execution.backtest.streamer import CSVBacktestStreamer
-
-from tradedesk.portfolio.runner import PortfolioRunner
-from tradedesk.portfolio.config import PortfolioConfig
-
-from tradedesk.recording.recorders import DefaultRecorders
-
-from tradedesk.types import Instrument
 
 from strategy import SimpleMomentumStrategy
 
 
-def main():
-
-    instrument = Instrument("EURUSD")
-
-    strategy = SimpleMomentumStrategy(instrument)
-
-    streamer = CSVBacktestStreamer(
-        instrument=instrument,
-        csv_path="eurusd_ticks.csv",
+def client_factory():
+    return BacktestClient.from_csv(
+        "candles.csv",
+        instrument="CS.D.GBPUSD.TODAY.IP",
+        period="5MINUTE",
     )
 
-    execution_client = BacktestClient()
 
-    portfolio_config = PortfolioConfig(
-        starting_cash=100_000
+run_portfolio(
+    portfolio_factory=lambda c: SimplePortfolio(c, SimpleMomentumStrategy(c)),
+    client_factory=client_factory,
+    setup_logging=True,
+)
+
+# Inspect results
+client = client_factory()  # create a fresh client to inspect (or capture it above)
+```
+
+To capture the client for inspection, use a closure:
+
+```python
+created = {}
+
+def client_factory():
+    c = BacktestClient.from_csv("candles.csv", instrument="CS.D.GBPUSD.TODAY.IP", period="5MINUTE")
+    created["client"] = c
+    return c
+
+run_portfolio(
+    portfolio_factory=lambda c: SimplePortfolio(c, SimpleMomentumStrategy(c)),
+    client_factory=client_factory,
+)
+
+client = created["client"]
+print(f"Trades:       {len(client.trades)}")
+print(f"Positions:    {client.positions}")
+print(f"Realised PnL: {client.realised_pnl}")
+```
+
+---
+
+## 5. In-Memory Backtest
+
+Supply candles directly without a CSV:
+
+```python
+from tradedesk.types import Candle
+
+history = {
+    ("CS.D.GBPUSD.TODAY.IP", "5MINUTE"): [
+        Candle(timestamp="2025-01-01T00:00:00Z", open=1.25, high=1.26, low=1.24, close=1.255),
+        Candle(timestamp="2025-01-01T00:05:00Z", open=1.255, high=1.27, low=1.25, close=1.265),
+    ]
+}
+
+created = {}
+
+def client_factory():
+    c = BacktestClient.from_history(history)
+    created["client"] = c
+    return c
+
+run_portfolio(
+    portfolio_factory=lambda c: SimplePortfolio(c, SimpleMomentumStrategy(c)),
+    client_factory=client_factory,
+)
+```
+
+---
+
+## 6. Full Backtest with Metrics (`run_backtest`)
+
+`run_backtest` wraps `run_portfolio` and adds:
+
+- Trade ledger written to CSV
+- Equity curve tracking
+- Excursion (MAE/MFE) computation
+- A `Metrics` object returned with summary statistics
+
+```python
+import asyncio
+from pathlib import Path
+
+from tradedesk import SimplePortfolio
+from tradedesk.execution.backtest.runner import BacktestSpec, run_backtest
+
+from strategy import SimpleMomentumStrategy
+
+
+async def main():
+    spec = BacktestSpec(
+        instrument="CS.D.GBPUSD.TODAY.IP",
+        period="5MINUTE",
+        candle_csv=Path("candles.csv"),
+        half_spread_adjustment=0.5,  # add half the spread to BID-sourced candles
     )
 
-    portfolio_runner = PortfolioRunner(
-        config=portfolio_config
+    metrics = await run_backtest(
+        spec=spec,
+        out_dir=Path("output"),
+        portfolio_factory=lambda c: SimplePortfolio(c, SimpleMomentumStrategy(c)),
     )
 
-    recorders = DefaultRecorders()
-
-    runner = BacktestRunner(
-        strategy=strategy,
-        streamer=streamer,
-        execution_client=execution_client,
-        portfolio_runner=portfolio_runner,
-        recorders=recorders,
-    )
-
-    runner.run()
-
-    print("Final equity:", portfolio_runner.equity)
+    print(f"Trades:          {metrics.trades}")
+    print(f"Round trips:     {metrics.round_trips}")
+    print(f"Win rate:        {metrics.win_rate:.1%}")
+    print(f"Avg hold (min):  {metrics.avg_hold_minutes:.1f}")
+    print(f"Final equity:    {metrics.final_equity:.2f}")
+    print(f"Max drawdown:    {metrics.max_drawdown:.2f}")
+    print(f"Profit factor:   {metrics.profit_factor:.2f}")
 
 
 if __name__ == "__main__":
-    main()
+    asyncio.run(main())
 ```
 
-------------------------------------------------------------------------
+Output artefacts are written to `out_dir/`:
 
-# 5. What Happens Internally
+| File | Contents |
+|------|----------|
+| `trades.csv` | One row per fill: timestamp, direction, price, size |
+| `equity.csv` | Equity curve snapshots |
 
-During `runner.run()`:
+---
 
-1.  CSV streamer emits ticks
-2.  Aggregation produces candles
-3.  Strategy receives `on_candle_update`
-4.  Strategy emits order events
-5.  Backtest client simulates fills
-6.  Portfolio updates positions
-7.  Recording subsystem tracks trades and equity
+## 7. What Happens Internally
 
-All interactions occur through events.
+When `run_portfolio` (or `portfolio.run()`) executes:
 
-------------------------------------------------------------------------
+1. `SessionStartedEvent` fires — strategy `warmup()` is called
+2. `SessionReadyEvent` fires — post-warmup checks run
+3. BacktestStreamer replays candles in sequence
+4. Each completed candle calls `portfolio._handle_event(CandleClosedEvent)`:
+   - Publishes the event to the dispatcher (recording subscribers react here)
+   - Calls `portfolio.on_candle_close(event)` → `strategy.on_candle_close(event)`
+5. `BacktestClient.place_market_order` simulates fills at the candle's close price
+6. `SessionEndedEvent` fires on completion
 
-# 6. Determinism
+---
 
-Backtests are:
+## 8. Switching to Live Trading
 
--   Single-threaded
--   Sequential
--   Deterministic given identical input data
+Replace the `client_factory` — the strategy and portfolio are unchanged:
 
-This ensures reproducibility.
+```python
+from tradedesk.execution.ig import IGClient
 
-------------------------------------------------------------------------
-
-# 7. Adding Indicators
-
-``` python
-from tradedesk.marketdata.indicators.sma import SMA
-
-self.sma = SMA(period=20)
-
-def on_candle_update(self, candle):
-    self.sma.update(candle.close)
-
-    if self.sma.is_ready:
-        if candle.close > self.sma.value:
-            self.buy(size=1)
+run_portfolio(
+    portfolio_factory=lambda c: SimplePortfolio(c, SimpleMomentumStrategy(c)),
+    client_factory=IGClient,
+)
 ```
-
-Indicators are updated explicitly inside your strategy.
-
-------------------------------------------------------------------------
-
-# 8. Accessing Recording Data
-
-After the run completes, recorders contain:
-
--   Trade history
--   Equity curve
--   Performance metrics
-
-You can generate reports or export metrics as needed.
-
-------------------------------------------------------------------------
-
-# 9. Moving to Live Trading
-
-To switch to live:
-
--   Replace BacktestRunner with broker runner
--   Replace BacktestClient with broker client
--   Replace CSV streamer with broker price streamer
-
-Your strategy remains unchanged.
-
-------------------------------------------------------------------------
-
-You now have a complete, runnable backtest using tradedesk.
