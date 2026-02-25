@@ -5,7 +5,7 @@ from dataclasses import dataclass
 from enum import Enum
 from typing import Any, cast
 
-from ..events import DomainEvent, get_dispatcher
+from ..events import DomainEvent, SessionReadyEvent, SessionStartedEvent, get_dispatcher
 from ..execution import BrokerPosition
 from ..marketdata import CandleClosedEvent
 from ..types import Direction
@@ -250,15 +250,27 @@ class ReconciliationManager:
         self._candle_count: int = 0
         self._recently_changed_instruments: set[str] = set()
         self._enable_event_subscription = enable_event_subscription
+        self._restored_instruments: set[str] = set()
 
         # Self-subscribe to events if enabled
         if enable_event_subscription:
             dispatcher = get_dispatcher()
+            dispatcher.subscribe(SessionStartedEvent, self._on_session_started)
+            dispatcher.subscribe(SessionReadyEvent, self._on_session_ready)
             dispatcher.subscribe(CandleClosedEvent, self._on_candle_closed)
             log.debug(
-                "ReconciliationManager subscribed to CandleClosedEvent (target_period=%s)",
+                "ReconciliationManager subscribed to session and candle events (target_period=%s)",
                 target_period,
             )
+
+    async def _on_session_started(self, event: SessionStartedEvent) -> None:
+        """Run startup reconciliation when the portfolio session begins."""
+        self._restored_instruments = await self.reconcile_on_startup()
+
+    async def _on_session_ready(self, event: SessionReadyEvent) -> None:
+        """Run post-warmup checks once warmup and reconciliation are complete."""
+        if self._restored_instruments:
+            await self.post_warmup_check(self._restored_instruments)
 
     async def _on_candle_closed(self, event: DomainEvent) -> None:
         """Handle target-period candle events for periodic reconciliation."""
