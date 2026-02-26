@@ -241,8 +241,12 @@ class TestIGClient:
             assert await client.quantise_size("IX.D.DOW.DAILY.IP", 0.055) == 0.05
 
     @pytest.mark.asyncio
-    async def test_quantise_size_no_step_returns_original(self, mock_aiohttp_session):
-        """Test that quantise_size returns original size when no minDealSize is defined."""
+    async def test_quantise_size_no_step_rounds_to_2dp(self, mock_aiohttp_session):
+        """When minDealSize is absent, quantise_size rounds to 2 dp as a safe fallback.
+
+        Previously this returned the raw float unchanged, but that caused IG to reject
+        orders with HTTP 400 "validation.number.too-many-decimal-places.request.size".
+        """
         with patch("aiohttp.ClientSession", return_value=mock_aiohttp_session):
             client = IGClient()
 
@@ -250,7 +254,7 @@ class TestIGClient:
             client._instrument_metadata["TEST.EPIC"] = {"dealingRules": {}}
 
             size = 1.759110721932789
-            assert await client.quantise_size("TEST.EPIC", size) == size
+            assert await client.quantise_size("TEST.EPIC", size) == round(size, 2)
 
     @pytest.mark.asyncio
     async def test_quantise_size_fetches_metadata_if_not_cached(
