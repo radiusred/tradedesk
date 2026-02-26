@@ -13,7 +13,13 @@ from tradedesk.events import (
     get_dispatcher,
 )
 from tradedesk.execution import Client, OrderExecutionHandler
-from tradedesk.marketdata import CandleClosedEvent, MarketData, MarketDataReceivedEvent
+from tradedesk.marketdata import (
+    CandleClosedEvent,
+    ChartSubscription,
+    MarketData,
+    MarketDataReceivedEvent,
+    MarketSubscription,
+)
 
 log = logging.getLogger(__name__)
 
@@ -41,7 +47,7 @@ class BasePortfolio(ABC):
     def __init__(self, client: Client) -> None:
         self._client = client
         self.last_update = datetime.now(timezone.utc)
-        self.subscriptions: list = []
+        self.subscriptions: list[MarketSubscription | ChartSubscription] = []
         self.watchdog_threshold: float = 60.0
 
     @abstractmethod
