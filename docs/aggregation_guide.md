@@ -52,7 +52,7 @@ Use `choose_base_period()` to automatically select an appropriate base period fo
 from tradedesk.aggregation import choose_base_period
 
 # Default: Uses common broker periods (SECOND, 1MINUTE, 5MINUTE, HOUR)
-base = choose_base_period("15MINUTE")  # Returns "5MINUTE"
+base = choose_base_period("15MINUTE")  # Returns "1MINUTE"
 base = choose_base_period("7MINUTE")   # Returns "1MINUTE"
 base = choose_base_period("HOUR")      # Returns "HOUR"
 
