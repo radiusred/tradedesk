@@ -477,9 +477,14 @@ class IGClient(Client):
         dealing_rules = metadata.get("dealingRules") or {}
         min_value = (dealing_rules.get("minDealSize") or {}).get("value")
 
-        # If no minimum deal size defined, return the original size
+        # If no minimum deal size defined (IG can return dealingRules: null),
+        # fall back to 2 decimal places to avoid "too-many-decimal-places" rejections.
         if min_value is None:
-            return float(size)
+            log.warning(
+                "No minDealSize in dealing rules for %s — falling back to 2 dp rounding",
+                epic,
+            )
+            return round(float(size), 2)
 
         # Infer step size from the decimal places in minDealSize
         # e.g., 0.04 (2 decimals) -> step = 0.01
