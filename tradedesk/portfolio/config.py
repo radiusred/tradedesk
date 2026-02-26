@@ -15,7 +15,7 @@ class PortfolioConfig:
     atr_risk_mult: float
     min_size: float
     max_size: float
-    base_period: str
+    base_period: str | None
 
 
 @dataclass(frozen=True)
@@ -33,7 +33,7 @@ class BacktestPortfolioConfig(PortfolioConfig):
         half_spread_adjustment: float,
         risk: dict[str, Any],
         sizing: dict[str, Any],
-        base_period: str,
+        base_period: str | None,
     ) -> BacktestPortfolioConfig:
         """Validate and construct from raw config dicts.
 
