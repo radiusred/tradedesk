@@ -123,11 +123,11 @@ async def test_confirm_deal_null_body_raises_timeout_not_attribute_error():
 
 @pytest.mark.asyncio
 async def test_quantise_size_null_dealing_rules():
-    """quantise_size must not crash when the market snapshot has dealingRules: null.
+    """quantise_size falls back to 2 dp when dealingRules is null.
 
-    IG DEMO can return {"dealingRules": null, ...}. dict.get("key", {}) returns None
-    (not {}) when the key is present but has a null value, causing:
-        AttributeError: 'NoneType' object has no attribute 'get'
+    IG DEMO can return {"dealingRules": null, ...}.  Rather than passing a raw
+    float with 15 decimal places to the broker (which returns HTTP 400
+    "validation.number.too-many-decimal-places.request.size"), we round to 2 dp.
     """
     c = IGClient()
     # Snapshot with explicit null dealingRules (as IG DEMO sometimes returns)
@@ -141,7 +141,7 @@ async def test_quantise_size_null_dealing_rules():
 
 @pytest.mark.asyncio
 async def test_quantise_size_null_min_deal_size():
-    """quantise_size must not crash when minDealSize is present but null."""
+    """quantise_size falls back to 2 dp when minDealSize is present but null."""
     c = IGClient()
     c.get_instrument_metadata = AsyncMock(
         return_value={"dealingRules": {"minDealSize": None}}
@@ -149,3 +149,21 @@ async def test_quantise_size_null_min_deal_size():
 
     result = await c.quantise_size("CS.D.GBPUSD.TODAY.IP", 0.5)
     assert result == 0.5
+
+
+@pytest.mark.asyncio
+async def test_quantise_size_null_dealing_rules_truncates_long_float():
+    """When dealingRules is null, a raw float with many decimal places is rounded to 2 dp.
+
+    Regression test: commit 30bc110 changed the null-check from dict.get(key, {}) to
+    `or {}`, which prevented an AttributeError but silently returned the unquantised
+    float (e.g. 9.544888884913714), causing IG to reject it with HTTP 400
+    "validation.number.too-many-decimal-places.request.size".
+    """
+    c = IGClient()
+    c.get_instrument_metadata = AsyncMock(
+        return_value={"dealingRules": None, "instrument": {}}
+    )
+
+    result = await c.quantise_size("CS.D.USDJPY.TODAY.IP", 9.544888884913714)
+    assert result == 9.54
