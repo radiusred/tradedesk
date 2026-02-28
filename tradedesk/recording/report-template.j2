@@ -1,28 +1,43 @@
-# Instrument Performance Analysis
+# "{{ output_path.name }}" Back Test Report
+
+## Exec Summary
+
+{% set pm = portfolio_metrics|first -%}
+
+The "{{ output_path.name }}" back test ran over a period of **{{ equity_daily|length }} days** producing a final PnL of **{{ "%.2f"|format(pm.final_equity|float) }}** from **{{ pm.round_trips }}** round trips with a maximum draw down of **{{ "%.2f"|format(pm.max_dd|float|abs) }}** 
+
+![equity](./graphs/equity_curve.png)
+*Portfolio equity curve*
+
+### Portfolio key facts
+
+- Sharpe Ratio (Ann.): **{{ "%.2f"|format(pm.sharpe_ratio|float) }}**
+- Recovery Ratio: **{{ "%.2f"|format((pm.final_equity|float/pm.max_dd|float)|abs) }}**
+- Profit Factor: **{{ "%.2f"|format(pm.profit_factor|float) }}**
+- Win Rate: **{{ "%.1f"|format(pm.win_rate|float * 100) }}%**
+
+---
+
+# Detailed Performance Analysis
 
 ## 1. Overall Performance by Instrument
 
-| Instrument | Final PnL | Max DD | Win Rate | P.Factor | Trades |
-|------------|-----------|--------|----------|----------|--------|
-{% for m in portfolio_metrics -%}
-| **{{ m.instrument }}** | {{ "%.2f"|format(m.final_equity|float) }} | {{ "%.2f"|format(m.max_dd|float) }} | {{ "%.1f"|format(m.win_rate|float * 100) }}% | {{ "%.2f"|format(m.profit_factor|float) }} | {{ m.round_trips }} |
-{% endfor -%}
+| Instrument | Final PnL | Max DD | Win Rate | P.Factor | Trades | Sharpe Ratio |
+|------------|----------:|-------:|---------:|---------:|-------:|-------------:|
 {% for m in instrument_metrics -%}
-| {{ m.instrument }} | {{ "%.2f"|format(m.final_equity|float) }} | {{ "%.2f"|format(m.max_dd|float) }} | {{ "%.1f"|format(m.win_rate|float * 100) }}% | {{ "%.2f"|format(m.profit_factor|float) }} | {{ m.round_trips }} |
+| {{ m.instrument }} | {{ "%.2f"|format(m.final_equity|float) }} | {{ "%.2f"|format(m.max_dd|float) }} | {{ "%.1f"|format(m.win_rate|float * 100) }}% | {{ "%.2f"|format(m.profit_factor|float) }} | {{ m.round_trips }} | {{ "%.2f"|format(m.sharpe_ratio|float) }} |
+{% endfor -%}
+{% for m in portfolio_metrics -%}
+| *TOTAL* | *{{ "%.2f"|format(m.final_equity|float) }}* | *{{ "%.2f"|format(m.max_dd|float) }}* | *{{ "%.1f"|format(m.win_rate|float * 100) }}%* | *{{ "%.2f"|format(m.profit_factor|float) }}* | *{{ m.round_trips }}* | *{{ "%.2f"|format(m.sharpe_ratio|float) }}* |
 {% endfor %}
+
 
 ## 2. Performance Statistics Across Instruments
 
-| Metric | Mean | Std | Min | Median | Max |
-|--------|------|-----|-----|--------|-----|
+| Metric | Mean | Std | Min | Median | Max | CV (std/mean) |
+|--------|-----:|----:|----:|-------:|----:|--------------:|
 {% for row in stats_table -%}
-| {{ row.metric }} | {{ "%.2f"|format(row.mean) }} | {{ "%.2f"|format(row.std) }} | {{ "%.2f"|format(row.min) }} | {{ "%.2f"|format(row.median) }} | {{ "%.2f"|format(row.max) }} |
-{% endfor %}
-
-**Coefficient of Variation (CV = std/mean):**
-
-{% for row in cv_data -%}
-- {{ row.metric }}: {{ "%.2f"|format(row.cv) }}%
+| {{ row.metric }} | {{ "%.2f"|format(row.mean) }} | {{ "%.2f"|format(row.std) }} | {{ "%.2f"|format(row.min) }} | {{ "%.2f"|format(row.median) }} | {{ "%.2f"|format(row.max) }} | {{ "%.2f"|format(row.cv) }}% |
 {% endfor %}
 
 ## 3. Return Consistency Analysis
@@ -30,7 +45,7 @@
 *Consistency Rankings (lower CV = more consistent returns):*
 
 | Instrument | Mean PnL | Std PnL | CV% | Median | IQR | Outliers% |
-|------------|----------|---------|-----|--------|-----|-----------|
+|------------|---------:|--------:|----:|-------:|----:|----------:|
 {% for row in consistency_data -%}
 | {{ row.instrument }} | {{ "%.2f"|format(row.mean_pnl) }} | {{ "%.2f"|format(row.std_pnl) }} | {{ "%.1f"|format(row.cv_pnl) }} | {{ "%.2f"|format(row.median_pnl) }} | {{ "%.2f"|format(row.iqr) }} | {{ "%.1f"|format(row.outlier_pct) }}% |
 {% endfor %}
@@ -38,15 +53,17 @@
 ## 4. Volatility Classification
 
 {% if volatility.median is defined %}
-**Low Volatility (CV < {{ "%.1f"|format(volatility.median) }}%):** {{ volatility.low|join(', ') }}
+**Low Volatility (CV < {{ "%.1f"|format(volatility.median) }}%):** 
+* {{ volatility.low|join('\n* ') }}
 
-**High Volatility (CV >= {{ "%.1f"|format(volatility.median) }}%):** {{ volatility.high|join(', ') }}
+**High Volatility (CV >= {{ "%.1f"|format(volatility.median) }}%):** 
+* {{ volatility.high|join('\n* ') }}
 {% endif %}
 
 ## 5. Exposure Distribution
 
 | Instrument | Fills | Trades | Avg Hold | % of Trades |
-|------------|-------|--------|----------|-------------|
+|------------|------:|-------:|---------:|------------:|
 {% for row in exposure_data -%}
 | {{ row.instrument }} | {{ row.fills }} | {{ row.trades }} | {{ "%.1f"|format(row.avg_hold) }}m | {{ "%.1f"|format(row.pct_trades) }}% |
 {% endfor %}
@@ -54,7 +71,7 @@
 ## 6. Risk-Adjusted Performance
 
 | Instrument | Return/Risk | DD Ratio | PnL | Std |
-|------------|-------------|----------|-----|-----|
+|------------|------------:|---------:|----:|----:|
 {% for row in risk_adj_data -%}
 | {{ row.instrument }} | {{ "%.2f"|format(row.return_per_risk) }} | {{ "%.2f"|format(row.dd_ratio) }} | {{ "%.2f"|format(row.final_equity) }} | {{ "%.2f"|format(row.std_pnl) }} |
 {% endfor %}
@@ -62,8 +79,13 @@
 {% if similarity.matrix_rows %}
 ## 7. Performance Profile Comparison
 
-*Performance Profile Similarity (Euclidean Distance):*
-Lower values = more similar performance profiles
+### Portfolio Diversification
+
+![correlation](./graphs/instrument_correlation.png)   
+*Instrument correlation (lower is generally better)*
+
+### Performance Similarity (Euclidean Distance):
+
 
 {% if similarity.min_pair %}
 **Most Similar Pair:** {{ similarity.min_pair[0] }} ↔ {{ similarity.min_pair[1] }} ({{ "%.2f"|format(similarity.min_dist) }})
@@ -73,25 +95,25 @@ Lower values = more similar performance profiles
 **Most Different Pair:** {{ similarity.max_pair[0] }} ↔ {{ similarity.max_pair[1] }} ({{ "%.2f"|format(similarity.max_dist) }})
 {% endif %}
 
-### Similarity Matrix
+#### Similarity Matrix
 
 | | {{ similarity.matrix_headers|join(' | ') }} |
 |{{ (similarity.matrix_headers|length + 1) * "---|" }}
 {% for row in similarity.matrix_rows -%}
 | {{ row.instrument }} | {{ row.dists|join(' | ') }} |
 {% endfor %}
+*Lower values = more similar performance profiles*
 {% endif %}
 
 ## 8. Time-Based Performance Evolution
 
+![heatmap](./graphs/monthly_pnl_heatmap.png)   
+*Time based PnL visualisation per instrument*
+
+| Instrument | Final PnL | Peak PnL | Max. DD | Trades in DD |
+|------------|----------:|---------:|--------:|-------------:|
 {% for row in evolution_data -%}
-### {{ row.instrument }}
-
-- Final Cumulative PnL: **{{ "%.2f"|format(row.final_pnl) }}**
-- Peak PnL: **{{ "%.2f"|format(row.peak_pnl) }}**
-- Max Drawdown: **{{ "%.2f"|format(row.max_dd) }}**
-- Trades in Drawdown: **{{ row.dd_count }}** ({{ "%.1f"|format(row.dd_pct) }}%)
-
+| {{ row.instrument }} | {{ "%.2f"|format(row.final_pnl) }} | {{ "%.2f"|format(row.peak_pnl) }} | {{ "%.2f"|format(row.max_dd) }} | {{ row.dd_count }} ({{ "%.1f"|format(row.dd_pct) }}%) |
 {% endfor %}
 
 ## 9. Key Insights
@@ -130,15 +152,15 @@ Lower values = more similar performance profiles
 ## 1. Win/Loss Pattern Analysis
 
 | Instrument | Wins | Losses | Win% | Avg Win | Avg Loss | Win/Loss |
-|------------|------|--------|------|---------|----------|----------|
+|------------|-----:|-------:|-----:|--------:|---------:|---------:|
 {% for row in win_loss_data -%}
 | {{ row.instrument }} | {{ row.wins }} | {{ row.losses }} | {{ "%.1f"|format(row.win_pct) }}% | {{ "%.2f"|format(row.avg_win) }} | {{ "%.2f"|format(row.avg_loss) }} | {{ "%.2f"|format(row.ratio) }} |
 {% endfor %}
 
-## 2. Winning/Losing Streak Analysis
+## 2. Streak Analysis
 
 | Instrument | Max Win Streak | Max Loss Streak | Current |
-|------------|----------------|-----------------|---------|
+|------------|---------------:|----------------:|--------:|
 {% for row in streak_data -%}
 | {{ row.instrument }} | {{ row.max_win }} | {{ row.max_loss }} | {{ row.current }} |
 {% endfor %}
@@ -146,7 +168,7 @@ Lower values = more similar performance profiles
 ## 3. Monthly Performance Breakdown
 
 | Month | {{ monthly_data.headers|join(' | ') }} | Total |
-|-------|{{ monthly_data.headers|length * "------|" }}------|
+|-------|{{ monthly_data.headers|length * "-----:|" }}------|
 {% for row in monthly_data.rows -%}
 | {{ row.month }} | {{ row.values|join(' | ') }} | {{ "%.2f"|format(row.total) }} |
 {% endfor -%}
@@ -155,27 +177,29 @@ Lower values = more similar performance profiles
 ## 4. Hold Time Analysis
 
 | Instrument | Avg Hold | Min Hold | Max Hold | Std Hold |
-|------------|----------|----------|----------|----------|
+|------------|---------:|---------:|---------:|---------:|
 {% for row in hold_time_data -%}
 | {{ row.instrument }} | {{ "%.1f"|format(row.avg) }}m | {{ "%.1f"|format(row.min) }}m | {{ "%.1f"|format(row.max) }}m | {{ "%.1f"|format(row.std) }}m |
 {% endfor %}
 
 ## 5. Best and Worst Trades per Instrument
 
+| Instrument | | PnL | Entry | Hold | Direction |
+|------------|-|----:|------:|-----:|-----------|
 {% for row in best_worst_trades -%}
-### {{ row.instrument }}
-
-**Best Trade:** PnL={{ "%.2f"|format(row.best.pnl) }}, Entry={{ row.best.entry_ts[:10] }}, Hold={{ "%.0f"|format(row.best.hold_minutes) }}m, Direction={{ row.best.direction }}
-
-**Worst Trade:** PnL={{ "%.2f"|format(row.worst.pnl) }}, Entry={{ row.worst.entry_ts[:10] }}, Hold={{ "%.0f"|format(row.worst.hold_minutes) }}m, Direction={{ row.worst.direction }}
-
+| {{ row.instrument }} |📈|  {{ "%.2f"|format(row.best.pnl) }} | {{ row.best.entry_ts[:10] }} | {{ "%.0f"|format(row.best.hold_minutes) }}m | {{ row.best.direction }} |
+| |📉| {{  "%.2f"|format(row.worst.pnl) }} | {{ row.worst.entry_ts[:10] }} | {{ "%.0f"|format(row.worst.hold_minutes) }}m | {{ row.worst.direction }} |
 {% endfor %}
 
 ## 6. Maximum Favorable/Adverse Excursion (MFE/MAE) Analysis
 
 {% if mfe_mae_data %}
+
+![mae](./graphs/mae_vs_pnl.png)   
+*MAE vs PnL*
+
 | Instrument | Avg MFE | Avg MAE | MFE/PnL | MAE/PnL |
-|------------|---------|---------|---------|---------|
+|------------|--------:|--------:|--------:|--------:|
 {% for row in mfe_mae_data -%}
 | {{ row.instrument }} | {{ "%.2f"|format(row.avg_mfe) }} | {{ "%.2f"|format(row.avg_mae) }} | {{ "%.2f"|format(row.mfe_ratio) }} | {{ "%.2f"|format(row.mae_ratio) }} |
 {% endfor %}
@@ -190,7 +214,7 @@ Lower values = more similar performance profiles
 ## 7. Long vs Short Performance
 
 | Instrument | Long Cnt | Short Cnt | Long PnL | Short PnL | Bias |
-|------------|----------|-----------|----------|-----------|------|
+|------------|---------:|----------:|---------:|----------:|-----:|
 {% for row in long_short_data -%}
 | {{ row.instrument }} | {{ row.long_cnt }} | {{ row.short_cnt }} | {{ "%.2f"|format(row.long_pnl) }} | {{ "%.2f"|format(row.short_pnl) }} | {{ row.bias }} |
 {% endfor %}
@@ -203,7 +227,7 @@ Lower values = more similar performance profiles
 ### Portfolio Exit Reason Summary
 
 | Exit Reason | Count | % | Total PnL | Avg PnL | Win% |
-|-------------|-------|---|-----------|---------|------|
+|-------------|------:|--:|----------:|--------:|-----:|
 {% for row in exit_reasons.portfolio -%}
 | {{ row.reason }} | {{ row.count }} | {{ "%.1f"|format(row.pct) }}% | {{ "%.2f"|format(row.total_pnl) }} | {{ "%.2f"|format(row.avg_pnl) }} | {{ "%.1f"|format(row.win_rate) }}% |
 {% endfor %}
@@ -214,10 +238,19 @@ Lower values = more similar performance profiles
 #### {{ inst.short_name }}
 
 | Exit Reason | Count | % | Total PnL | Avg PnL | Win% |
-|-------------|-------|---|-----------|---------|------|
+|-------------|------:|--:|----------:|--------:|-----:|
 {% for row in inst.rows -%}
 | {{ row.reason }} | {{ row.count }} | {{ "%.1f"|format(row.pct) }}% | {{ "%.2f"|format(row.total_pnl) }} | {{ "%.2f"|format(row.avg_pnl) }} | {{ "%.1f"|format(row.win_rate) }}% |
 {% endfor %}
 
 {% endfor %}
 {% endif %}
+
+---
+
+<small>
+
+report created on **{{ report_date }}** by [`tradedesk`](https://github.com/radiusred/tradedesk)   
+location: `{{ output_path }}`   
+&copy; Radius Red Ltd.
+</small>

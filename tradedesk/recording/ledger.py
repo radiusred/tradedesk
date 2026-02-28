@@ -239,6 +239,7 @@ class TradeLedger:
             "profit_factor",
             "expectancy",
             "avg_hold_min",
+            "sharpe_ratio",
         ]
 
         def _metrics_row(
@@ -258,6 +259,7 @@ class TradeLedger:
                 round(met.profit_factor, 2),
                 round(met.expectancy, 2),
                 round(met.avg_hold_minutes, 2),
+                round(met.sharpe_ratio, 2),
             ]
 
         with path.open("w", newline="") as f:
