@@ -1,6 +1,7 @@
 """Performance analysis report generation for backtest results using Jinja2 templates."""
 
 import csv
+import logging
 import math
 from collections import defaultdict
 from datetime import datetime
@@ -8,8 +9,12 @@ from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
 
+import matplotlib.pyplot as plt
+import pandas as pd
+import seaborn as sns
 from jinja2 import Environment, FileSystemLoader
 
+log = logging.getLogger(__name__)
 
 def calc_stats(values: list[float]) -> dict[str, float]:
     """Calculate summary statistics for a list of values."""
@@ -88,10 +93,9 @@ def _prepare_overall_performance(
     )
     return portfolio_metrics, instrument_metrics, sorted_instruments
 
-
 def _prepare_stats_table(
     metrics: list[dict[str, str]],
-) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
+) -> list[dict[str, Any]]:
     metrics_cols = {
         "final_equity": [float(m.get("final_equity", 0)) for m in metrics],
         "max_dd": [float(m.get("max_dd", 0)) for m in metrics],
@@ -101,14 +105,20 @@ def _prepare_stats_table(
     }
 
     stats_table = []
-    cv_data = []
     for col, values in metrics_cols.items():
         stats = calc_stats(values)
-        stats_table.append({"metric": col, **stats})
+        
+        # Calculate CV (Coefficient of Variation)
         cv = (stats["std"] / abs(stats["mean"])) * 100 if stats["mean"] != 0 else 0
-        cv_data.append({"metric": col, "cv": cv})
-    return stats_table, cv_data
-
+        
+        # Merge everything into one dictionary per metric
+        stats_table.append({
+            "metric": col, 
+            **stats, 
+            "cv": cv
+        })
+        
+    return stats_table
 
 def _prepare_consistency_data(round_trips: list[dict[str, str]]) -> list[dict[str, Any]]:
     inst_pnls: defaultdict[str, list[float]] = defaultdict(list)
@@ -342,6 +352,9 @@ def _prepare_insights(
     risk_adj_data: list[dict[str, Any]],
     total_round_trips: int,
 ) -> dict[str, Any]:
+
+    metrics = [m for m in metrics if m.get("instrument") != "PORTFOLIO"]
+
     insights: dict[str, Any] = {}
     final_equities = [float(m.get("final_equity", 0)) for m in metrics]
     if not final_equities:
@@ -699,11 +712,91 @@ def _prepare_exit_reasons(
 
     return exit_reasons
 
+def _prepare_graphs(round_trips_file: Path, equity_file: Path) -> None:
+    output_dir = round_trips_file.parent / "graphs"
+    output_dir.mkdir(exist_ok=True)
 
-def generate_analysis_report(output_dir: str | Path) -> None:
+    round_trips = pd.read_csv(round_trips_file)
+    equity = pd.read_csv(equity_file)
+
+    round_trips["exit_ts"] = pd.to_datetime(round_trips["exit_ts"])
+    round_trips["month"] = round_trips["exit_ts"].dt.to_period("M")
+    equity["timestamp"] = pd.to_datetime(equity["timestamp"])
+
+    # 1. Monthly Performance Heatmap
+    try:
+        monthly_pnl = round_trips.groupby(
+            ["month", "instrument"]
+        )["pnl"].sum().unstack(fill_value=0)
+        portfolio_monthly = monthly_pnl.sum(axis=1)
+        monthly_pnl["PORTFOLIO"] = portfolio_monthly
+
+        heatmap_data = monthly_pnl.copy()
+        heatmap_data.index = heatmap_data.index.astype(str)
+        plt.figure(figsize=(15, 10))
+        sns.heatmap(heatmap_data.T, annot=True, fmt=".0f", cmap="RdYlGn", center=0)
+        plt.title("Monthly PnL by Instrument")
+        plt.tight_layout()
+        plt.savefig(output_dir / "monthly_pnl_heatmap.png")
+    except Exception as e:
+        log.warning(f"Failed to generate monthly performance heatmap: {e}")
+
+    # # P&L Distribution
+    # try:
+    #     plt.figure(figsize=(10, 8))
+    #     sns.histplot(round_trips, x="pnl", bins=30, kde=True)
+    #     plt.title("P&L Distribution")
+    #     plt.xlabel("P&L")
+    #     plt.ylabel("Frequency")
+    #     plt.savefig(output_dir / "pnl_distribution.png")
+    #     plt.close()
+    # except Exception as e:
+    #     log.warning(f"Failed to generate P&L distribution plot: {e}")
+
+    # Equity Curve
+    try:
+        plt.figure(figsize=(10, 8))
+        sns.lineplot(data=equity, x="timestamp", y="equity")
+        plt.title("Equity Curve")
+        plt.xlabel("Time")
+        plt.ylabel("Equity")
+        plt.savefig(output_dir / "equity_curve.png")
+        plt.close()
+    except Exception as e:
+        log.warning(f"Failed to generate equity curve plot: {e}")
+
+    # MFE / MAE Analysis
+    try:
+        plt.figure(figsize=(12, 6))
+        sns.scatterplot(data=round_trips, x="mae_pnl", y="pnl", hue="instrument", alpha=0.5)
+        plt.title("MAE vs Final PnL (Risk vs Reward)")
+        plt.axhline(0, color="black", linestyle="--")
+        plt.tight_layout()
+        plt.savefig(output_dir / "mae_vs_pnl.png")
+    except Exception as e:
+        log.warning(f"Failed to generate MAE vs PnL plot: {e}")
+
+    # Equity Correlation
+    try:
+        round_trips["date"] = round_trips["exit_ts"].dt.date
+        daily_pnl = round_trips.groupby(["date", "instrument"])["pnl"].sum().unstack(fill_value=0)
+        correlation_matrix = daily_pnl.corr()
+
+        plt.figure(figsize=(10, 8))
+        sns.heatmap(correlation_matrix, annot=True, cmap="coolwarm", vmin=-1, vmax=1)
+        plt.title("Daily PnL Correlation Matrix")
+        plt.tight_layout()
+        plt.savefig(output_dir / "instrument_correlation.png")
+    except Exception as e:
+        log.warning(f"Failed to generate instrument correlation matrix: {e}")
+
+
+def generate_analysis_report(output_dir: str | Path, with_graphs: bool = True) -> None:
     output_path = Path(output_dir)
     metrics_file = output_path / "metrics.csv"
     round_trips_file = output_path / "round_trips.csv"
+    equity_file = output_path / "equity.csv"
+    equity_daily_file = output_path / "equity_daily.csv"
     report_file = output_path / "analysis.md"
     template_file = "report-template.j2"
 
@@ -711,11 +804,12 @@ def generate_analysis_report(output_dir: str | Path) -> None:
     _ensure_instrument_field(metrics)
     round_trips = _read_csv(round_trips_file)
     _ensure_instrument_field(round_trips)
+    equity_daily = _read_csv(equity_daily_file)
 
     portfolio_metrics, instrument_metrics, sorted_instruments = (
         _prepare_overall_performance(metrics)
     )
-    stats_table, cv_data = _prepare_stats_table(metrics)
+    stats_table = _prepare_stats_table(metrics)
     consistency_data = _prepare_consistency_data(round_trips)
     volatility = _classify_volatility(consistency_data)
     exposure_data, total_round_trips = _prepare_exposure_data(metrics)
@@ -732,11 +826,13 @@ def generate_analysis_report(output_dir: str | Path) -> None:
     monthly_data = _prepare_monthly_data(round_trips, inst_data)
     exit_reasons = _prepare_exit_reasons(round_trips, inst_data)
 
+    if with_graphs:
+        _prepare_graphs(round_trips_file, equity_file)
+
     context = {
         "portfolio_metrics": portfolio_metrics,
         "instrument_metrics": sorted_instruments,
         "stats_table": stats_table,
-        "cv_data": cv_data,
         "consistency_data": consistency_data,
         "volatility": volatility,
         "exposure_data": exposure_data,
@@ -752,6 +848,10 @@ def generate_analysis_report(output_dir: str | Path) -> None:
         "mfe_mae_data": mfe_mae_data,
         "long_short_data": long_short_data,
         "exit_reasons": exit_reasons,
+        "equity_daily": equity_daily,
+        "report_date": datetime.now().strftime("%Y-%m-%d %H:%M"),
+        "output_path": output_path,
+        "graphs": with_graphs,
     }
 
     env = Environment(loader=FileSystemLoader(str(Path(__file__).parent)))

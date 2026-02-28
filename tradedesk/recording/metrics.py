@@ -1,5 +1,6 @@
 """Performance metrics and trade analysis."""
 
+import math
 from dataclasses import dataclass
 from datetime import datetime
 from typing import Any, Iterable
@@ -39,6 +40,7 @@ class Metrics:
     final_equity: float
     avg_hold_minutes: float
     exits_by_reason: dict[str, int]
+    sharpe_ratio: float 
 
 
 def _parse_ts(ts: str) -> datetime:
@@ -186,11 +188,6 @@ def compute_metrics(
 
     trips = round_trips_from_fills(trade_rows)
 
-    exits_by_reason: dict[str, int] = {}
-    for t in trips:
-        k = t.exit_reason or "unknown"
-        exits_by_reason[k] = exits_by_reason.get(k, 0) + 1
-
     pnls = [t.pnl for t in trips]
     wins = [p for p in pnls if p > 0]
     losses = [p for p in pnls if p < 0]
@@ -211,15 +208,41 @@ def compute_metrics(
     win_rate = (wins_n / rt_n) if rt_n else 0.0
     expectancy = (win_rate * avg_win + (1.0 - win_rate) * avg_loss) if rt_n else 0.0
 
-    # Holding time
+    # 2. Sharpe Ratio Calculation (Daily Basis)
+    daily_pnls: dict[str, float] = {}
+    for t in trips:
+        # Extract date from exit timestamp (YYYY-MM-DD)
+        day_key = t.exit_ts[:10] 
+        daily_pnls[day_key] = daily_pnls.get(day_key, 0.0) + t.pnl
+    
+    daily_values = list(daily_pnls.values())
+    n_days = len(daily_values)
+    
+    sharpe_ann = 0.0
+    if n_days > 1:
+        mean_d = sum(daily_values) / n_days
+        # Sample standard deviation
+        variance_d = sum((x - mean_d) ** 2 for x in daily_values) / (n_days - 1)
+        std_d = math.sqrt(variance_d)
+        
+        if std_d > 0:
+            # Annualize by multiplying by sqrt of 252 trading days
+            sharpe_ann = (mean_d / std_d) * math.sqrt(252)
+
+    # 3. Holding Time and Exits
+    exits_by_reason: dict[str, int] = {}
+    for t in trips:
+        k = t.exit_reason or "unknown"
+        exits_by_reason[k] = exits_by_reason.get(k, 0) + 1
+    
     hold_mins: list[float] = []
     for t in trips:
-        if t.entry_ts and t.exit_ts:
-            dt = _parse_ts(t.exit_ts) - _parse_ts(t.entry_ts)
-            hold_mins.append(dt.total_seconds() / 60.0)
+        k = t.exit_reason or "unknown"
+        exits_by_reason[k] = exits_by_reason.get(k, 0) + 1
+        dt = _parse_ts(t.exit_ts) - _parse_ts(t.entry_ts)
+        hold_mins.append(dt.total_seconds() / 60.0)
+    
     avg_hold = (sum(hold_mins) / len(hold_mins)) if hold_mins else 0.0
-
-    scale = float(reporting_scale)
 
     return Metrics(
         trades=len(trade_rows),
@@ -227,12 +250,13 @@ def compute_metrics(
         wins=wins_n,
         losses=losses_n,
         win_rate=win_rate,
-        avg_win=float(avg_win) * scale,
-        avg_loss=float(avg_loss) * scale,
+        avg_win=float(avg_win) * reporting_scale,
+        avg_loss=float(avg_loss) * reporting_scale,
         profit_factor=float(profit_factor),
-        expectancy=float(expectancy) * scale,
-        max_drawdown=max_drawdown(equity) * scale,
-        final_equity=float(final_equity) * scale,
-        avg_hold_minutes=float(avg_hold) if avg_hold is not None else None,
+        expectancy=float(expectancy) * reporting_scale,
+        max_drawdown=max_drawdown(equity) * reporting_scale,
+        final_equity=float(final_equity) * reporting_scale,
+        avg_hold_minutes=float(avg_hold),
         exits_by_reason=exits_by_reason,
+        sharpe_ratio=float(sharpe_ann) # The new field
     )
