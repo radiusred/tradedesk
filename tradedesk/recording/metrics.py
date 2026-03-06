@@ -237,8 +237,6 @@ def compute_metrics(
     
     hold_mins: list[float] = []
     for t in trips:
-        k = t.exit_reason or "unknown"
-        exits_by_reason[k] = exits_by_reason.get(k, 0) + 1
         dt = _parse_ts(t.exit_ts) - _parse_ts(t.entry_ts)
         hold_mins.append(dt.total_seconds() / 60.0)
     
