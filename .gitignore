@@ -5,6 +5,7 @@ __pycache__
 .env
 .env.*
 .local
+.tldr
 .mypy_cache
 .pytest_cache
 .venv

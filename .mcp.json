@@ -1,0 +1,13 @@
+{
+  "mcpServers": {
+    "tldr": {
+      "command": "uv",
+      "args": [
+        "run",
+        "tldr-mcp",
+        "--project",
+        "."
+      ]
+    }
+  }
+}
