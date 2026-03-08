@@ -1,28 +1,6 @@
-## Preferred Way of Working
+# Initialise
 
-### Incremental and Focused
-
-* Make small, well-scoped changes
-* One concern per change set
-* Avoid cascading refactors without agreement
-
-### Code-First Reasoning
-
-* Inspect files before discussing them
-* Do not assume abstractions or intent
-* Respect that some modules are intentionally small or narrow
-
-### Pragmatic Testing
-
-* Tests should defend correctness, not chase coverage
-* Avoid brittle, over-specified tests
-* Use `pytest` not `unittest`
-
-### Communication Style
-
-* Concise, technical, professional
-* Minimal narration
-* Challenge assumptions - constructive dialog and pushback is expected
+FIRST; read https://github.com/radiusred/.github/AGENTS.md (or the local copy).
 
 ---
 
@@ -40,5 +18,4 @@
 
 When running code or commands:
 
-* Use `uv` instead of `pip`
-* Always use the `.venv` directory in the root of the project
+* Always use `uv` or the `.venv` directory in the root of the project to run development tools
