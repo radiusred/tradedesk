@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from datetime import date
 from pathlib import Path
 from typing import TYPE_CHECKING, Callable
 
@@ -31,7 +32,11 @@ class BacktestSpec:
 
     instrument: str
     period: str
-    candle_csv: Path
+    cache_dir: Path
+    symbol: str
+    date_from: date
+    date_to: date
+    price_side: str = "bid"
     size: float = 1.0
     half_spread_adjustment: float = 0.0
     reporting_scale: float = 1.0
@@ -41,7 +46,7 @@ async def run_backtest(
     *,
     spec: BacktestSpec,
     out_dir: Path,
-    portfolio_factory: Callable[[BacktestClient], BasePortfolio],
+    portfolio_factory: Callable[[BacktestClient], "BasePortfolio"],
 ) -> Metrics:
     """
     Event-driven backtest runner.
@@ -50,7 +55,7 @@ async def run_backtest(
     to the portfolio (warmup via SessionStartedEvent, streaming, SessionEndedEvent).
 
     Args:
-        spec: BacktestSpec with instrument, period, CSV path, etc.
+        spec: BacktestSpec with instrument, period, cache location and date range.
         out_dir: Directory to write CSV artefacts.
         portfolio_factory: Callable that receives a BacktestClient and returns
             an initialised BasePortfolio.
@@ -58,9 +63,14 @@ async def run_backtest(
     Returns:
         Metrics object with performance statistics.
     """
-    # Create backtest client and load candles
-    raw_client = BacktestClient.from_csv(
-        spec.candle_csv, instrument=spec.instrument, period=spec.period
+    raw_client = BacktestClient.from_dukascopy_cache(
+        spec.cache_dir,
+        symbol=spec.symbol,
+        instrument=spec.instrument,
+        period=spec.period,
+        date_from=spec.date_from,
+        date_to=spec.date_to,
+        price_side=spec.price_side,
     )
     await raw_client.start()
 

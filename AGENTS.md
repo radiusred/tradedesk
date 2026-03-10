@@ -10,7 +10,6 @@ FIRST; read https://github.com/radiusred/.github/AGENTS.md (or the local copy).
 * Follow current documentation and APIs
 * Code should pass `ruff check` and `mypy --strict` requirements
 * Create commit messages for git following "Conventional Commits" and the current style of the project's git log
-  * Do not add author lines to git commits
 * Follow the intentions of the domain architecture encoded in `pyproject.toml`
   * All imports across domains should use top level re-exports. Example: code in `tradedesk.execution` should only import code
     from `tradedesk.marketdata` and never from `tradedesk.marketdata.events` The class or function should be explicitly

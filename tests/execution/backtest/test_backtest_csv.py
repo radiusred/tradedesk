@@ -6,9 +6,8 @@ import pytest
 from tradedesk import SimplePortfolio, run_portfolio
 from tradedesk.execution.backtest.client import BacktestClient
 from tradedesk.execution.backtest.streamer import _parse_ts
-from tradedesk.marketdata.events import CandleClosedEvent
 from tradedesk.marketdata.instrument import MarketData
-from tradedesk.marketdata.subscriptions import ChartSubscription, MarketSubscription
+from tradedesk.marketdata.subscriptions import MarketSubscription
 from tradedesk.strategy.base import BaseStrategy
 
 
@@ -39,52 +38,6 @@ async def test_backtest_trade_has_timestamp():
     await client.place_market_order(instrument, "BUY", 1.0)
 
     assert client.trades[0].timestamp == "2025-01-01T00:00:00Z"
-
-
-def test_backtest_from_csv_replays_and_trades(tmp_path: Path):
-    csv_path = tmp_path / "candles.csv"
-    csv_path.write_text(
-        "timestamp,open,high,low,close,volume\n"
-        "2025-12-28T00:00:00Z,10,10,10,10,0\n"
-        "2025-12-28T00:05:00Z,11,11,11,11,0\n"
-        "2025-12-28T00:10:00Z,12,12,12,12,0\n"
-    )
-
-    created = {}
-
-    class TradeOnFirstLast(BaseStrategy):
-        SUBSCRIPTIONS = [ChartSubscription("EPIC", "5MINUTE")]
-
-        async def on_price_update(self, market_data: MarketData):
-            pass
-
-        async def on_candle_close(self, candle_close: CandleClosedEvent):
-            if candle_close.candle.close == 10:
-                await self.client.place_market_order(
-                    instrument=candle_close.instrument, direction="BUY", size=1.0
-                )
-            if candle_close.candle.close == 12:
-                await self.client.place_market_order(
-                    instrument=candle_close.instrument, direction="SELL", size=1.0
-                )
-            await super().on_candle_close(candle_close)
-
-    def factory():
-        c = BacktestClient.from_csv(csv_path, instrument="EPIC", period="5MINUTE")
-        created["client"] = c
-        return c
-
-    with patch("sys.exit") as _:
-        run_portfolio(
-            portfolio_factory=lambda c: SimplePortfolio(c, TradeOnFirstLast(c)),
-            client_factory=factory,
-            setup_logging=False,
-        )
-
-    client: BacktestClient = created["client"]  # type: ignore[assignment]
-    assert len(client.trades) == 2
-    assert client.realised_pnl == 2.0
-    assert client.positions == {}
 
 
 def test_backtest_market_csvs_drive_price_updates_and_signals(tmp_path: Path):
@@ -130,9 +83,7 @@ def test_backtest_market_csvs_drive_price_updates_and_signals(tmp_path: Path):
         def __init__(self, client, lookback=10):
             super().__init__(client)
             self.lookback = lookback
-            self.prices: dict[str, list[float]] = {
-                s.instrument: [] for s in self.SUBSCRIPTIONS
-            }
+            self.prices: dict[str, list[float]] = {s.instrument: [] for s in self.SUBSCRIPTIONS}
             self.signals: list[tuple[str, str]] = []
 
         async def on_price_update(self, md: MarketData):
@@ -166,8 +117,6 @@ def test_backtest_market_csvs_drive_price_updates_and_signals(tmp_path: Path):
             setup_logging=False,
         )
 
-    # Verify at least one UP for GBP and one DOWN for EUR occurred
-    # (The strategy instance is internal; so assert indirectly via client mark prices after replay)
     client = created["client"]
     assert client._mark_price["CS.D.GBPUSD.TODAY.IP"] > 1.25
     assert client._mark_price["CS.D.EURUSD.TODAY.IP"] < 1.10

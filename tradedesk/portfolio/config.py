@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from datetime import date
 from pathlib import Path
 from typing import Any
 
@@ -20,7 +21,9 @@ class PortfolioConfig:
 
 @dataclass(frozen=True)
 class BacktestPortfolioConfig(PortfolioConfig):
-    input_dir: Path
+    cache_dir: Path
+    date_from: date
+    date_to: date
     half_spread_adjustment: float
 
     @classmethod
@@ -28,7 +31,9 @@ class BacktestPortfolioConfig(PortfolioConfig):
         cls,
         *,
         instruments: list[str],
-        input_dir: Path,
+        cache_dir: Path,
+        date_from: date,
+        date_to: date,
         output_dir: Path,
         half_spread_adjustment: float,
         risk: dict[str, Any],
@@ -55,7 +60,9 @@ class BacktestPortfolioConfig(PortfolioConfig):
 
         return cls(
             instruments=instruments,
-            input_dir=input_dir,
+            cache_dir=cache_dir,
+            date_from=date_from,
+            date_to=date_to,
             output_dir=output_dir,
             half_spread_adjustment=float(half_spread_adjustment),
             default_risk_per_trade=default_risk,
