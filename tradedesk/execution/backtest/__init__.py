@@ -12,7 +12,3 @@ __all__ = [
     "MarketSeries",
     "run_backtest",
 ]
-
-# Removed exports (moved to recording domain):
-# - CandleIndex, Excursions, build_candle_index, compute_excursions → tradedesk.recording.excursions
-# - BacktestRecorder, ProgressLogger, TrackerSync → tradedesk.recording.recorders

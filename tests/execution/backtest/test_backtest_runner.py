@@ -1,5 +1,6 @@
 """Tests for tradedesk.execution.backtest.runner."""
 
+from datetime import date
 from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -39,12 +40,23 @@ def mock_compute_metrics():
         yield mock
 
 
+def _make_spec(cache_dir: Path = Path("/cache")) -> BacktestSpec:
+    return BacktestSpec(
+        instrument="TEST",
+        period="1MIN",
+        cache_dir=cache_dir,
+        symbol="EURUSD",
+        date_from=date(2025, 1, 1),
+        date_to=date(2025, 1, 31),
+    )
+
+
 @pytest.mark.asyncio
 async def test_run_backtest_spread_adjustment(
     mock_client_cls, mock_register_subscriber, mock_compute_metrics, tmp_path
 ):
     """Test that half_spread_adjustment modifies candle OHLC."""
-    client_instance = mock_client_cls.from_csv.return_value
+    client_instance = mock_client_cls.from_dukascopy_cache.return_value
     client_instance.start = AsyncMock()
 
     candle = MagicMock(spec=Candle)
@@ -67,19 +79,23 @@ async def test_run_backtest_spread_adjustment(
     spec = BacktestSpec(
         instrument="TEST",
         period="1MIN",
-        candle_csv=Path("dummy.csv"),
+        cache_dir=tmp_path,
+        symbol="EURUSD",
+        date_from=date(2025, 1, 1),
+        date_to=date(2025, 1, 31),
         half_spread_adjustment=0.5,
     )
 
     mock_portfolio = MagicMock()
     mock_portfolio.run = AsyncMock()
 
-    with patch("tradedesk.execution.backtest.runner.EquityRecorder"), \
-         patch("tradedesk.execution.backtest.runner.ProgressLogger"), \
-         patch("tradedesk.execution.backtest.runner.build_candle_index"), \
-         patch("tradedesk.execution.backtest.runner.ExcursionComputer"), \
-         patch("tradedesk.execution.backtest.runner.TradeLedger"):
-
+    with (
+        patch("tradedesk.execution.backtest.runner.EquityRecorder"),
+        patch("tradedesk.execution.backtest.runner.ProgressLogger"),
+        patch("tradedesk.execution.backtest.runner.build_candle_index"),
+        patch("tradedesk.execution.backtest.runner.ExcursionComputer"),
+        patch("tradedesk.execution.backtest.runner.TradeLedger"),
+    ):
         await run_backtest(spec=spec, out_dir=tmp_path, portfolio_factory=lambda c: mock_portfolio)
 
     assert candle.open == 100.5
@@ -93,29 +109,26 @@ async def test_run_backtest_event_driven_recording(
     mock_client_cls, mock_register_subscriber, mock_compute_metrics, tmp_path
 ):
     """Test that event-driven recording is set up correctly."""
-    client_instance = mock_client_cls.from_csv.return_value
+    client_instance = mock_client_cls.from_dukascopy_cache.return_value
     client_instance.start = AsyncMock()
     streamer = MagicMock()
     streamer._candle_series = []
     streamer.run = AsyncMock()
     client_instance.get_streamer.return_value = streamer
 
-    spec = BacktestSpec(
-        instrument="TEST", period="1MIN", candle_csv=Path("dummy.csv")
-    )
+    spec = _make_spec(tmp_path)
 
     mock_portfolio = MagicMock()
     mock_portfolio.run = AsyncMock()
 
-    with patch("tradedesk.execution.backtest.runner.EquityRecorder") as mock_equity_recorder, \
-         patch("tradedesk.execution.backtest.runner.ProgressLogger"), \
-         patch("tradedesk.execution.backtest.runner.build_candle_index"), \
-         patch("tradedesk.execution.backtest.runner.ExcursionComputer") as mock_excursion, \
-         patch("tradedesk.execution.backtest.runner.TradeLedger"):
-
-        await run_backtest(
-            spec=spec, out_dir=tmp_path, portfolio_factory=lambda c: mock_portfolio
-        )
+    with (
+        patch("tradedesk.execution.backtest.runner.EquityRecorder") as mock_equity_recorder,
+        patch("tradedesk.execution.backtest.runner.ProgressLogger"),
+        patch("tradedesk.execution.backtest.runner.build_candle_index"),
+        patch("tradedesk.execution.backtest.runner.ExcursionComputer") as mock_excursion,
+        patch("tradedesk.execution.backtest.runner.TradeLedger"),
+    ):
+        await run_backtest(spec=spec, out_dir=tmp_path, portfolio_factory=lambda c: mock_portfolio)
 
         mock_equity_recorder.assert_called_once()
         mock_excursion.assert_called_once()
@@ -127,24 +140,25 @@ async def test_run_backtest_metrics_output(
     mock_client_cls, mock_register_subscriber, mock_compute_metrics, tmp_path
 ):
     """Test that metrics are computed and returned as Metrics object."""
-    client_instance = mock_client_cls.from_csv.return_value
+    client_instance = mock_client_cls.from_dukascopy_cache.return_value
     client_instance.start = AsyncMock()
     streamer = MagicMock()
     streamer._candle_series = []
     streamer.run = AsyncMock()
     client_instance.get_streamer.return_value = streamer
 
-    spec = BacktestSpec(instrument="TEST", period="1MIN", candle_csv=Path("dummy.csv"))
+    spec = _make_spec(tmp_path)
 
     mock_portfolio = MagicMock()
     mock_portfolio.run = AsyncMock()
 
-    with patch("tradedesk.execution.backtest.runner.EquityRecorder"), \
-         patch("tradedesk.execution.backtest.runner.ProgressLogger"), \
-         patch("tradedesk.execution.backtest.runner.build_candle_index"), \
-         patch("tradedesk.execution.backtest.runner.ExcursionComputer"), \
-         patch("tradedesk.execution.backtest.runner.TradeLedger"):
-
+    with (
+        patch("tradedesk.execution.backtest.runner.EquityRecorder"),
+        patch("tradedesk.execution.backtest.runner.ProgressLogger"),
+        patch("tradedesk.execution.backtest.runner.build_candle_index"),
+        patch("tradedesk.execution.backtest.runner.ExcursionComputer"),
+        patch("tradedesk.execution.backtest.runner.TradeLedger"),
+    ):
         result = await run_backtest(
             spec=spec, out_dir=tmp_path, portfolio_factory=lambda c: mock_portfolio
         )
@@ -154,3 +168,18 @@ async def test_run_backtest_metrics_output(
     assert result.final_equity == 10500.0
     assert result.win_rate == 0.6
     assert result.avg_hold_minutes == 15.0
+
+
+def test_backtest_spec_defaults():
+    spec = BacktestSpec(
+        instrument="GBPUSD",
+        period="15MIN",
+        cache_dir=Path("/data/cache"),
+        symbol="GBPUSD",
+        date_from=date(2025, 1, 1),
+        date_to=date(2025, 12, 31),
+    )
+    assert spec.price_side == "bid"
+    assert spec.size == 1.0
+    assert spec.half_spread_adjustment == 0.0
+    assert spec.reporting_scale == 1.0

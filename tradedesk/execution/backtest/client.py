@@ -1,6 +1,7 @@
 import csv
 import itertools
 from dataclasses import dataclass
+from datetime import date
 from pathlib import Path
 from typing import Any
 
@@ -12,6 +13,7 @@ from tradedesk.recording import PositionClosedEvent, PositionOpenedEvent
 from tradedesk.time_utils import parse_timestamp
 from tradedesk.types import Candle, Direction
 
+from .dukascopy import read_dukascopy_candles
 from .streamer import (
     BacktestStreamer,
     CandleSeries,
@@ -70,17 +72,45 @@ class BacktestClient(Client):
         self._current_timestamp: str | None = None
 
     @classmethod
-    def from_history(
-        cls, history: dict[tuple[str, str], list[Candle]]
-    ) -> "BacktestClient":
+    def from_history(cls, history: dict[tuple[str, str], list[Candle]]) -> "BacktestClient":
         series: list[CandleSeries] = []
         for (instrument, period), candles in history.items():
-            series.append(
-                CandleSeries(
-                    instrument=instrument, period=period, candles=list(candles)
-                )
-            )
+            series.append(CandleSeries(instrument=instrument, period=period, candles=list(candles)))
         return cls(series, [])
+
+    @classmethod
+    def from_dukascopy_cache(
+        cls,
+        cache_dir: str | Path,
+        *,
+        symbol: str,
+        instrument: str,
+        period: str,
+        date_from: date,
+        date_to: date,
+        price_side: str = "bid",
+    ) -> "BacktestClient":
+        """
+        Load a candle series from a Dukascopy tick cache and return a BacktestClient.
+
+        Args:
+            cache_dir: Root of the Dukascopy cache directory.
+            symbol: Symbol folder name in the cache (e.g. ``"EURUSD"``).
+            instrument: Instrument identifier used by the strategy.
+            period: Tradedesk period string (e.g. ``"1MIN"``, ``"15MIN"``, ``"1H"``).
+            date_from: First date to include (inclusive).
+            date_to: Last date to include (inclusive).
+            price_side: ``"bid"`` (default), ``"ask"``, or ``"mid"``.
+        """
+        candles = read_dukascopy_candles(
+            Path(cache_dir),
+            symbol,
+            period,
+            date_from,
+            date_to,
+            price_side=price_side,
+        )
+        return cls.from_history({(instrument, period): candles})
 
     @classmethod
     def from_market_csv(
@@ -126,9 +156,7 @@ class BacktestClient(Client):
 
                 header_map = {norm(h): h for h in reader.fieldnames if h is not None}
 
-                ts_key = next(
-                    (header_map[a] for a in ts_aliases if a in header_map), None
-                )
+                ts_key = next((header_map[a] for a in ts_aliases if a in header_map), None)
                 bid_key = header_map.get("bid")
                 offer_key = header_map.get("offer")
 
@@ -142,9 +170,7 @@ class BacktestClient(Client):
                     if k is None
                 ]
                 if missing:
-                    raise ValueError(
-                        f"CSV missing required columns: {', '.join(missing)}"
-                    )
+                    raise ValueError(f"CSV missing required columns: {', '.join(missing)}")
 
                 assert ts_key and bid_key and offer_key
 
@@ -178,129 +204,6 @@ class BacktestClient(Client):
         # No candle history for tick-only backtest (for now)
         return cls(candle_series=[], market_series=market_series)
 
-    @classmethod
-    def from_csv(
-        cls,
-        path: str | Path,
-        *,
-        instrument: str,
-        period: str,
-        timestamp_col: str | None = None,
-        open_col: str | None = None,
-        high_col: str | None = None,
-        low_col: str | None = None,
-        close_col: str | None = None,
-        volume_col: str | None = None,
-        tick_count_col: str | None = None,
-        delimiter: str = ",",
-    ) -> "BacktestClient":
-        """
-        Load a candle series from CSV and return a BacktestClient.
-
-        CSV requirements:
-          - timestamp column (default autodetect)
-          - open/high/low/close columns (default autodetect)
-          - optional volume and tick_count columns
-        """
-        path = Path(path)
-
-        def norm(s: str) -> str:
-            return s.strip().lower()
-
-        # canonical -> accepted aliases
-        aliases = {
-            "timestamp": {"timestamp", "time", "datetime", "date"},
-            "open": {"open", "o"},
-            "high": {"high", "h"},
-            "low": {"low", "l"},
-            "close": {"close", "c"},
-            "volume": {"volume", "vol", "v"},
-            "tick_count": {"tick_count", "ticks", "tickcount"},
-        }
-
-        candles: list[Candle] = []
-
-        with path.open("r", newline="") as f:
-            reader = csv.DictReader(f, delimiter=delimiter)
-            if reader.fieldnames is None:
-                raise ValueError("CSV has no header row")
-
-            # Build normalized header map
-            header_map = {norm(h): h for h in reader.fieldnames if h is not None}
-
-            def pick(explicit: str | None, key: str) -> str | None:
-                if explicit:
-                    if norm(explicit) not in header_map:
-                        raise ValueError(f"CSV missing column: {explicit}")
-                    return header_map[norm(explicit)]
-                for a in aliases[key]:
-                    if a in header_map:
-                        return header_map[a]
-                return None
-
-            ts_key = pick(timestamp_col, "timestamp")
-            o_key = pick(open_col, "open")
-            h_key = pick(high_col, "high")
-            l_key = pick(low_col, "low")
-            c_key = pick(close_col, "close")
-            v_key = pick(volume_col, "volume")
-            t_key = pick(tick_count_col, "tick_count")
-
-            missing = [
-                name
-                for name, k in [
-                    ("timestamp", ts_key),
-                    ("open", o_key),
-                    ("high", h_key),
-                    ("low", l_key),
-                    ("close", c_key),
-                ]
-                if k is None
-            ]
-            if missing:
-                raise ValueError(f"CSV missing required columns: {', '.join(missing)}")
-
-            assert ts_key and o_key and h_key and l_key and c_key
-
-            for row in reader:
-                ts = (row.get(ts_key) or "").strip()
-                if not ts:
-                    continue
-
-                # Normalize to ...Z when not provided
-                if ts.endswith("Z"):
-                    ts_norm = ts
-                elif "+" in ts or ts.endswith("00:00"):
-                    ts_norm = ts
-                else:
-                    ts_norm = ts + "Z"
-
-                def fnum(val: str | None, default: float = 0.0) -> float:
-                    if val is None:
-                        return default
-                    s = str(val).strip()
-                    return default if s == "" else float(s)
-
-                def inum(val: str | None, default: int = 0) -> int:
-                    if val is None:
-                        return default
-                    s = str(val).strip()
-                    return default if s == "" else int(float(s))
-
-                candle = Candle(
-                    timestamp=ts_norm,
-                    open=fnum(row.get(o_key)),
-                    high=fnum(row.get(h_key)),
-                    low=fnum(row.get(l_key)),
-                    close=fnum(row.get(c_key)),
-                    volume=fnum(row.get(v_key)) if v_key else 0.0,
-                    tick_count=inum(row.get(t_key)) if t_key else 0,
-                )
-                candles.append(candle)
-
-        history = {(instrument, period): candles}
-        return cls.from_history(history)
-
     async def start(self) -> None:
         self._started = True
 
@@ -318,9 +221,7 @@ class BacktestClient(Client):
 
     def _get_mark_price(self, instrument: str) -> float:
         if instrument not in self._mark_price:
-            raise RuntimeError(
-                f"No mark price available for {instrument} (no data replayed yet)"
-            )
+            raise RuntimeError(f"No mark price available for {instrument} (no data replayed yet)")
         return self._mark_price[instrument]
 
     def get_mark_price(self, instrument: str) -> float | None:
@@ -417,9 +318,7 @@ class BacktestClient(Client):
             if pos.direction == _direction:
                 # Increase position: weighted avg entry
                 new_size = pos.size + float(size)
-                pos.entry_price = (
-                    pos.entry_price * pos.size + price * float(size)
-                ) / new_size
+                pos.entry_price = (pos.entry_price * pos.size + price * float(size)) / new_size
                 pos.size = new_size
             else:
                 # Opposite direction: close (only supports full close or reduce; compute realised
@@ -491,8 +390,13 @@ class BacktestClient(Client):
         **kwargs: Any,
     ) -> dict[str, Any]:
         return await self.place_market_order(
-            instrument, direction, size, currency=currency, force_open=force_open,
-            exit_reason=exit_reason, **kwargs
+            instrument,
+            direction,
+            size,
+            currency=currency,
+            force_open=force_open,
+            exit_reason=exit_reason,
+            **kwargs,
         )
 
     async def get_positions(self) -> list["BrokerPosition"]:
