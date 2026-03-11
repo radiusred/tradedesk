@@ -15,7 +15,3 @@ __pycache__
 *.egg
 build
 dist/
-
-# set CLAUDE.md as a local symlink to AGENTS.md
-CLAUDE.md
-GEMINI.md
