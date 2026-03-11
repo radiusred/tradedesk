@@ -1,6 +1,6 @@
 # Initialise
 
-FIRST; read https://github.com/radiusred/.github/AGENTS.md (or the local copy).
+FIRST; read https://github.com/radiusred/.github/CLAUDE.md (or the local copy).
 
 ---
 
