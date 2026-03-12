@@ -79,6 +79,37 @@ class BacktestClient(Client):
         return cls(series, [])
 
     @classmethod
+    def from_lazy_sources(
+        cls,
+        *,
+        history: dict[tuple[str, str], list[Candle]],
+        candle_series: list[CandleSeries],
+        market_series: list[MarketSeries] | None = None,
+    ) -> "BacktestClient":
+        """Create a client with a pre-populated warmup history and lazy candle generators.
+
+        ``history`` is served by :meth:`get_historical_candles` during strategy
+        warmup.  ``candle_series`` holds the generators consumed by
+        :class:`BacktestStreamer` during replay — typically the full date range.
+
+        Unlike the default constructor, the warmup slice (``history``) and the
+        streaming generators are kept separate so only a small fraction of the
+        total data needs to be in memory at startup.
+        """
+        inst = cls.__new__(cls)
+        inst._candle_series = list(candle_series)
+        inst._market_series = list(market_series or [])
+        inst._history = dict(history)
+        inst._started = False
+        inst._closed = False
+        inst._mark_price = {}
+        inst.trades = []
+        inst.positions = {}
+        inst.realised_pnl = 0.0
+        inst._current_timestamp = None
+        return inst
+
+    @classmethod
     def from_dukascopy_cache(
         cls,
         cache_dir: str | Path,

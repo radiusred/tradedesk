@@ -5,6 +5,8 @@ from pathlib import Path
 from typing import Optional
 
 from tradedesk.events import SessionEndedEvent, SessionStartedEvent, get_dispatcher
+from tradedesk.marketdata import CandleClosedEvent
+from tradedesk.time_utils import parse_timestamp
 
 from .events import (
     EquitySampledEvent,
@@ -12,6 +14,7 @@ from .events import (
     PositionOpenedEvent,
     ReportingCompleteEvent,
 )
+from .excursions import CandleIndex
 from .ledger import TradeLedger, trade_rows_from_trades
 from .metrics import compute_metrics
 from .types import EquityRecord, TradeRecord
@@ -31,6 +34,8 @@ class RecordingSubscriber:
         ledger: Optional[TradeLedger] = None,
         output_dir: Optional[Path] = None,
         reporting_scale: float = 1.0,
+        run_dir: Optional[Path] = None,
+        index_period: Optional[str] = None,
     ) -> None:
         """Initialize the recording subscriber.
 
@@ -38,16 +43,43 @@ class RecordingSubscriber:
             ledger: TradeLedger to record trades/equity (created if None)
             output_dir: Base directory for timestamped run outputs
             reporting_scale: Scale factor for metrics reporting
+            run_dir: Pre-created run output directory. When provided the
+                subscriber uses it directly and skips directory creation on
+                SessionStartedEvent.  Caller is responsible for creating it.
+            index_period: IG-format timeframe string (e.g. "15MINUTE"). When
+                set, the subscriber accumulates candle data from
+                CandleClosedEvent and builds ledger.candle_indices during the
+                run, so callers do not need to pre-build it.
         """
         self.ledger = ledger or TradeLedger()
         self._base_output_dir = output_dir
         self._reporting_scale = reporting_scale
-        self._run_output_dir: Path | None = None
+        self._run_output_dir: Path | None = run_dir
+        self._index_period = index_period
+        # Per-instrument (ts, high, low) accumulators for candle index building.
+        self._index_buffer: dict[str, tuple[list, list, list]] = {}
         # Track open positions for round trip pairing
         self._open_positions: dict[str, PositionOpenedEvent] = {}
 
+    async def _on_candle_for_index(self, event: CandleClosedEvent) -> None:
+        """Accumulate candle data for building ledger.candle_indices during streaming."""
+        if event.timeframe != self._index_period:
+            return
+        epic = event.instrument
+        if epic not in self._index_buffer:
+            self._index_buffer[epic] = ([], [], [])
+        ts_list, high_list, low_list = self._index_buffer[epic]
+        ts_list.append(parse_timestamp(event.candle.timestamp))
+        high_list.append(float(event.candle.high))
+        low_list.append(float(event.candle.low))
+
     def handle_session_started(self, event: SessionStartedEvent) -> None:
         """Handle session start: create timestamped output directory."""
+        if self._run_output_dir is not None:
+            # Directory was pre-created by the caller; nothing to do.
+            log.info(f"Recording session started: output_dir={self._run_output_dir}")
+            return
+
         if self._base_output_dir is None:
             return
 
@@ -61,6 +93,13 @@ class RecordingSubscriber:
         """Handle session end: write metrics, files, and emit completion event."""
         log.info("Recording session ended: writing metrics and reports")
 
+        # Populate candle_indices from streaming-accumulated buffer (lazy mode).
+        for epic, (ts_list, high_list, low_list) in self._index_buffer.items():
+            if epic not in self.ledger.candle_indices:
+                self.ledger.candle_indices[epic] = CandleIndex(
+                    ts=ts_list, high=high_list, low=low_list
+                )
+
         # Write ledger files if we have an output directory
         if self._run_output_dir is not None:
             try:
@@ -73,8 +112,7 @@ class RecordingSubscriber:
         if self.ledger.trades:
             try:
                 equity_rows = [
-                    {"timestamp": e.timestamp, "equity": str(e.equity)}
-                    for e in self.ledger.equity
+                    {"timestamp": e.timestamp, "equity": str(e.equity)} for e in self.ledger.equity
                 ]
                 trade_rows = trade_rows_from_trades(self.ledger.trades)
 
@@ -150,8 +188,7 @@ class RecordingSubscriber:
         self.ledger.record_trade(exit_trade)
 
         log.debug(
-            f"Position closed: {event.instrument} pnl={event.pnl:.2f} "
-            f"reason={event.exit_reason}"
+            f"Position closed: {event.instrument} pnl={event.pnl:.2f} reason={event.exit_reason}"
         )
 
     async def handle_equity_sampled(self, event: EquitySampledEvent) -> None:
@@ -167,6 +204,8 @@ def register_recording_subscriber(
     ledger: Optional[TradeLedger] = None,
     output_dir: Optional[Path] = None,
     reporting_scale: float = 1.0,
+    run_dir: Optional[Path] = None,
+    index_period: Optional[str] = None,
 ) -> RecordingSubscriber:
     """Create and register a `RecordingSubscriber` with the global dispatcher.
 
@@ -174,6 +213,12 @@ def register_recording_subscriber(
         ledger: Optional TradeLedger instance (created if None)
         output_dir: Optional base directory for timestamped run outputs
         reporting_scale: Scale factor for metrics reporting
+        run_dir: Pre-created run output directory. When provided the subscriber
+            uses it directly; ``output_dir`` is ignored.  Caller is responsible
+            for creating the directory before passing it here.
+        index_period: IG-format timeframe string (e.g. "15MINUTE"). When set,
+            the subscriber builds ledger.candle_indices from CandleClosedEvent
+            data during the run instead of requiring a pre-built index.
 
     Returns:
         The subscriber instance (useful in tests to inspect ledger state).
@@ -183,6 +228,8 @@ def register_recording_subscriber(
         ledger=ledger,
         output_dir=output_dir,
         reporting_scale=reporting_scale,
+        run_dir=run_dir,
+        index_period=index_period,
     )
 
     dispatcher.subscribe(SessionStartedEvent, sub.handle_session_started)
@@ -190,5 +237,7 @@ def register_recording_subscriber(
     dispatcher.subscribe(PositionClosedEvent, sub.handle_position_closed)
     dispatcher.subscribe(EquitySampledEvent, sub.handle_equity_sampled)
     dispatcher.subscribe(SessionEndedEvent, sub.handle_session_ended)
+    if index_period is not None:
+        dispatcher.subscribe(CandleClosedEvent, sub._on_candle_for_index)
 
     return sub

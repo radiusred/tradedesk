@@ -19,6 +19,7 @@ from __future__ import annotations
 import io
 import re
 import sys
+from collections.abc import Iterator
 from datetime import date, timedelta
 from pathlib import Path
 
@@ -186,3 +187,91 @@ def read_dukascopy_candles(
         )
 
     return candles
+
+
+def iter_dukascopy_candles(
+    cache_dir: Path,
+    symbol: str,
+    period: str,
+    date_from: date,
+    date_to: date,
+    *,
+    price_side: str = "bid",
+) -> Iterator[Candle]:
+    """Lazily iterate OHLCV Candle objects from a Dukascopy cache, one day at a time.
+
+    Yields candles in chronological order without loading the full date range into
+    memory.  Each daily file is read, optionally resampled to *period*, and its
+    candles are yielded before the next day is loaded.
+
+    Unlike :func:`read_dukascopy_candles`, this function does **not** raise
+    ``ValueError`` when no data is found — an empty date range simply produces no
+    candles.  Input validation (``price_side``, ``period`` format) is performed
+    eagerly at call time, before any iteration occurs.
+
+    Args:
+        cache_dir: Root of the Dukascopy cache directory.
+        symbol: Symbol subfolder name (e.g. ``"EURUSD"``).
+        period: Tradedesk period string (e.g. ``"1MIN"``, ``"15MIN"``, ``"1H"``).
+        date_from: First date to include (inclusive, UTC).
+        date_to: Last date to include (inclusive, UTC).
+        price_side: ``"bid"`` (default) or ``"ask"``.
+
+    Raises:
+        ValueError: If ``price_side`` is not ``"bid"`` or ``"ask"``.
+        ValueError: If *period* cannot be parsed (raised immediately, before iteration).
+        SystemExit: If old-format ``.bi5`` hourly files are found in the cache.
+    """
+    # Validate eagerly before returning the generator — generator function bodies
+    # only execute on first next() call, so we perform all input validation here
+    # and delegate to a private generator.
+    if price_side not in ("bid", "ask"):
+        raise ValueError(f"price_side must be 'bid' or 'ask'; got {price_side!r}")
+    resample_rule = _period_to_pandas_rule(period)  # raises ValueError for bad period
+    return _iter_candles(cache_dir, symbol, resample_rule, date_from, date_to, price_side)
+
+
+def _iter_candles(
+    cache_dir: Path,
+    symbol: str,
+    resample_rule: str,
+    date_from: date,
+    date_to: date,
+    price_side: str,
+) -> Iterator[Candle]:
+    """Private generator — assumes all inputs are pre-validated."""
+    is_1min = resample_rule == "1min"
+
+    for day in _iter_days(date_from, date_to):
+        _check_old_format(cache_dir, symbol, day)
+        path = _candle_path(cache_dir, symbol, day, price_side)
+        df = _load_daily_candles(path)
+        if df is None or df.empty:
+            continue
+
+        if is_1min:
+            for ts, row in df.iterrows():
+                ts_str = pd.Timestamp(ts).strftime("%Y-%m-%dT%H:%M:%SZ")
+                yield Candle(
+                    timestamp=ts_str,
+                    open=float(row["open"]),
+                    high=float(row["high"]),
+                    low=float(row["low"]),
+                    close=float(row["close"]),
+                    volume=float(row["volume"]),
+                )
+        else:
+            resampled = df.resample(resample_rule).agg(
+                {"open": "first", "high": "max", "low": "min", "close": "last", "volume": "sum"}
+            )
+            resampled = resampled.dropna(subset=["open"])
+            for ts, row in resampled.iterrows():
+                ts_str = pd.Timestamp(ts).strftime("%Y-%m-%dT%H:%M:%SZ")
+                yield Candle(
+                    timestamp=ts_str,
+                    open=float(row["open"]),
+                    high=float(row["high"]),
+                    low=float(row["low"]),
+                    close=float(row["close"]),
+                    volume=float(row["volume"]),
+                )
