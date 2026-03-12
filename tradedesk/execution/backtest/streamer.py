@@ -1,4 +1,7 @@
+import heapq
+import itertools
 import logging
+from collections.abc import Iterator
 from dataclasses import dataclass
 from datetime import datetime
 from typing import Any, Iterable
@@ -36,13 +39,40 @@ def _parse_ts(ts: str) -> datetime:
 class CandleSeries:
     instrument: str
     period: str
-    candles: list[Candle]
+    candles: Iterable[Candle]
 
 
 @dataclass(frozen=True)
 class MarketSeries:
     instrument: str
     ticks: list[MarketData]
+
+
+def _candle_gen(
+    cseries: CandleSeries, seq: Iterator[int]
+) -> Iterator[tuple[datetime, int, CandleClosedEvent]]:
+    """Yield (timestamp, seq, CandleClosedEvent) for each candle in *cseries*."""
+    for c in cseries.candles:
+        ts = _parse_ts(c.timestamp)
+        yield (
+            ts,
+            next(seq),
+            CandleClosedEvent(
+                instrument=cseries.instrument,
+                timeframe=cseries.period,
+                candle=c,
+                timestamp=ts,
+            ),
+        )
+
+
+def _market_gen(
+    mseries: MarketSeries, seq: Iterator[int]
+) -> Iterator[tuple[datetime, int, MarketData]]:
+    """Yield (timestamp, seq, MarketData) for each tick in *mseries*."""
+    for t in mseries.ticks:
+        ts = _parse_ts(t.timestamp)
+        yield (ts, next(seq), t)
 
 
 class BacktestStreamer(Streamer):
@@ -73,54 +103,28 @@ class BacktestStreamer(Streamer):
     async def run(self, consumer: Any) -> None:
         await self.connect()
 
-        stream: list[tuple[datetime, object]] = []
+        # Shared monotonic counter used as a tiebreaker when two events share the
+        # same timestamp.  It is consumed lazily as heapq.merge pulls items from
+        # each per-instrument generator, guaranteeing uniqueness without requiring
+        # CandleClosedEvent or MarketData to be orderable.
+        seq = itertools.count()
 
-        # Candle events
-        for cseries in self._candle_series:
-            for c in cseries.candles:
-                ts = _parse_ts(c.timestamp)
-                self._client._set_current_timestamp(ts.isoformat())
-                stream.append(
-                    (
-                        ts,
-                        CandleClosedEvent(
-                            instrument=cseries.instrument,
-                            timeframe=cseries.period,
-                            candle=c,
-                            timestamp=ts,
-                        ),
-                    )
-                )
-
-        # Market events
-        for mseries in self._market_series:
-            for t in mseries.ticks:
-                ts = _parse_ts(t.timestamp)
-                self._client._set_current_timestamp(ts.isoformat())
-                stream.append((ts, t))
-
-        stream.sort(key=lambda x: x[0])
+        streams: list[Iterator] = [_candle_gen(s, seq) for s in self._candle_series]
+        streams += [_market_gen(s, seq) for s in self._market_series]
 
         try:
-            for _, event in stream:
+            for _, __, event in heapq.merge(*streams):
                 if isinstance(event, MarketData):
                     event_ts = event.timestamp
                     # Mark-to-market uses mid price by default
-                    self._client._set_mark_price(
-                        event.instrument, (event.bid + event.offer) / 2
-                    )
+                    self._client._set_mark_price(event.instrument, (event.bid + event.offer) / 2)
                 elif isinstance(event, CandleClosedEvent):
                     event_ts = event.candle.timestamp
                     self._client._set_mark_price(event.instrument, event.candle.close)
 
                 # Normalise to a stable ISO string with Z
                 ts_str = event_ts.strip()
-                if ts_str.endswith("Z"):
-                    ts_iso = ts_str
-                else:
-                    # if already has +00:00 etc, keep it
-                    ts_iso = ts_str.replace("+00:00", "Z")
-
+                ts_iso = ts_str if ts_str.endswith("Z") else ts_str.replace("+00:00", "Z")
                 self._client._set_current_timestamp(ts_iso)
 
                 await consumer._handle_event(event)

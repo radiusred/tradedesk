@@ -16,6 +16,7 @@ from tradedesk.execution.backtest.dukascopy import (
     _iter_days,
     _load_daily_candles,
     _period_to_pandas_rule,
+    iter_dukascopy_candles,
     read_dukascopy_candles,
 )
 
@@ -359,3 +360,123 @@ def test_backtest_client_from_dukascopy_cache_ask_side(tmp_path: Path) -> None:
     candles = client._history[("CS.D.EURUSD.TODAY.IP", "1MIN")]
     assert len(candles) == 2
     assert abs(candles[0].open - 1.1002) < 1e-9
+
+
+# ---------------------------------------------------------------------------
+# iter_dukascopy_candles
+# ---------------------------------------------------------------------------
+
+
+def test_iter_dukascopy_candles_single_day(tmp_path: Path) -> None:
+    day = date(2025, 6, 15)
+    path = _candle_path(tmp_path, "EURUSD", day, "bid")
+    _write_candle_file(path, _sample_candle_rows(day))
+
+    candles = list(iter_dukascopy_candles(tmp_path, "EURUSD", "1MIN", day, day))
+    assert len(candles) == 2
+    assert candles[0].timestamp.endswith("Z")
+    assert candles[0].open > 0
+
+
+def test_iter_dukascopy_candles_yields_same_as_read(tmp_path: Path) -> None:
+    """iter_dukascopy_candles and read_dukascopy_candles must produce identical results."""
+    for d in [date(2025, 6, 15), date(2025, 6, 16), date(2025, 6, 17)]:
+        path = _candle_path(tmp_path, "EURUSD", d, "bid")
+        _write_candle_file(path, _sample_candle_rows(d))
+
+    eager = read_dukascopy_candles(tmp_path, "EURUSD", "1MIN", date(2025, 6, 15), date(2025, 6, 17))
+    lazy = list(
+        iter_dukascopy_candles(tmp_path, "EURUSD", "1MIN", date(2025, 6, 15), date(2025, 6, 17))
+    )
+
+    assert len(eager) == len(lazy)
+    for e, l in zip(eager, lazy):
+        assert e.timestamp == l.timestamp
+        assert abs(e.open - l.open) < 1e-9
+        assert abs(e.close - l.close) < 1e-9
+
+
+def test_iter_dukascopy_candles_empty_range(tmp_path: Path) -> None:
+    """No files in range produces an empty iterator (no exception)."""
+    candles = list(
+        iter_dukascopy_candles(tmp_path, "EURUSD", "1MIN", date(2025, 6, 15), date(2025, 6, 15))
+    )
+    assert candles == []
+
+
+def test_iter_dukascopy_candles_invalid_side_raises(tmp_path: Path) -> None:
+    with pytest.raises(ValueError, match="price_side"):
+        # Raises immediately (before iteration) because validation is eager.
+        iter_dukascopy_candles(
+            tmp_path,
+            "EURUSD",
+            "1MIN",
+            date(2025, 6, 15),
+            date(2025, 6, 15),
+            price_side="mid",
+        )
+
+
+def test_iter_dukascopy_candles_invalid_period_raises(tmp_path: Path) -> None:
+    with pytest.raises(ValueError, match="Cannot convert period"):
+        iter_dukascopy_candles(tmp_path, "EURUSD", "UNKNOWN", date(2025, 6, 15), date(2025, 6, 15))
+
+
+def test_iter_dukascopy_candles_ask_side(tmp_path: Path) -> None:
+    day = date(2025, 6, 15)
+    ask_path = _candle_path(tmp_path, "EURUSD", day, "ask")
+    ask_rows = [
+        (ts, o + 0.0002, h + 0.0002, lo + 0.0002, c + 0.0002, v)
+        for ts, o, h, lo, c, v in _sample_candle_rows(day)
+    ]
+    _write_candle_file(ask_path, ask_rows)
+
+    candles = list(iter_dukascopy_candles(tmp_path, "EURUSD", "1MIN", day, day, price_side="ask"))
+    assert len(candles) == 2
+    assert abs(candles[0].open - 1.1002) < 1e-9
+
+
+def test_iter_dukascopy_candles_15min(tmp_path: Path) -> None:
+    """A day with 30 1-min candles resampled to 15MIN yields 2 candles lazily."""
+    day = date(2025, 6, 15)
+    rows = [
+        (
+            f"{day.isoformat()} {h:02d}:{m:02d}:00+00:00",
+            1.1000 + m * 0.0001,
+            1.1010 + m * 0.0001,
+            1.0990 + m * 0.0001,
+            1.1005 + m * 0.0001,
+            1.0,
+        )
+        for h in [0]
+        for m in range(30)
+    ]
+    path = _candle_path(tmp_path, "EURUSD", day, "bid")
+    _write_candle_file(path, rows)
+
+    candles = list(iter_dukascopy_candles(tmp_path, "EURUSD", "15MIN", day, day))
+    assert len(candles) == 2
+
+
+def test_iter_dukascopy_candles_missing_day_skipped(tmp_path: Path) -> None:
+    day1 = date(2025, 6, 15)
+    day3 = date(2025, 6, 17)
+    for d in [day1, day3]:
+        path = _candle_path(tmp_path, "EURUSD", d, "bid")
+        _write_candle_file(path, _sample_candle_rows(d))
+
+    candles = list(iter_dukascopy_candles(tmp_path, "EURUSD", "1MIN", day1, day3))
+    assert len(candles) == 4  # 2 candles × 2 days
+
+
+def test_iter_dukascopy_candles_is_lazy(tmp_path: Path) -> None:
+    """Verify the generator does not materialise all candles before the first yield."""
+    for d in [date(2025, 6, 15), date(2025, 6, 16)]:
+        path = _candle_path(tmp_path, "EURUSD", d, "bid")
+        _write_candle_file(path, _sample_candle_rows(d))
+
+    gen = iter_dukascopy_candles(tmp_path, "EURUSD", "1MIN", date(2025, 6, 15), date(2025, 6, 16))
+    # Must be iterable but not a pre-materialised list
+    assert hasattr(gen, "__iter__") and hasattr(gen, "__next__")
+    first = next(gen)
+    assert first.timestamp.startswith("2025-06-15")
