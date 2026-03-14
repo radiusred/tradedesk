@@ -36,6 +36,7 @@ class RecordingSubscriber:
         reporting_scale: float = 1.0,
         run_dir: Optional[Path] = None,
         index_period: Optional[str] = None,
+        cache_dir: Optional[Path] = None,
     ) -> None:
         """Initialize the recording subscriber.
 
@@ -50,12 +51,15 @@ class RecordingSubscriber:
                 set, the subscriber accumulates candle data from
                 CandleClosedEvent and builds ledger.candle_indices during the
                 run, so callers do not need to pre-build it.
+            cache_dir: Dukascopy cache directory. When provided, the analysis
+                report will include a FTSE 100 control line on the equity chart.
         """
         self.ledger = ledger or TradeLedger()
         self._base_output_dir = output_dir
         self._reporting_scale = reporting_scale
         self._run_output_dir: Path | None = run_dir
         self._index_period = index_period
+        self._cache_dir = cache_dir
         # Per-instrument (ts, high, low) accumulators for candle index building.
         self._index_buffer: dict[str, tuple[list, list, list]] = {}
         # Track open positions for round trip pairing
@@ -139,7 +143,7 @@ class RecordingSubscriber:
             try:
                 from .report import generate_analysis_report
 
-                generate_analysis_report(self._run_output_dir)
+                generate_analysis_report(self._run_output_dir, cache_dir=self._cache_dir)
                 log.info(f"Analysis report written to {self._run_output_dir / 'analysis.md'}")
             except Exception:
                 log.exception("Failed to generate analysis report")
@@ -206,6 +210,7 @@ def register_recording_subscriber(
     reporting_scale: float = 1.0,
     run_dir: Optional[Path] = None,
     index_period: Optional[str] = None,
+    cache_dir: Optional[Path] = None,
 ) -> RecordingSubscriber:
     """Create and register a `RecordingSubscriber` with the global dispatcher.
 
@@ -219,6 +224,8 @@ def register_recording_subscriber(
         index_period: IG-format timeframe string (e.g. "15MINUTE"). When set,
             the subscriber builds ledger.candle_indices from CandleClosedEvent
             data during the run instead of requiring a pre-built index.
+        cache_dir: Dukascopy cache directory. When provided, the analysis
+            report will include a FTSE 100 control line on the equity chart.
 
     Returns:
         The subscriber instance (useful in tests to inspect ledger state).
@@ -230,6 +237,7 @@ def register_recording_subscriber(
         reporting_scale=reporting_scale,
         run_dir=run_dir,
         index_period=index_period,
+        cache_dir=cache_dir,
     )
 
     dispatcher.subscribe(SessionStartedEvent, sub.handle_session_started)
