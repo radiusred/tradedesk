@@ -16,6 +16,7 @@ from jinja2 import Environment, FileSystemLoader
 
 log = logging.getLogger(__name__)
 
+
 def calc_stats(values: list[float]) -> dict[str, float]:
     """Calculate summary statistics for a list of values."""
     n = len(values)
@@ -58,14 +59,10 @@ def standardize(values: list[float]) -> list[float]:
     return [(x - mean_val) / std_dev if std_dev > 0 else 0 for x in values]
 
 
-def euclidean_distance(
-    p1: dict[str, float], p2: dict[str, float], metric_keys: list[str]
-) -> float:
+def euclidean_distance(p1: dict[str, float], p2: dict[str, float], metric_keys: list[str]) -> float:
     """Calculate Euclidean distance between two performance profiles."""
     z_keys = [f"{key}_z" for key in metric_keys]
-    return math.sqrt(
-        sum((p1[zk] - p2[zk]) ** 2 for zk in z_keys if zk in p1 and zk in p2)
-    )
+    return math.sqrt(sum((p1[zk] - p2[zk]) ** 2 for zk in z_keys if zk in p1 and zk in p2))
 
 
 def _read_csv(path: Path) -> list[dict[str, str]]:
@@ -93,6 +90,7 @@ def _prepare_overall_performance(
     )
     return portfolio_metrics, instrument_metrics, sorted_instruments
 
+
 def _prepare_stats_table(
     metrics: list[dict[str, str]],
 ) -> list[dict[str, Any]]:
@@ -107,18 +105,15 @@ def _prepare_stats_table(
     stats_table = []
     for col, values in metrics_cols.items():
         stats = calc_stats(values)
-        
+
         # Calculate CV (Coefficient of Variation)
         cv = (stats["std"] / abs(stats["mean"])) * 100 if stats["mean"] != 0 else 0
-        
+
         # Merge everything into one dictionary per metric
-        stats_table.append({
-            "metric": col, 
-            **stats, 
-            "cv": cv
-        })
-        
+        stats_table.append({"metric": col, **stats, "cv": cv})
+
     return stats_table
+
 
 def _prepare_consistency_data(round_trips: list[dict[str, str]]) -> list[dict[str, Any]]:
     inst_pnls: defaultdict[str, list[float]] = defaultdict(list)
@@ -168,12 +163,10 @@ def _classify_volatility(consistency_data: list[dict[str, Any]]) -> dict[str, An
 def _prepare_exposure_data(metrics: list[dict[str, str]]) -> tuple[list[dict[str, Any]], int]:
     total_round_trips = sum(int(m.get("round_trips", 0)) for m in metrics)
     exposure_data = []
-    for m in sorted(
-        metrics, key=lambda x: int(x.get("round_trips", 0)), reverse=True
-    ):
+    for m in sorted(metrics, key=lambda x: int(x.get("round_trips", 0)), reverse=True):
         pct_trades = (
-            (int(m.get("round_trips", 0)) / total_round_trips) * 100
-        ) if total_round_trips else 0
+            ((int(m.get("round_trips", 0)) / total_round_trips) * 100) if total_round_trips else 0
+        )
         exposure_data.append(
             {
                 "instrument": m.get("instrument"),
@@ -195,11 +188,15 @@ def _prepare_risk_adj_data(
         cd = next((c for c in consistency_data if c["instrument"] == inst), None)
         if cd:
             return_per_risk = (
-                float(m.get("final_equity", 0)) / float(cd["std_pnl"])
-            ) if float(cd["std_pnl"]) > 0 else 0
+                (float(m.get("final_equity", 0)) / float(cd["std_pnl"]))
+                if float(cd["std_pnl"]) > 0
+                else 0
+            )
             dd_ratio = (
-                float(m.get("final_equity", 0)) / abs(float(m.get("max_dd", 0)))
-            ) if float(m.get("max_dd", 0)) != 0 else 0
+                (float(m.get("final_equity", 0)) / abs(float(m.get("max_dd", 0))))
+                if float(m.get("max_dd", 0)) != 0
+                else 0
+            )
             risk_adj_data.append(
                 {
                     "instrument": inst,
@@ -254,9 +251,7 @@ def _prepare_similarity(
 
     for i, inst1 in enumerate(instruments):
         for inst2 in instruments[i + 1 :]:
-            dist = euclidean_distance(
-                profile_metrics[inst1], profile_metrics[inst2], metric_keys
-            )
+            dist = euclidean_distance(profile_metrics[inst1], profile_metrics[inst2], metric_keys)
             if dist < min_dist:
                 min_dist = dist
                 min_pair = (inst1, inst2)
@@ -264,17 +259,13 @@ def _prepare_similarity(
                 max_dist = dist
                 max_pair = (inst1, inst2)
 
-    matrix_headers = [
-        inst.split(".")[2] if "." in inst else inst for inst in instruments
-    ]
+    matrix_headers = [inst.split(".")[2] if "." in inst else inst for inst in instruments]
     matrix_rows: list[dict[str, Any]] = []
     for inst1 in instruments:
         dists: list[str] = []
         for inst2 in instruments:
             dist = (
-                euclidean_distance(
-                    profile_metrics[inst1], profile_metrics[inst2], metric_keys
-                )
+                euclidean_distance(profile_metrics[inst1], profile_metrics[inst2], metric_keys)
                 if inst1 != inst2
                 else 0
             )
@@ -335,14 +326,16 @@ def _prepare_evolution_data(
         max_dd = min(drawdowns)
         in_drawdown = sum(1 for dd in drawdowns if dd < 0)
 
-        evolution_data.append({
-            "instrument": inst,
-            "final_pnl": cum_pnl[-1],
-            "peak_pnl": max(running_max),
-            "max_dd": max_dd,
-            "dd_count": in_drawdown,
-            "dd_pct": (in_drawdown / len(inst_trips) * 100),
-        })
+        evolution_data.append(
+            {
+                "instrument": inst,
+                "final_pnl": cum_pnl[-1],
+                "peak_pnl": max(running_max),
+                "max_dd": max_dd,
+                "dd_count": in_drawdown,
+                "dd_pct": (in_drawdown / len(inst_trips) * 100),
+            }
+        )
     return evolution_data
 
 
@@ -352,7 +345,6 @@ def _prepare_insights(
     risk_adj_data: list[dict[str, Any]],
     total_round_trips: int,
 ) -> dict[str, Any]:
-
     metrics = [m for m in metrics if m.get("instrument") != "PORTFOLIO"]
 
     insights: dict[str, Any] = {}
@@ -365,8 +357,8 @@ def _prepare_insights(
     equity_range = max(final_equities) - min(final_equities)
     equity_stats = calc_stats(final_equities)
     equity_cv = (
-        (equity_stats["std"] / equity_stats["mean"]) * 100
-    ) if equity_stats["mean"] != 0 else 0
+        ((equity_stats["std"] / equity_stats["mean"]) * 100) if equity_stats["mean"] != 0 else 0
+    )
 
     insights = {
         "best": {
@@ -412,19 +404,25 @@ def _prepare_insights(
     max_trades = max(metrics, key=lambda x: int(x.get("round_trips", 0)))
     min_trades = min(metrics, key=lambda x: int(x.get("round_trips", 0)))
     max_pct = (
-        (int(max_trades.get("round_trips", 0)) / total_round_trips) * 100
-    ) if total_round_trips else 0
+        ((int(max_trades.get("round_trips", 0)) / total_round_trips) * 100)
+        if total_round_trips
+        else 0
+    )
     min_pct = (
-        (int(min_trades.get("round_trips", 0)) / total_round_trips) * 100
-    ) if total_round_trips else 0
+        ((int(min_trades.get("round_trips", 0)) / total_round_trips) * 100)
+        if total_round_trips
+        else 0
+    )
     trade_pcts = [
         (int(m.get("round_trips", 0)) / total_round_trips * 100) if total_round_trips else 0
         for m in metrics
     ]
     exposure_stats = calc_stats(trade_pcts)
     exposure_cv = (
-        (exposure_stats["std"] / exposure_stats["mean"]) * 100
-    ) if exposure_stats["mean"] != 0 else 0
+        ((exposure_stats["std"] / exposure_stats["mean"]) * 100)
+        if exposure_stats["mean"] != 0
+        else 0
+    )
     insights["exposure"] = {
         "most": {
             "instrument": max_trades["instrument"],
@@ -495,7 +493,7 @@ def _prepare_additional_analysis(
                 current_win_streak = 0
                 max_loss_streak = max(max_loss_streak, current_loss_streak)
         last_pnl = float(trips_sorted[-1]["pnl"]) if trips_sorted else 0
-        current_state = (f"W:{current_win_streak}" if last_pnl > 0 else f"L:{current_loss_streak}")
+        current_state = f"W:{current_win_streak}" if last_pnl > 0 else f"L:{current_loss_streak}"
         streak_data.append(
             {
                 "instrument": inst,
@@ -508,15 +506,15 @@ def _prepare_additional_analysis(
         hold_times = [float(rt.get("hold_minutes", 0)) for rt in trips]
         avg_hold = sum(hold_times) / len(hold_times) if hold_times else 0
         variance = (
-            sum((x - avg_hold) ** 2 for x in hold_times) / len(hold_times)
-        ) if hold_times else 0
+            (sum((x - avg_hold) ** 2 for x in hold_times) / len(hold_times)) if hold_times else 0
+        )
         hold_time_data.append(
             {
                 "instrument": inst,
                 "avg": avg_hold,
                 "min": min(hold_times) if hold_times else 0,
                 "max": max(hold_times) if hold_times else 0,
-                "std": variance ** 0.5,
+                "std": variance**0.5,
             }
         )
 
@@ -593,9 +591,7 @@ def _prepare_monthly_data(
     round_trips: list[dict[str, str]],
     inst_data: dict[str, list[dict[str, str]]],
 ) -> SimpleNamespace:
-    monthly_pnl: defaultdict[str, defaultdict[str, float]] = defaultdict(
-        lambda: defaultdict(float)
-    )
+    monthly_pnl: defaultdict[str, defaultdict[str, float]] = defaultdict(lambda: defaultdict(float))
     for rt in round_trips:
         exit_dt = datetime.fromisoformat(rt["exit_ts"].replace("Z", "+00:00"))
         month_key = exit_dt.strftime("%Y-%m")
@@ -603,9 +599,7 @@ def _prepare_monthly_data(
 
     months = sorted(monthly_pnl.keys())
     instruments = sorted(inst_data.keys())
-    short_names = {
-        inst: inst.split(".")[2] if "." in inst else inst for inst in instruments
-    }
+    short_names = {inst: inst.split(".")[2] if "." in inst else inst for inst in instruments}
     monthly_rows = []
     grand_total = 0.0
     inst_totals: defaultdict[str, float] = defaultdict(float)
@@ -712,7 +706,10 @@ def _prepare_exit_reasons(
 
     return exit_reasons
 
-def _prepare_graphs(round_trips_file: Path, equity_file: Path) -> None:
+
+def _prepare_graphs(
+    round_trips_file: Path, equity_file: Path, cache_dir: Path | None = None
+) -> None:
     output_dir = round_trips_file.parent / "graphs"
     output_dir.mkdir(exist_ok=True)
 
@@ -725,9 +722,9 @@ def _prepare_graphs(round_trips_file: Path, equity_file: Path) -> None:
 
     # 1. Monthly Performance Heatmap
     try:
-        monthly_pnl = round_trips.groupby(
-            ["month", "instrument"]
-        )["pnl"].sum().unstack(fill_value=0)
+        monthly_pnl = (
+            round_trips.groupby(["month", "instrument"])["pnl"].sum().unstack(fill_value=0)
+        )
         portfolio_monthly = monthly_pnl.sum(axis=1)
         monthly_pnl["PORTFOLIO"] = portfolio_monthly
 
@@ -755,13 +752,33 @@ def _prepare_graphs(round_trips_file: Path, equity_file: Path) -> None:
 
     # Equity Curve
     try:
-        plt.figure(figsize=(10, 8))
-        sns.lineplot(data=equity, x="timestamp", y="equity")
-        plt.title("Equity Curve")
-        plt.xlabel("Time")
-        plt.ylabel("Equity")
-        plt.savefig(output_dir / "equity_curve.png")
-        plt.close()
+        fig, ax = plt.subplots(figsize=(10, 8))
+        sns.lineplot(
+            data=equity, x="timestamp", y="equity", ax=ax, label="PORTFOLIO", color="#00AA00"
+        )
+
+        if cache_dir is not None:
+            try:
+                from tradedesk.execution.backtest import read_dukascopy_candles
+
+                date_from = equity["timestamp"].min().date()
+                date_to = equity["timestamp"].max().date()
+                candles = read_dukascopy_candles(cache_dir, "GBRIDXGBP", "1D", date_from, date_to)
+                closes = [c.close for c in candles]
+                control: list[float] = [0.0]
+                for i in range(1, len(closes)):
+                    control.append(control[-1] + closes[i] - closes[i - 1])
+                control_dates = [pd.Timestamp(c.timestamp) for c in candles]
+                ax.plot(control_dates, control, color="#888888", linewidth=1, label="FTSE 100")
+                ax.legend()
+            except Exception as e:
+                log.warning(f"Failed to add FTSE control line: {e}")
+
+        ax.set_title("Equity Curve")
+        ax.set_xlabel("Time")
+        ax.set_ylabel("Equity")
+        fig.savefig(output_dir / "equity_curve.png")
+        plt.close(fig)
     except Exception as e:
         log.warning(f"Failed to generate equity curve plot: {e}")
 
@@ -791,7 +808,11 @@ def _prepare_graphs(round_trips_file: Path, equity_file: Path) -> None:
         log.warning(f"Failed to generate instrument correlation matrix: {e}")
 
 
-def generate_analysis_report(output_dir: str | Path, with_graphs: bool = True) -> None:
+def generate_analysis_report(
+    output_dir: str | Path,
+    with_graphs: bool = True,
+    cache_dir: Path | None = None,
+) -> None:
     output_path = Path(output_dir)
     metrics_file = output_path / "metrics.csv"
     round_trips_file = output_path / "round_trips.csv"
@@ -806,8 +827,8 @@ def generate_analysis_report(output_dir: str | Path, with_graphs: bool = True) -
     _ensure_instrument_field(round_trips)
     equity_daily = _read_csv(equity_daily_file)
 
-    portfolio_metrics, instrument_metrics, sorted_instruments = (
-        _prepare_overall_performance(metrics)
+    portfolio_metrics, instrument_metrics, sorted_instruments = _prepare_overall_performance(
+        metrics
     )
     stats_table = _prepare_stats_table(metrics)
     consistency_data = _prepare_consistency_data(round_trips)
@@ -817,9 +838,7 @@ def generate_analysis_report(output_dir: str | Path, with_graphs: bool = True) -
     similarity = _prepare_similarity(metrics, consistency_data)
     inst_data = _build_instrument_data(round_trips)
     evolution_data = _prepare_evolution_data(inst_data)
-    insights = _prepare_insights(
-        metrics, consistency_data, risk_adj_data, total_round_trips
-    )
+    insights = _prepare_insights(metrics, consistency_data, risk_adj_data, total_round_trips)
     win_loss_data, streak_data, hold_time_data, best_worst_trades, mfe_mae_data, long_short_data = (
         _prepare_additional_analysis(inst_data, round_trips)
     )
@@ -827,7 +846,7 @@ def generate_analysis_report(output_dir: str | Path, with_graphs: bool = True) -
     exit_reasons = _prepare_exit_reasons(round_trips, inst_data)
 
     if with_graphs:
-        _prepare_graphs(round_trips_file, equity_file)
+        _prepare_graphs(round_trips_file, equity_file, cache_dir=cache_dir)
 
     context = {
         "portfolio_metrics": portfolio_metrics,
