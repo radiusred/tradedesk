@@ -37,6 +37,7 @@ class RecordingSubscriber:
         run_dir: Optional[Path] = None,
         index_period: Optional[str] = None,
         cache_dir: Optional[Path] = None,
+        with_graphs: bool = True,
     ) -> None:
         """Initialize the recording subscriber.
 
@@ -53,6 +54,8 @@ class RecordingSubscriber:
                 run, so callers do not need to pre-build it.
             cache_dir: Dukascopy cache directory. When provided, the analysis
                 report will include a FTSE 100 control line on the equity chart.
+            with_graphs: When False, graph generation is skipped in the analysis
+                report (faster; useful for automated arena runs).
         """
         self.ledger = ledger or TradeLedger()
         self._base_output_dir = output_dir
@@ -60,6 +63,7 @@ class RecordingSubscriber:
         self._run_output_dir: Path | None = run_dir
         self._index_period = index_period
         self._cache_dir = cache_dir
+        self._with_graphs = with_graphs
         # Per-instrument (ts, high, low) accumulators for candle index building.
         self._index_buffer: dict[str, tuple[list, list, list]] = {}
         # Track open positions for round trip pairing
@@ -143,7 +147,11 @@ class RecordingSubscriber:
             try:
                 from .report import generate_analysis_report
 
-                generate_analysis_report(self._run_output_dir, cache_dir=self._cache_dir)
+                generate_analysis_report(
+                    self._run_output_dir,
+                    cache_dir=self._cache_dir,
+                    with_graphs=self._with_graphs,
+                )
                 log.info(f"Analysis report written to {self._run_output_dir / 'analysis.md'}")
             except Exception:
                 log.exception("Failed to generate analysis report")
@@ -211,6 +219,7 @@ def register_recording_subscriber(
     run_dir: Optional[Path] = None,
     index_period: Optional[str] = None,
     cache_dir: Optional[Path] = None,
+    with_graphs: bool = True,
 ) -> RecordingSubscriber:
     """Create and register a `RecordingSubscriber` with the global dispatcher.
 
@@ -226,6 +235,8 @@ def register_recording_subscriber(
             data during the run instead of requiring a pre-built index.
         cache_dir: Dukascopy cache directory. When provided, the analysis
             report will include a FTSE 100 control line on the equity chart.
+        with_graphs: When False, graph generation is skipped in the analysis
+            report (faster; useful for automated arena runs).
 
     Returns:
         The subscriber instance (useful in tests to inspect ledger state).
@@ -238,6 +249,7 @@ def register_recording_subscriber(
         run_dir=run_dir,
         index_period=index_period,
         cache_dir=cache_dir,
+        with_graphs=with_graphs,
     )
 
     dispatcher.subscribe(SessionStartedEvent, sub.handle_session_started)
