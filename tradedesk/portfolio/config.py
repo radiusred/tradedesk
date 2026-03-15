@@ -25,6 +25,7 @@ class BacktestPortfolioConfig(PortfolioConfig):
     date_from: date
     date_to: date
     half_spread_adjustment: float
+    with_graphs: bool = True
 
     @classmethod
     def from_raw(
@@ -39,6 +40,7 @@ class BacktestPortfolioConfig(PortfolioConfig):
         risk: dict[str, Any],
         sizing: dict[str, Any],
         base_period: str | None,
+        with_graphs: bool = True,
     ) -> BacktestPortfolioConfig:
         """Validate and construct from raw config dicts.
 
@@ -72,6 +74,7 @@ class BacktestPortfolioConfig(PortfolioConfig):
             min_size=float(sizing.get("min_size", 0.1)),
             max_size=float(sizing.get("max_size", 5.0)),
             base_period=base_period,
+            with_graphs=with_graphs,
         )
 
 
