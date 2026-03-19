@@ -63,18 +63,25 @@ def _check_old_format(cache_dir: Path, symbol: str, day: date) -> None:
 
 def _load_daily_candles(path: Path) -> pd.DataFrame | None:
     """
-    Load a Zstandard-compressed 1-min candle CSV.
+    Load a 1-min candle CSV.
 
-    Returns ``None`` if the file does not exist or cannot be parsed.
+    Checks for a pre-decompressed ``.csv`` file first (ramdisk fast path); falls
+    back to the Zstandard-compressed ``.csv.zst`` file at *path*.
+
+    Returns ``None`` if neither file exists or if parsing fails.
     The returned DataFrame has a UTC DatetimeIndex named ``"timestamp"``.
     """
-    if not path.exists():
-        return None
+    csv_path = path.with_suffix("")  # {name}.csv.zst -> {name}.csv
     try:
-        dctx = zstd.ZstdDecompressor()
-        with open(path, "rb") as f_in:
-            with dctx.stream_reader(f_in) as reader:
-                df = pd.read_csv(io.TextIOWrapper(io.BufferedReader(reader), encoding="utf-8"))
+        if csv_path.exists():
+            df = pd.read_csv(csv_path)
+        elif path.exists():
+            dctx = zstd.ZstdDecompressor()
+            with open(path, "rb") as f_in:
+                with dctx.stream_reader(f_in) as reader:
+                    df = pd.read_csv(io.TextIOWrapper(io.BufferedReader(reader), encoding="utf-8"))
+        else:
+            return None
         df["timestamp"] = pd.to_datetime(df["timestamp"], utc=True)
         return df.set_index("timestamp")
     except Exception:
