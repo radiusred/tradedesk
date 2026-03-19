@@ -121,6 +121,29 @@ def _period_to_pandas_rule(period: str) -> str:
 
 
 # ---------------------------------------------------------------------------
+# Internal helpers (continued)
+# ---------------------------------------------------------------------------
+
+
+def _df_to_candles(df: "pd.DataFrame") -> list[Candle]:
+    """Vectorised conversion of a OHLCV DataFrame to a list of Candle objects.
+
+    Avoids ``iterrows()`` (which creates a Series per row) by extracting columns
+    as Python lists in one vectorised call, then zipping.
+    """
+    timestamps = df.index.strftime("%Y-%m-%dT%H:%M:%SZ").tolist()
+    opens = df["open"].tolist()
+    highs = df["high"].tolist()
+    lows = df["low"].tolist()
+    closes = df["close"].tolist()
+    volumes = df["volume"].tolist()
+    return [
+        Candle(timestamp=ts, open=o, high=h, low=lo, close=c, volume=v)
+        for ts, o, h, lo, c, v in zip(timestamps, opens, highs, lows, closes, volumes)
+    ]
+
+
+# ---------------------------------------------------------------------------
 # Public API
 # ---------------------------------------------------------------------------
 
@@ -179,21 +202,7 @@ def read_dukascopy_candles(
     )
     resampled = resampled.dropna(subset=["open"])
 
-    candles: list[Candle] = []
-    for ts, row in resampled.iterrows():
-        ts_str = pd.Timestamp(ts).strftime("%Y-%m-%dT%H:%M:%SZ")
-        candles.append(
-            Candle(
-                timestamp=ts_str,
-                open=float(row["open"]),
-                high=float(row["high"]),
-                low=float(row["low"]),
-                close=float(row["close"]),
-                volume=float(row["volume"]),
-            )
-        )
-
-    return candles
+    return _df_to_candles(resampled)
 
 
 def iter_dukascopy_candles(
@@ -257,28 +266,10 @@ def _iter_candles(
             continue
 
         if is_1min:
-            for ts, row in df.iterrows():
-                ts_str = pd.Timestamp(ts).strftime("%Y-%m-%dT%H:%M:%SZ")
-                yield Candle(
-                    timestamp=ts_str,
-                    open=float(row["open"]),
-                    high=float(row["high"]),
-                    low=float(row["low"]),
-                    close=float(row["close"]),
-                    volume=float(row["volume"]),
-                )
+            yield from _df_to_candles(df)
         else:
             resampled = df.resample(resample_rule).agg(
                 {"open": "first", "high": "max", "low": "min", "close": "last", "volume": "sum"}
             )
             resampled = resampled.dropna(subset=["open"])
-            for ts, row in resampled.iterrows():
-                ts_str = pd.Timestamp(ts).strftime("%Y-%m-%dT%H:%M:%SZ")
-                yield Candle(
-                    timestamp=ts_str,
-                    open=float(row["open"]),
-                    high=float(row["high"]),
-                    low=float(row["low"]),
-                    close=float(row["close"]),
-                    volume=float(row["volume"]),
-                )
+            yield from _df_to_candles(resampled)
