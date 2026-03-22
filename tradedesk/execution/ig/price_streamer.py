@@ -65,9 +65,7 @@ class Lightstreamer(Streamer):
         ls_client = LightstreamerClient(self.client.ls_url, "DEFAULT")
         self._ls_client = ls_client
 
-        ls_client.connectionDetails.setUser(
-            self.client.client_id or self.client.account_id or ""
-        )
+        ls_client.connectionDetails.setUser(self.client.client_id or self.client.account_id or "")
         ls_client.connectionDetails.setPassword(
             f"CST-{self.client.ls_cst}|XST-{self.client.ls_xst}"
         )
@@ -78,12 +76,8 @@ class Lightstreamer(Streamer):
             self.client.client_id,
         )
 
-        market_subs = [
-            s for s in consumer.subscriptions if isinstance(s, MarketSubscription)
-        ]
-        chart_subs = [
-            s for s in consumer.subscriptions if isinstance(s, ChartSubscription)
-        ]
+        market_subs = [s for s in consumer.subscriptions if isinstance(s, MarketSubscription)]
+        chart_subs = [s for s in consumer.subscriptions if isinstance(s, ChartSubscription)]
 
         subscriptions = []
 
@@ -105,17 +99,11 @@ class Lightstreamer(Streamer):
                             return
 
                         item_name = update.getItemName()
-                        epic = (
-                            item_name.split(":", 1)[1]
-                            if ":" in item_name
-                            else item_name
-                        )
+                        epic = item_name.split(":", 1)[1] if ":" in item_name else item_name
 
                         data = {
                             "type": "market",
-                            "timestamp": datetime.now(timezone.utc).isoformat(
-                                timespec="seconds"
-                            )
+                            "timestamp": datetime.now(timezone.utc).isoformat(timespec="seconds")
                             + "Z",
                             "instrument": epic,
                             "bid": float(bid_str),
@@ -175,16 +163,13 @@ class Lightstreamer(Streamer):
                                     return
 
                                 open_price = (
-                                    float(ofr_open or ofr_close)
-                                    + float(bid_open or bid_close)
+                                    float(ofr_open or ofr_close) + float(bid_open or bid_close)
                                 ) / 2
                                 high_price = (
-                                    float(ofr_high or ofr_close)
-                                    + float(bid_high or bid_close)
+                                    float(ofr_high or ofr_close) + float(bid_high or bid_close)
                                 ) / 2
                                 low_price = (
-                                    float(ofr_low or ofr_close)
-                                    + float(bid_low or bid_close)
+                                    float(ofr_low or ofr_close) + float(bid_low or bid_close)
                                 ) / 2
                                 close_price = (float(ofr_close) + float(bid_close)) / 2
 
@@ -284,9 +269,7 @@ class Lightstreamer(Streamer):
         async def _heartbeat_monitor() -> None:
             while True:
                 await asyncio.sleep(self.heartbeat_sleep)
-                delta = (
-                    datetime.now(timezone.utc) - consumer.last_update
-                ).total_seconds()
+                delta = (datetime.now(timezone.utc) - consumer.last_update).total_seconds()
                 if delta > consumer.watchdog_threshold:
                     log.warning(
                         "❤  Heartbeat Alert: no updates for %s in %.1fs. Connection may be stale.",
@@ -344,9 +327,7 @@ class Lightstreamer(Streamer):
         try:
             await asyncio.Future()
         except asyncio.CancelledError:
-            log.info(
-                "%s cancelled – cleaning up Lightstreamer", consumer.__class__.__name__
-            )
+            log.info("%s cancelled – cleaning up Lightstreamer", consumer.__class__.__name__)
         finally:
             for task in tasks:
                 task.cancel()

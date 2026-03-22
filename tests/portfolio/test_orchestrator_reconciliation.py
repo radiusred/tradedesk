@@ -1,5 +1,5 @@
 """
-Tests for ReconciliationManager: startup reconciliation, 
+Tests for ReconciliationManager: startup reconciliation,
 periodic correction, and journal persistence.
 """
 
@@ -94,9 +94,7 @@ class _FakeStrategy:
     def to_journal_entry(self, instrument):
         return JournalEntry(
             instrument=instrument,
-            direction=self.position.direction.value
-            if self.position.direction
-            else None,
+            direction=self.position.direction.value if self.position.direction else None,
             size=self.position.size,
             entry_price=self.position.entry_price,
             bars_held=self.position.bars_held,

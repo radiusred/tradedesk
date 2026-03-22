@@ -21,9 +21,7 @@ def _period_to_seconds(period: str) -> int:
     raise ValueError(f"Unsupported period: {period!r}")
 
 
-def choose_base_period(
-    target_period: str, *, supported_periods: list[str] | None = None
-) -> str:
+def choose_base_period(target_period: str, *, supported_periods: list[str] | None = None) -> str:
     """
     Choose a suitable base period for building target_period.
 
@@ -119,9 +117,7 @@ class CandleAggregator:
         self.base_period = (
             (
                 base_period
-                or choose_base_period(
-                    self.target_period, supported_periods=supported_periods
-                )
+                or choose_base_period(self.target_period, supported_periods=supported_periods)
             )
             .strip()
             .upper()

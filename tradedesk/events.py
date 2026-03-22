@@ -21,19 +21,25 @@ def event(cls: type[_T]) -> type[_T]:
 class DomainEvent(ABC):
     timestamp: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
 
+
 @event
 class SessionStartedEvent(DomainEvent):
     """Event fired when a new backtest or live session starts."""
+
     pass
+
 
 @event
 class SessionEndedEvent(DomainEvent):
     """Event fired when a backtest or live session ends."""
+
     pass
+
 
 @event
 class SessionReadyEvent(DomainEvent):
     """Fired after all SessionStartedEvent handlers complete (warmup + reconciliation done)."""
+
     pass
 
 

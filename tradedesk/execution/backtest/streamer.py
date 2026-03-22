@@ -109,7 +109,7 @@ class BacktestStreamer(Streamer):
         # CandleClosedEvent or MarketData to be orderable.
         seq = itertools.count()
 
-        streams: list[Iterator] = [_candle_gen(s, seq) for s in self._candle_series]
+        streams: list[Iterator[Any]] = [_candle_gen(s, seq) for s in self._candle_series]
         streams += [_market_gen(s, seq) for s in self._market_series]
 
         try:

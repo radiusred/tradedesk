@@ -79,9 +79,7 @@ class TestVWAP:
 
         vwap.reset()
         assert vwap.ready() is False
-        assert vwap.update(
-            candle("2020-01-01T00:05:00Z", 20, 20, 20, 1)
-        ) == pytest.approx(20.0)
+        assert vwap.update(candle("2020-01-01T00:05:00Z", 20, 20, 20, 1)) == pytest.approx(20.0)
 
     def test_warmup_periods(self) -> None:
         assert VWAP().warmup_periods() == 1

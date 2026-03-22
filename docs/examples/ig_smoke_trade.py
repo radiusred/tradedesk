@@ -49,7 +49,9 @@ async def _get_positions(client: IGClient) -> dict[str, Any]:
 async def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--epic", required=True, help="IG EPIC to trade")
-    parser.add_argument("--size", type=float, default=1.0, help="Size (stake for SB, contracts for CFD)")
+    parser.add_argument(
+        "--size", type=float, default=1.0, help="Size (stake for SB, contracts for CFD)"
+    )
     parser.add_argument("--open-direction", choices=["BUY", "SELL"], default="BUY")
     parser.add_argument("--log-level", default="INFO")
     parser.add_argument("--skip-positions", action="store_true", help="Skip GET /positions checks")
@@ -86,7 +88,9 @@ async def main() -> int:
                 before = await _get_positions(client)
                 log.info("Positions (before):\n%s", _pretty(before))
 
-            log.info("Placing OPEN %s %s size=%s force_open=%s", epic, open_dir, size, args.force_open)
+            log.info(
+                "Placing OPEN %s %s size=%s force_open=%s", epic, open_dir, size, args.force_open
+            )
             open_confirm = await client.place_market_order_confirmed(
                 epic=epic,
                 direction=open_dir,
@@ -104,7 +108,13 @@ async def main() -> int:
                 log.error("OPEN rejected: %s", reason)
                 return 1
 
-            log.info("Placing CLOSE %s %s size=%s force_open=%s (netting unless force_open=True)", epic, close_dir, size, args.force_open)
+            log.info(
+                "Placing CLOSE %s %s size=%s force_open=%s (netting unless force_open=True)",
+                epic,
+                close_dir,
+                size,
+                args.force_open,
+            )
             close_confirm = await client.place_market_order_confirmed(
                 epic=epic,
                 direction=close_dir,
@@ -117,7 +127,9 @@ async def main() -> int:
             log.info("CLOSE confirm:\n%s", _pretty(close_confirm))
 
             if (close_confirm.get("dealStatus") or "").upper() != "ACCEPTED":
-                reason = close_confirm.get("reason") or close_confirm.get("rejectReason") or "UNKNOWN"
+                reason = (
+                    close_confirm.get("reason") or close_confirm.get("rejectReason") or "UNKNOWN"
+                )
                 log.error("CLOSE rejected: %s", reason)
                 return 1
 

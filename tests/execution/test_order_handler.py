@@ -19,9 +19,7 @@ async def test_request_order_success():
     client.quantise_size = AsyncMock(side_effect=lambda inst, size: size)
     OrderExecutionHandler(client)
 
-    result = await request_order(
-        OrderRequest(instrument="TEST", direction="BUY", size=1.0)
-    )
+    result = await request_order(OrderRequest(instrument="TEST", direction="BUY", size=1.0))
 
     assert result.success is True
     assert result.fill_price == 105.50
@@ -60,9 +58,7 @@ async def test_request_order_handles_rejection():
     client.quantise_size = AsyncMock(side_effect=lambda inst, size: size)
     OrderExecutionHandler(client)
 
-    result = await request_order(
-        OrderRequest(instrument="TEST", direction="SELL", size=1.0)
-    )
+    result = await request_order(OrderRequest(instrument="TEST", direction="SELL", size=1.0))
 
     assert result.success is False
     assert "rejected" in result.error
@@ -88,8 +84,6 @@ async def test_request_order_uses_fallback_price_field():
     client.quantise_size = AsyncMock(side_effect=lambda inst, size: size)
     OrderExecutionHandler(client)
 
-    result = await request_order(
-        OrderRequest(instrument="TEST", direction="BUY", size=1.0)
-    )
+    result = await request_order(OrderRequest(instrument="TEST", direction="BUY", size=1.0))
 
     assert result.fill_price == 99.0

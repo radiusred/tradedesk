@@ -35,6 +35,7 @@ class TestBaseStrategy:
         assert strategy.watchdog_threshold == 60
         assert isinstance(strategy.last_update, datetime)
 
+
 class TestConcreteStrategy:
     """Test with a concrete strategy implementation."""
 

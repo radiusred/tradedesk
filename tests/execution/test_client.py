@@ -102,9 +102,7 @@ class TestIGClient:
 
         accepted = MagicMock()
         accepted.status = 200
-        accepted.json = AsyncMock(
-            return_value={"dealStatus": "ACCEPTED", "dealId": "D1"}
-        )
+        accepted.json = AsyncMock(return_value={"dealStatus": "ACCEPTED", "dealId": "D1"})
         accepted.__aenter__ = AsyncMock(return_value=accepted)
         accepted.__aexit__ = AsyncMock(return_value=None)
 
@@ -144,9 +142,7 @@ class TestIGClient:
             async def fake_request(_method, _path, **_kwargs):
                 fake_request.calls += 1
                 if fake_request.calls == 1:
-                    raise RuntimeError(
-                        "IG request failed: HTTP 500: {'errorCode': None}"
-                    )
+                    raise RuntimeError("IG request failed: HTTP 500: {'errorCode': None}")
                 if fake_request.calls == 2:
                     return {"dealStatus": "PENDING"}
                 return {"dealStatus": "ACCEPTED", "dealId": "D1"}
@@ -215,10 +211,7 @@ class TestIGClient:
             assert await client.quantise_size("CS.D.EURUSD.TODAY.IP", 1.0) == 1.0
             assert await client.quantise_size("CS.D.EURUSD.TODAY.IP", 1.24) == 1.2
             assert await client.quantise_size("CS.D.EURUSD.TODAY.IP", 1.55) == 1.5
-            assert (
-                await client.quantise_size("CS.D.EURUSD.TODAY.IP", 1.759110721932789)
-                == 1.7
-            )
+            assert await client.quantise_size("CS.D.EURUSD.TODAY.IP", 1.759110721932789) == 1.7
             assert await client.quantise_size("CS.D.EURUSD.TODAY.IP", 2.39) == 2.3
             assert await client.quantise_size("CS.D.EURUSD.TODAY.IP", 2.5) == 2.5
 
@@ -233,10 +226,7 @@ class TestIGClient:
                 "dealingRules": {"minDealSize": {"value": 0.01}}
             }
 
-            assert (
-                await client.quantise_size("IX.D.DOW.DAILY.IP", 1.759110721932789)
-                == 1.75
-            )
+            assert await client.quantise_size("IX.D.DOW.DAILY.IP", 1.759110721932789) == 1.75
             assert await client.quantise_size("IX.D.DOW.DAILY.IP", 2.357) == 2.35
             assert await client.quantise_size("IX.D.DOW.DAILY.IP", 0.055) == 0.05
 
@@ -257,9 +247,7 @@ class TestIGClient:
             assert await client.quantise_size("TEST.EPIC", size) == round(size, 2)
 
     @pytest.mark.asyncio
-    async def test_quantise_size_fetches_metadata_if_not_cached(
-        self, mock_aiohttp_session
-    ):
+    async def test_quantise_size_fetches_metadata_if_not_cached(self, mock_aiohttp_session):
         """Test that quantise_size fetches metadata if not already cached."""
         mock_response = MagicMock()
         mock_response.status = 200
@@ -344,9 +332,7 @@ class TestIGClient:
             client._instrument_metadata["CS.D.AUDUSD.TODAY.IP"] = {
                 "dealingRules": {
                     "minDealSize": {"value": 0.04},
-                    "minStepDistance": {
-                        "value": 5
-                    },  # This is ignored in new implementation
+                    "minStepDistance": {"value": 5},  # This is ignored in new implementation
                 }
             }
 
@@ -497,9 +483,7 @@ class TestIGClient:
         with patch("aiohttp.ClientSession", return_value=mock_aiohttp_session):
             client = IGClient()
 
-            with pytest.raises(
-                RuntimeError, match="IG authentication failed – HTTP 401"
-            ):
+            with pytest.raises(RuntimeError, match="IG authentication failed – HTTP 401"):
                 await client.start()
 
     @pytest.mark.asyncio
@@ -507,16 +491,12 @@ class TestIGClient:
         """Test that authentication properly handles network errors."""
         import aiohttp
 
-        mock_aiohttp_session.post.side_effect = aiohttp.ClientError(
-            "Network unreachable"
-        )
+        mock_aiohttp_session.post.side_effect = aiohttp.ClientError("Network unreachable")
 
         with patch("aiohttp.ClientSession", return_value=mock_aiohttp_session):
             client = IGClient()
 
-            with pytest.raises(
-                RuntimeError, match="Network error during authentication"
-            ):
+            with pytest.raises(RuntimeError, match="Network error during authentication"):
                 await client.start()
 
     @pytest.mark.asyncio
@@ -534,9 +514,7 @@ class TestIGClient:
         with patch("aiohttp.ClientSession", return_value=mock_aiohttp_session):
             client = IGClient()
 
-            with pytest.raises(
-                RuntimeError, match="IG authentication failed – HTTP 500"
-            ):
+            with pytest.raises(RuntimeError, match="IG authentication failed – HTTP 500"):
                 await client.start()
 
     # ============================================================================
@@ -762,9 +740,7 @@ class TestIGClient:
         """Test get_price_ticks returns price tick data."""
         mock_response = MagicMock()
         mock_response.status = 200
-        mock_response.json = AsyncMock(
-            return_value={"prices": [{"bid": 1.1, "ask": 1.1001}]}
-        )
+        mock_response.json = AsyncMock(return_value={"prices": [{"bid": 1.1, "ask": 1.1001}]})
         mock_response.__aenter__ = AsyncMock(return_value=mock_response)
         mock_response.__aexit__ = AsyncMock(return_value=None)
 
@@ -829,9 +805,7 @@ class TestIGClient:
             assert mock_aiohttp_session.request.call_count == 1  # No additional call
 
     @pytest.mark.asyncio
-    async def test_place_market_order_confirmed_waits_for_confirmation(
-        self, mock_aiohttp_session
-    ):
+    async def test_place_market_order_confirmed_waits_for_confirmation(self, mock_aiohttp_session):
         """Test place_market_order_confirmed waits for deal confirmation."""
         # Setup order placement response
         order_response = MagicMock()
@@ -890,9 +864,7 @@ class TestIGClient:
                 )
 
     @pytest.mark.asyncio
-    async def test_place_market_order_confirmed_raises_rejected_status(
-        self, mock_aiohttp_session
-    ):
+    async def test_place_market_order_confirmed_raises_rejected_status(self, mock_aiohttp_session):
         """Test place_market_order_confirmed raises exception when rejected."""
         # Setup order placement response without dealReference
         order_response = MagicMock()
@@ -963,9 +935,7 @@ class TestIGClient:
             client = IGClient()
             client._session = mock_aiohttp_session
 
-            candles = await client.get_historical_candles(
-                "CS.D.EURUSD.TODAY.IP", "1MINUTE", 2
-            )
+            candles = await client.get_historical_candles("CS.D.EURUSD.TODAY.IP", "1MINUTE", 2)
 
             assert len(candles) == 2
             assert isinstance(candles[0], Candle)
@@ -978,28 +948,20 @@ class TestIGClient:
             assert candles[1].close == 1.1016
 
     @pytest.mark.asyncio
-    async def test_get_historical_candles_returns_empty_for_zero_points(
-        self, mock_aiohttp_session
-    ):
+    async def test_get_historical_candles_returns_empty_for_zero_points(self, mock_aiohttp_session):
         """Test get_historical_candles returns empty list for 0 or negative points."""
         with patch("aiohttp.ClientSession", return_value=mock_aiohttp_session):
             client = IGClient()
             client._session = mock_aiohttp_session
 
-            candles = await client.get_historical_candles(
-                "CS.D.EURUSD.TODAY.IP", "1MINUTE", 0
-            )
+            candles = await client.get_historical_candles("CS.D.EURUSD.TODAY.IP", "1MINUTE", 0)
             assert candles == []
 
-            candles = await client.get_historical_candles(
-                "CS.D.EURUSD.TODAY.IP", "1MINUTE", -5
-            )
+            candles = await client.get_historical_candles("CS.D.EURUSD.TODAY.IP", "1MINUTE", -5)
             assert candles == []
 
     @pytest.mark.asyncio
-    async def test_get_historical_candles_handles_missing_timestamps(
-        self, mock_aiohttp_session
-    ):
+    async def test_get_historical_candles_handles_missing_timestamps(self, mock_aiohttp_session):
         """Test get_historical_candles skips candles without timestamps."""
 
         mock_response = MagicMock()
@@ -1028,18 +990,14 @@ class TestIGClient:
             client = IGClient()
             client._session = mock_aiohttp_session
 
-            candles = await client.get_historical_candles(
-                "CS.D.EURUSD.TODAY.IP", "1MINUTE", 2
-            )
+            candles = await client.get_historical_candles("CS.D.EURUSD.TODAY.IP", "1MINUTE", 2)
 
             # Should only have 1 candle (the one with timestamp)
             assert len(candles) == 1
             assert candles[0].timestamp == "2025-01-01T11:00:00Z"
 
     @pytest.mark.asyncio
-    async def test_get_historical_candles_handles_missing_close_price(
-        self, mock_aiohttp_session
-    ):
+    async def test_get_historical_candles_handles_missing_close_price(self, mock_aiohttp_session):
         """Test get_historical_candles skips candles without close price."""
         mock_response = MagicMock()
         mock_response.status = 200
@@ -1067,18 +1025,14 @@ class TestIGClient:
             client = IGClient()
             client._session = mock_aiohttp_session
 
-            candles = await client.get_historical_candles(
-                "CS.D.EURUSD.TODAY.IP", "1MINUTE", 2
-            )
+            candles = await client.get_historical_candles("CS.D.EURUSD.TODAY.IP", "1MINUTE", 2)
 
             # Should only have 1 candle
             assert len(candles) == 1
             assert candles[0].close == 1.1016
 
     @pytest.mark.asyncio
-    async def test_get_historical_candles_uses_close_for_missing_ohlc(
-        self, mock_aiohttp_session
-    ):
+    async def test_get_historical_candles_uses_close_for_missing_ohlc(self, mock_aiohttp_session):
         """Test get_historical_candles uses close price when open/high/low missing."""
 
         mock_response = MagicMock()
@@ -1103,9 +1057,7 @@ class TestIGClient:
             client = IGClient()
             client._session = mock_aiohttp_session
 
-            candles = await client.get_historical_candles(
-                "CS.D.EURUSD.TODAY.IP", "1MINUTE", 1
-            )
+            candles = await client.get_historical_candles("CS.D.EURUSD.TODAY.IP", "1MINUTE", 1)
 
             assert len(candles) == 1
             # All OHLC should equal close
@@ -1115,9 +1067,7 @@ class TestIGClient:
             assert candles[0].close == 1.1006
 
     @pytest.mark.asyncio
-    async def test_get_historical_candles_sorts_by_timestamp(
-        self, mock_aiohttp_session
-    ):
+    async def test_get_historical_candles_sorts_by_timestamp(self, mock_aiohttp_session):
         """Test get_historical_candles sorts candles oldest to newest."""
         mock_response = MagicMock()
         mock_response.status = 200
@@ -1148,9 +1098,7 @@ class TestIGClient:
             client = IGClient()
             client._session = mock_aiohttp_session
 
-            candles = await client.get_historical_candles(
-                "CS.D.EURUSD.TODAY.IP", "1MINUTE", 3
-            )
+            candles = await client.get_historical_candles("CS.D.EURUSD.TODAY.IP", "1MINUTE", 3)
 
             # Should be sorted oldest to newest
             assert candles[0].timestamp == "2025-01-01T10:00:00Z"
@@ -1158,9 +1106,7 @@ class TestIGClient:
             assert candles[2].timestamp == "2025-01-01T12:00:00Z"
 
     @pytest.mark.asyncio
-    async def test_get_historical_candles_handles_empty_prices(
-        self, mock_aiohttp_session
-    ):
+    async def test_get_historical_candles_handles_empty_prices(self, mock_aiohttp_session):
         """Test get_historical_candles handles empty prices array."""
         mock_response = MagicMock()
         mock_response.status = 200
@@ -1174,9 +1120,7 @@ class TestIGClient:
             client = IGClient()
             client._session = mock_aiohttp_session
 
-            candles = await client.get_historical_candles(
-                "CS.D.EURUSD.TODAY.IP", "1MINUTE", 10
-            )
+            candles = await client.get_historical_candles("CS.D.EURUSD.TODAY.IP", "1MINUTE", 10)
             assert candles == []
 
     # ============================================================================
@@ -1203,9 +1147,7 @@ class TestIGClient:
         with patch("aiohttp.ClientSession", return_value=mock_aiohttp_session):
             client = IGClient()
 
-            with pytest.raises(
-                RuntimeError, match="CST and X-SECURITY-TOKEN not found"
-            ):
+            with pytest.raises(RuntimeError, match="CST and X-SECURITY-TOKEN not found"):
                 await client.start()
 
     @pytest.mark.asyncio
@@ -1232,9 +1174,7 @@ class TestIGClient:
                 await client.start()
 
     @pytest.mark.asyncio
-    async def test_ensure_account_type_returns_none_without_account_id(
-        self, mock_aiohttp_session
-    ):
+    async def test_ensure_account_type_returns_none_without_account_id(self, mock_aiohttp_session):
         """Test _ensure_account_type returns None when account_id is not set."""
         with patch("aiohttp.ClientSession", return_value=mock_aiohttp_session):
             client = IGClient()

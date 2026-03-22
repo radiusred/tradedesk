@@ -396,9 +396,7 @@ def test_compute_metrics_reporting_scale_scales_linear_outputs_only() -> None:
         },
     ]
 
-    m = compute_metrics(
-        equity_rows=equity_rows, trade_rows=trade_rows, reporting_scale=2.0
-    )
+    m = compute_metrics(equity_rows=equity_rows, trade_rows=trade_rows, reporting_scale=2.0)
 
     # Scaled
     assert m.final_equity == pytest.approx(20.0)

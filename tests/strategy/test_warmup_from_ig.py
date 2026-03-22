@@ -6,9 +6,7 @@ from tradedesk.marketdata.subscriptions import ChartSubscription
 
 @pytest.mark.asyncio
 class TestStrategyWarmupFromIG:
-    async def test_warmup_from_ig_primes_chart_and_indicator(
-        self, DummyStrategy, make_candles
-    ):
+    async def test_warmup_from_ig_primes_chart_and_indicator(self, DummyStrategy, make_candles):
         sub = ChartSubscription("EPIC", "1MINUTE")
         Strat = DummyStrategy([sub])
 

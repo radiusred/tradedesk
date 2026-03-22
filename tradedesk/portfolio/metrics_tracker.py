@@ -50,9 +50,7 @@ class WeightedRollingTracker:
     # Internal state
     _windows: dict[str, InstrumentWindow] = field(default_factory=dict, init=False)
     _trade_count: int = field(default=0, init=False)
-    _cached_metrics: dict[str, dict[str, float | int]] | None = field(
-        default=None, init=False
-    )
+    _cached_metrics: dict[str, dict[str, float | int]] | None = field(default=None, init=False)
 
     def __post_init__(self) -> None:
         """Validate decay weights sum to 1.0."""
@@ -177,9 +175,7 @@ class WeightedRollingTracker:
             total_weighted_risk = sum(abs(p) for p in weighted_pnls)
 
             return_to_risk = (
-                total_weighted_pnl / total_weighted_risk
-                if total_weighted_risk > 0
-                else 0.0
+                total_weighted_pnl / total_weighted_risk if total_weighted_risk > 0 else 0.0
             )
 
             all_metrics[instrument] = {
@@ -196,9 +192,7 @@ class WeightedRollingTracker:
 
         for inst in instruments:
             instrument = str(inst)
-            metrics_by_instrument[inst] = all_metrics.get(
-                instrument, self._empty_metrics()
-            )
+            metrics_by_instrument[inst] = all_metrics.get(instrument, self._empty_metrics())
 
         return metrics_by_instrument
 

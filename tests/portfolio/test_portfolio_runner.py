@@ -49,9 +49,7 @@ async def test_runner_splits_risk_across_active_strategies():
     )
 
     await r.on_candle_close(
-        CandleClosedEvent(
-            instrument=Instrument("EURUSD"), timeframe="15MINUTE", candle=None
-        )
+        CandleClosedEvent(instrument=Instrument("EURUSD"), timeframe="15MINUTE", candle=None)
     )
 
     # Two active strategies should get 5.0 each

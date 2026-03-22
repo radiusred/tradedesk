@@ -6,9 +6,7 @@ from tradedesk.types import Candle
 
 class TestClientHistoricalCandles:
     @pytest.mark.asyncio
-    async def test_get_historical_candles_calls_prices_endpoint_and_parses(
-        self, monkeypatch
-    ):
+    async def test_get_historical_candles_calls_prices_endpoint_and_parses(self, monkeypatch):
         client = IGClient()
 
         async def fake_request(method, path, **kwargs):

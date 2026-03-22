@@ -104,9 +104,7 @@ def test_backtest_replays_candles_and_executes_virtual_trades():
 async def test_backtest_rejects_direction_enum_without_conversion():
     """Test that passing Direction enum directly to place_market_order is rejected."""
     candles = [
-        Candle(
-            timestamp="2025-12-28T00:00:00Z", open=100, high=100, low=100, close=100
-        ),
+        Candle(timestamp="2025-12-28T00:00:00Z", open=100, high=100, low=100, close=100),
     ]
     client = BacktestClient.from_history({("TEST", "1MINUTE"): candles})
     await client.start()
@@ -124,12 +122,8 @@ async def test_backtest_rejects_direction_enum_without_conversion():
 async def test_backtest_accepts_direction_with_to_order_side():
     """Test that using Direction.to_order_side() works correctly."""
     candles = [
-        Candle(
-            timestamp="2025-12-28T00:00:00Z", open=100, high=100, low=100, close=100
-        ),
-        Candle(
-            timestamp="2025-12-28T00:05:00Z", open=110, high=110, low=110, close=110
-        ),
+        Candle(timestamp="2025-12-28T00:00:00Z", open=100, high=100, low=100, close=100),
+        Candle(timestamp="2025-12-28T00:05:00Z", open=110, high=110, low=110, close=110),
     ]
     client = BacktestClient.from_history({("TEST", "5MINUTE"): candles})
     await client.start()

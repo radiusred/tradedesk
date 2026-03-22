@@ -58,9 +58,7 @@ class Instrument:
             )
 
         # 2. Convert letters to digits (A=10, B=11, ..., Z=35)
-        digits_str = "".join(
-            str(int(char, 36)) if char.isalpha() else char for char in isin
-        )
+        digits_str = "".join(str(int(char, 36)) if char.isalpha() else char for char in isin)
 
         # 3. Apply Luhn Algorithm
         digits = [int(d) for d in digits_str]

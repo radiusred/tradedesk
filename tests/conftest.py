@@ -88,12 +88,8 @@ def mock_aiohttp_session(mock_http_response):
 def mock_lightstreamer():
     """Mock Lightstreamer client and subscription."""
     with (
-        patch(
-            "tradedesk.execution.ig.price_streamer.LightstreamerClient"
-        ) as mock_ls_client_class,
-        patch(
-            "tradedesk.execution.ig.price_streamer.Subscription"
-        ) as mock_subscription_class,
+        patch("tradedesk.execution.ig.price_streamer.LightstreamerClient") as mock_ls_client_class,
+        patch("tradedesk.execution.ig.price_streamer.Subscription") as mock_subscription_class,
     ):
         # Create mock LightstreamerClient instance
         mock_ls_client = MagicMock()

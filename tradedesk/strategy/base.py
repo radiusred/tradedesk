@@ -84,9 +84,7 @@ class BaseStrategy(abc.ABC):
         # Backwards compatibility - deprecated
         self.client = data_provider
         self.subscriptions = (
-            list(subscriptions)
-            if subscriptions is not None
-            else list(self.SUBSCRIPTIONS)
+            list(subscriptions) if subscriptions is not None else list(self.SUBSCRIPTIONS)
         )
 
         # Create chart history managers for each chart subscription
@@ -290,4 +288,3 @@ class BaseStrategy(abc.ABC):
             await self.warmup()
         except Exception:
             log.exception("Warmup failed; continuing without warmup")
-

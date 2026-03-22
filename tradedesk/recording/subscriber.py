@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import logging
+from datetime import datetime
 from pathlib import Path
 from typing import Optional
 
@@ -65,7 +66,7 @@ class RecordingSubscriber:
         self._cache_dir = cache_dir
         self._with_graphs = with_graphs
         # Per-instrument (ts, high, low) accumulators for candle index building.
-        self._index_buffer: dict[str, tuple[list, list, list]] = {}
+        self._index_buffer: dict[str, tuple[list[datetime], list[float], list[float]]] = {}
         # Track open positions for round trip pairing
         self._open_positions: dict[str, PositionOpenedEvent] = {}
 
