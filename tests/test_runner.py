@@ -109,6 +109,4 @@ class TestRunPortfolio:
                     setup_logging=False,
                 )
 
-                mock_info.assert_any_call(
-                    "Interrupted by user - shutting down gracefully"
-                )
+                mock_info.assert_any_call("Interrupted by user - shutting down gracefully")

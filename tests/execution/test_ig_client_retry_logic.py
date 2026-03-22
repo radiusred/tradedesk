@@ -131,9 +131,7 @@ async def test_quantise_size_null_dealing_rules():
     """
     c = IGClient()
     # Snapshot with explicit null dealingRules (as IG DEMO sometimes returns)
-    c.get_instrument_metadata = AsyncMock(
-        return_value={"dealingRules": None, "instrument": {}}
-    )
+    c.get_instrument_metadata = AsyncMock(return_value={"dealingRules": None, "instrument": {}})
 
     result = await c.quantise_size("CS.D.GBPUSD.TODAY.IP", 1.0)
     assert result == 1.0
@@ -143,9 +141,7 @@ async def test_quantise_size_null_dealing_rules():
 async def test_quantise_size_null_min_deal_size():
     """quantise_size falls back to 2 dp when minDealSize is present but null."""
     c = IGClient()
-    c.get_instrument_metadata = AsyncMock(
-        return_value={"dealingRules": {"minDealSize": None}}
-    )
+    c.get_instrument_metadata = AsyncMock(return_value={"dealingRules": {"minDealSize": None}})
 
     result = await c.quantise_size("CS.D.GBPUSD.TODAY.IP", 0.5)
     assert result == 0.5
@@ -161,9 +157,7 @@ async def test_quantise_size_null_dealing_rules_truncates_long_float():
     "validation.number.too-many-decimal-places.request.size".
     """
     c = IGClient()
-    c.get_instrument_metadata = AsyncMock(
-        return_value={"dealingRules": None, "instrument": {}}
-    )
+    c.get_instrument_metadata = AsyncMock(return_value={"dealingRules": None, "instrument": {}})
 
     result = await c.quantise_size("CS.D.USDJPY.TODAY.IP", 9.544888884913714)
     assert result == 9.54

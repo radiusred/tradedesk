@@ -36,12 +36,8 @@ class IGClient(Client):
 
     def __init__(self) -> None:
         # Choose the correct base URL for the selected environment
-        self.base_url = (
-            self.DEMO_BASE if settings.ig_environment == "DEMO" else self.LIVE_BASE
-        )
-        self.ls_url = (
-            self.DEMO_LS if settings.ig_environment == "DEMO" else self.LIVE_LS
-        )
+        self.base_url = self.DEMO_BASE if settings.ig_environment == "DEMO" else self.LIVE_BASE
+        self.ls_url = self.DEMO_LS if settings.ig_environment == "DEMO" else self.LIVE_LS
 
         # VERSION 2 returns CST/X-SECURITY-TOKEN (works with Lightstreamer)
         # VERSION 3 returns OAuth tokens (doesn't work with Lightstreamer)
@@ -98,7 +94,7 @@ class IGClient(Client):
         except Exception as _e:
             await self.close()  # Ensure session is closed on failure
             raise
-        
+
     async def close(self) -> None:
         """Close the session."""
         if self._session:
@@ -250,8 +246,7 @@ class IGClient(Client):
         )
 
         log.warning(
-            "Authenticated (V3 OAuth) – Streaming NOT available. "
-            "System will use REST polling."
+            "Authenticated (V3 OAuth) – Streaming NOT available. System will use REST polling."
         )
 
     def _apply_session_headers(self, new_headers: dict[str, str]) -> None:
@@ -320,13 +315,9 @@ class IGClient(Client):
             req_headers["VERSION"] = str(api_version)
 
         try:
-            async with self._session.request(
-                method, url, headers=req_headers, **kwargs
-            ) as resp:
+            async with self._session.request(method, url, headers=req_headers, **kwargs) as resp:
                 if resp.status in (401, 403):
-                    await self._handle_retry_logic(
-                        resp, method, url, headers=req_headers, **kwargs
-                    )
+                    await self._handle_retry_logic(resp, method, url, headers=req_headers, **kwargs)
 
                 if resp.status >= 400:
                     try:
@@ -340,9 +331,7 @@ class IGClient(Client):
                             err_body = " ".join(err_body.split())[:200]
                         else:
                             err_body = raw
-                    raise RuntimeError(
-                        f"IG request failed: HTTP {resp.status}: {err_body}"
-                    )
+                    raise RuntimeError(f"IG request failed: HTTP {resp.status}: {err_body}")
 
                 result = await resp.json()
                 return result if isinstance(result, dict) else {}
@@ -351,9 +340,7 @@ class IGClient(Client):
             log.error("Request failed: %s %s - %s", method, url, e)
             raise
 
-    async def _handle_retry_logic(
-        self, resp: Any, method: str, url: str, **kwargs: Any
-    ) -> None:
+    async def _handle_retry_logic(self, resp: Any, method: str, url: str, **kwargs: Any) -> None:
         """Attempts to re-authenticate and retry the request once."""
         # 1. Check if it's a rate limit (unrecoverable)
         try:
@@ -417,9 +404,7 @@ class IGClient(Client):
 
         payload = await self._get_accounts()
         accounts = payload.get("accounts") or []
-        current = next(
-            (a for a in accounts if a.get("accountId") == self.account_id), None
-        )
+        current = next((a for a in accounts if a.get("accountId") == self.account_id), None)
         self._account_type = (current or {}).get("accountType")
         return self._account_type
 
@@ -564,9 +549,7 @@ class IGClient(Client):
             None,
         )
         if current is None:
-            raise RuntimeError(
-                f"Account {self.account_id} not found in /accounts response"
-            )
+            raise RuntimeError(f"Account {self.account_id} not found in /accounts response")
 
         bal = current.get("balance") or {}
         return AccountBalance(
@@ -644,15 +627,11 @@ class IGClient(Client):
 
         while True:
             try:
-                payload = await self._request(
-                    "GET", f"/confirms/{deal_reference}", api_version="1"
-                )
+                payload = await self._request("GET", f"/confirms/{deal_reference}", api_version="1")
                 status = (payload.get("dealStatus") or "").upper()
 
                 if status and status != "PENDING":
-                    log.info(
-                        "Order %s confirmed with status: %s", deal_reference, status
-                    )
+                    log.info("Order %s confirmed with status: %s", deal_reference, status)
                     return payload
 
             except RuntimeError as e:
@@ -662,9 +641,7 @@ class IGClient(Client):
                 )
                 if retryable:
                     last_err = e
-                    log.debug(
-                        "Transient error confirming deal %s: %s", deal_reference, msg
-                    )
+                    log.debug("Transient error confirming deal %s: %s", deal_reference, msg)
                 else:
                     raise
 
@@ -673,9 +650,7 @@ class IGClient(Client):
                     raise TimeoutError(
                         f"Timed out waiting for deal confirm (last error: {last_err})"
                     ) from last_err
-                raise TimeoutError(
-                    f"Timed out waiting for deal confirm: {deal_reference}"
-                )
+                raise TimeoutError(f"Timed out waiting for deal confirm: {deal_reference}")
 
             await asyncio.sleep(poll_s)
 
@@ -706,13 +681,9 @@ class IGClient(Client):
         )
         deal_ref = res.get("dealReference")
         if not deal_ref:
-            raise RuntimeError(
-                f"Expected dealReference from place_market_order, got: {res}"
-            )
+            raise RuntimeError(f"Expected dealReference from place_market_order, got: {res}")
 
-        deal = await self.confirm_deal(
-            deal_ref, timeout_s=confirm_timeout_s, poll_s=confirm_poll_s
-        )
+        deal = await self.confirm_deal(deal_ref, timeout_s=confirm_timeout_s, poll_s=confirm_poll_s)
         if deal.get("dealStatus", "").upper() != "ACCEPTED":
             raise DealRejectedException(f"Deal rejected: {deal}")
 
@@ -731,9 +702,7 @@ class IGClient(Client):
             return []
 
         resolution = self._period_to_rest_resolution(period)
-        payload = await self._request(
-            "GET", f"/prices/{epic}/{resolution}/{num_points}"
-        )
+        payload = await self._request("GET", f"/prices/{epic}/{resolution}/{num_points}")
 
         prices = payload.get("prices") or []
         candles: list[Candle] = []

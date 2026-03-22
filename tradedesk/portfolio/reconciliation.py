@@ -57,15 +57,11 @@ class ReconciliationResult:
 
     @property
     def orphan_broker_positions(self) -> list[ReconciliationEntry]:
-        return [
-            e for e in self.entries if e.discrepancy == DiscrepancyType.ORPHAN_BROKER
-        ]
+        return [e for e in self.entries if e.discrepancy == DiscrepancyType.ORPHAN_BROKER]
 
     @property
     def phantom_local_positions(self) -> list[ReconciliationEntry]:
-        return [
-            e for e in self.entries if e.discrepancy == DiscrepancyType.PHANTOM_LOCAL
-        ]
+        return [e for e in self.entries if e.discrepancy == DiscrepancyType.PHANTOM_LOCAL]
 
 
 def _direction_matches(journal_dir: str | None, broker_dir: str) -> bool:
@@ -110,9 +106,7 @@ def reconcile(
         journal_entry = journal_positions.get(instrument)
         broker_pos = broker_by_instrument.get(instrument)
 
-        journal_has_position = (
-            journal_entry is not None and journal_entry.direction is not None
-        )
+        journal_has_position = journal_entry is not None and journal_entry.direction is not None
         broker_has_position = broker_pos is not None
 
         if not journal_has_position and not broker_has_position:
@@ -154,8 +148,7 @@ def reconcile(
                         broker_size=broker_pos.size,
                         broker_deal_id=broker_pos.deal_id,
                         message=(
-                            f"Size mismatch: journal={journal_entry.size} "
-                            f"broker={broker_pos.size}"
+                            f"Size mismatch: journal={journal_entry.size} broker={broker_pos.size}"
                         ),
                     )
                 )
@@ -186,8 +179,7 @@ def reconcile(
                         broker_size=broker_pos.size,
                         broker_deal_id=broker_pos.deal_id,
                         message=(
-                            "EMERGENCY: Journal records flat but broker has position "
-                            "(failed exit?)"
+                            "EMERGENCY: Journal records flat but broker has position (failed exit?)"
                         ),
                     )
                 )
@@ -213,8 +205,7 @@ def reconcile(
                     journal_direction=journal_entry.direction,
                     journal_size=journal_entry.size,
                     message=(
-                        "Journal has position but broker does not "
-                        "(was it closed externally?)"
+                        "Journal has position but broker does not (was it closed externally?)"
                     ),
                 )
             )
@@ -275,10 +266,7 @@ class ReconciliationManager:
 
     async def _on_candle_closed(self, event: DomainEvent) -> None:
         """Handle target-period candle events for periodic reconciliation."""
-        if (
-            not isinstance(event, CandleClosedEvent)
-            or event.timeframe != self._target_period
-        ):
+        if not isinstance(event, CandleClosedEvent) or event.timeframe != self._target_period:
             return
 
         # Increment candle counter
@@ -290,11 +278,8 @@ class ReconciliationManager:
 
     def _should_reconcile_now(self) -> bool:
         """Internal check if reconciliation threshold reached (without incrementing)."""
-        return (
-            self._journal is not None
-            and self._candle_count % self._reconcile_interval == 0
-        )
-    
+        return self._journal is not None and self._candle_count % self._reconcile_interval == 0
+
     async def _on_order_completed(self, _event: OrderCompletedEvent) -> None:
         await self.log_margin_status()
 
@@ -333,8 +318,7 @@ class ReconciliationManager:
             broker_positions = await self.client.get_positions()
         except Exception:
             log.exception(
-                "Failed to fetch broker positions for reconciliation; "
-                "restoring from journal only"
+                "Failed to fetch broker positions for reconciliation; restoring from journal only"
             )
             if journal_entries is not None:
                 restored_instruments = self._restore_from_journal(journal_positions)
@@ -366,9 +350,7 @@ class ReconciliationManager:
                             entry.journal_size,
                         )
                 else:
-                    log.warning(
-                        "Reconciliation: %s -- %s", entry.instrument, entry.message
-                    )
+                    log.warning("Reconciliation: %s -- %s", entry.instrument, entry.message)
 
         # Handle emergencies
         if result.has_emergencies:
@@ -413,9 +395,7 @@ class ReconciliationManager:
 
         return restored_instruments
 
-    def _restore_from_journal(
-        self, journal_positions: dict[str, JournalEntry]
-    ) -> set[str]:
+    def _restore_from_journal(self, journal_positions: dict[str, JournalEntry]) -> set[str]:
         """Restore positions from journal only (broker unreachable)."""
         restored: set[str] = set()
         for inst, s in self._runner.strategies.items():
@@ -455,10 +435,7 @@ class ReconciliationManager:
             if entry is None:
                 continue
 
-            if (
-                entry.discrepancy == DiscrepancyType.MATCHED
-                and entry.journal_direction is not None
-            ):
+            if entry.discrepancy == DiscrepancyType.MATCHED and entry.journal_direction is not None:
                 # Restore from journal (has bars_held, mfe_points, entry_atr)
                 journal_entry = journal_positions.get(epic)
                 if journal_entry is not None:
@@ -473,11 +450,7 @@ class ReconciliationManager:
 
             elif entry.discrepancy == DiscrepancyType.ORPHAN_BROKER:
                 # Adopt broker position
-                direction = (
-                    Direction.LONG
-                    if entry.broker_direction == "BUY"
-                    else Direction.SHORT
-                )
+                direction = Direction.LONG if entry.broker_direction == "BUY" else Direction.SHORT
                 broker_pos = broker_by_instrument.get(epic)
                 entry_price = broker_pos.entry_price if broker_pos else 0.0
                 strat.position.open(direction, entry.broker_size or 0.0, entry_price)
@@ -509,11 +482,7 @@ class ReconciliationManager:
                 DiscrepancyType.DIRECTION_MISMATCH,
             ):
                 # Broker has a position that contradicts journal -- adopt broker state
-                direction = (
-                    Direction.LONG
-                    if entry.broker_direction == "BUY"
-                    else Direction.SHORT
-                )
+                direction = Direction.LONG if entry.broker_direction == "BUY" else Direction.SHORT
                 broker_pos = broker_by_instrument.get(epic)
                 entry_price = broker_pos.entry_price if broker_pos else 0.0
                 strat.position.open(direction, entry.broker_size or 0.0, entry_price)
@@ -559,13 +528,9 @@ class ReconciliationManager:
 
             # Fetch latest candle to get current price
             try:
-                candles = await self.client.get_historical_candles(
-                    epic, self._target_period, 1
-                )
+                candles = await self.client.get_historical_candles(epic, self._target_period, 1)
                 if not candles:
-                    log.warning(
-                        "No candles available for post-reconciliation check on %s", epic
-                    )
+                    log.warning("No candles available for post-reconciliation check on %s", epic)
                     continue
 
                 candle = candles[-1]
@@ -608,9 +573,7 @@ class ReconciliationManager:
         try:
             broker_positions = await self.client.get_positions()
         except Exception:
-            log.warning(
-                "Periodic reconciliation skipped: failed to fetch broker positions"
-            )
+            log.warning("Periodic reconciliation skipped: failed to fetch broker positions")
             return
 
         # Build current local state
@@ -659,7 +622,7 @@ class ReconciliationManager:
                 # Broker has no position -- reset local to flat
                 log.warning(
                     "PHANTOM corrected: %s was %s size=%s locally but broker has no position; "
-                        "resetting to flat",
+                    "resetting to flat",
                     entry.instrument,
                     entry.journal_direction,
                     entry.journal_size,
@@ -672,11 +635,7 @@ class ReconciliationManager:
                 DiscrepancyType.ORPHAN_BROKER,
             ):
                 # Broker has position we don't have locally -- adopt it
-                direction = (
-                    Direction.LONG
-                    if entry.broker_direction == "BUY"
-                    else Direction.SHORT
-                )
+                direction = Direction.LONG if entry.broker_direction == "BUY" else Direction.SHORT
                 bp = broker_by_instrument.get(entry.instrument)
                 entry_price = bp.entry_price if bp else 0.0
                 strat.position.open(direction, entry.broker_size or 0.0, entry_price)
@@ -704,11 +663,7 @@ class ReconciliationManager:
 
             elif entry.discrepancy == DiscrepancyType.DIRECTION_MISMATCH:
                 # Broker direction wins -- reset and re-open with broker state
-                direction = (
-                    Direction.LONG
-                    if entry.broker_direction == "BUY"
-                    else Direction.SHORT
-                )
+                direction = Direction.LONG if entry.broker_direction == "BUY" else Direction.SHORT
                 bp = broker_by_instrument.get(entry.instrument)
                 entry_price = bp.entry_price if bp else 0.0
                 strat.position.reset()
@@ -757,9 +712,7 @@ class ReconciliationManager:
             return
         try:
             balance = await get_balance()
-            utilisation = (
-                (balance.deposit / balance.balance * 100) if balance.balance > 0 else 0
-            )
+            utilisation = (balance.deposit / balance.balance * 100) if balance.balance > 0 else 0
             log.info(
                 "Margin status: balance=%.2f deposit=%.2f available=%.2f utilisation=%.1f%%",
                 balance.balance,

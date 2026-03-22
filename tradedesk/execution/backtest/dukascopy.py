@@ -22,6 +22,7 @@ import sys
 from collections.abc import Iterator
 from datetime import date, timedelta
 from pathlib import Path
+from typing import cast
 
 import pandas as pd
 import zstandard as zstd
@@ -131,7 +132,7 @@ def _df_to_candles(df: "pd.DataFrame") -> list[Candle]:
     Avoids ``iterrows()`` (which creates a Series per row) by extracting columns
     as Python lists in one vectorised call, then zipping.
     """
-    timestamps = df.index.strftime("%Y-%m-%dT%H:%M:%SZ").tolist()
+    timestamps = cast(pd.DatetimeIndex, df.index).strftime("%Y-%m-%dT%H:%M:%SZ").tolist()
     opens = df["open"].tolist()
     highs = df["high"].tolist()
     lows = df["low"].tolist()

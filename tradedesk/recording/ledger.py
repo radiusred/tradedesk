@@ -101,9 +101,7 @@ class TradeLedger:
         path.parent.mkdir(parents=True, exist_ok=True)
         with path.open("w", newline="") as f:
             w = csv.writer(f)
-            w.writerow(
-                ["timestamp", "instrument", "direction", "size", "price", "reason"]
-            )
+            w.writerow(["timestamp", "instrument", "direction", "size", "price", "reason"])
             for t in self.trades:
                 w.writerow(
                     [
@@ -213,14 +211,10 @@ class TradeLedger:
         """
         path.parent.mkdir(parents=True, exist_ok=True)
 
-        equity_rows = [
-            {"timestamp": e.timestamp, "equity": str(e.equity)} for e in self.equity
-        ]
+        equity_rows = [{"timestamp": e.timestamp, "equity": str(e.equity)} for e in self.equity]
         trade_rows = trade_rows_from_trades(self.trades)
 
-        m = compute_metrics(
-            equity_rows=equity_rows, trade_rows=trade_rows, reporting_scale=1.0
-        )
+        m = compute_metrics(equity_rows=equity_rows, trade_rows=trade_rows, reporting_scale=1.0)
 
         # For BROKER mode, equity includes initial_balance; subtract to get PnL
         portfolio_pnl = m.final_equity
@@ -243,9 +237,7 @@ class TradeLedger:
         ]
 
         def _metrics_row(
-            label: str, 
-            met: Metrics, 
-            pnl_override: float | None = None
+            label: str, met: Metrics, pnl_override: float | None = None
         ) -> list[object]:
             return [
                 label,
@@ -313,16 +305,10 @@ class TradeLedger:
                 day = dt.date().isoformat()
                 by_date[day] = float(e.equity)
             except ValueError as ex:
-                raise ValueError(
-                    f"Failed to parse equity timestamp: {e.timestamp!r}"
-                ) from ex
+                raise ValueError(f"Failed to parse equity timestamp: {e.timestamp!r}") from ex
 
-        start_dt = (
-            parse_timestamp(self.equity[0].timestamp).astimezone(timezone.utc).date()
-        )
-        end_dt = (
-            parse_timestamp(self.equity[-1].timestamp).astimezone(timezone.utc).date()
-        )
+        start_dt = parse_timestamp(self.equity[0].timestamp).astimezone(timezone.utc).date()
+        end_dt = parse_timestamp(self.equity[-1].timestamp).astimezone(timezone.utc).date()
 
         with path.open("w", newline="") as f:
             w = csv.writer(f)
@@ -367,8 +353,7 @@ class TradeLedger:
         trips = round_trips_from_fills(trade_rows)
 
         windows = [
-            (parse_timestamp(t.entry_ts), parse_timestamp(t.exit_ts), t.instrument)
-            for t in trips
+            (parse_timestamp(t.entry_ts), parse_timestamp(t.exit_ts), t.instrument) for t in trips
         ]
 
         with path.open("w", newline="") as f:
@@ -449,9 +434,7 @@ class TradeLedger:
         path = self.out_dir / "trades.csv"
         with path.open("w", newline="") as f:
             w = csv.writer(f)
-            w.writerow(
-                ["timestamp", "instrument", "direction", "size", "price", "reason"]
-            )
+            w.writerow(["timestamp", "instrument", "direction", "size", "price", "reason"])
 
     def _append_trade_to_csv(self, record: TradeRecord) -> None:
         """Atomic append of single trade (broker mode only)"""

@@ -199,9 +199,7 @@ class TestIndicators:
         assert last["signal"] is not None
         assert last["histogram"] is not None
         # Histogram identity
-        assert last["histogram"] == pytest.approx(
-            last["macd"] - last["signal"], rel=1e-12
-        )
+        assert last["histogram"] == pytest.approx(last["macd"] - last["signal"], rel=1e-12)
 
     def test_macd_reset(self) -> None:
         macd = MACD(fast=3, slow=5, signal=2)

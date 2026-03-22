@@ -22,6 +22,7 @@ from tradedesk.recording import (
     register_recording_subscriber,
     trade_rows_from_trades,
 )
+from tradedesk.types import Candle
 
 from .client import BacktestClient
 
@@ -95,7 +96,7 @@ async def run_backtest(
 
     # Build candle index for excursion tracking
     streamer = raw_client.get_streamer()
-    all_candles = []
+    all_candles: list[Candle] = []
     for series in streamer._candle_series:
         if series.instrument == spec.instrument and series.period == spec.period:
             all_candles.extend(series.candles)

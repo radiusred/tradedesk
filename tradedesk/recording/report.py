@@ -769,7 +769,13 @@ def _prepare_graphs(
                 for i in range(1, len(closes)):
                     control.append(control[-1] + closes[i] - closes[i - 1])
                 control_dates = [pd.Timestamp(c.timestamp) for c in candles]
-                ax.plot(control_dates, control, color="#888888", linewidth=1, label="FTSE 100")
+                ax.plot(
+                    pd.DatetimeIndex(control_dates),
+                    control,
+                    color="#888888",
+                    linewidth=1,
+                    label="FTSE 100",
+                )
                 ax.legend()
             except Exception as e:
                 log.warning(f"Failed to add FTSE control line: {e}")

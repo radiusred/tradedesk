@@ -32,6 +32,8 @@ dependencies = [
     "zstandard>=0.25",
     "seaborn>=0.13.2",
     "matplotlib>=3.10.8",
+    "pandas-stubs[dev]>=3.0.0.260204",
+    "types-seaborn[dev]>=0.13.2.20251221",
 ]
 
 [project.optional-dependencies]

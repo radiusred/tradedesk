@@ -54,9 +54,7 @@ async def request_order(request: OrderRequest, *, timeout: float = 30.0) -> Orde
     future: asyncio.Future[OrderResult] = loop.create_future()
     _pending_orders[request_id] = future
 
-    await get_dispatcher().publish(
-        OrderRequestEvent(request=request, request_id=request_id)
-    )
+    await get_dispatcher().publish(OrderRequestEvent(request=request, request_id=request_id))
 
     try:
         return await asyncio.wait_for(future, timeout=timeout)

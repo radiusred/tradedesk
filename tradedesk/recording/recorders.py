@@ -67,12 +67,14 @@ class EquityRecorder:
             realised = self._client.realised_pnl
 
             # Publish EquitySampledEvent
-            await get_dispatcher().publish(EquitySampledEvent(
-                equity=equity,
-                realised_pnl=realised,
-                unrealised_pnl=unrealised,
-                timestamp=event.timestamp,
-            ))
+            await get_dispatcher().publish(
+                EquitySampledEvent(
+                    equity=equity,
+                    realised_pnl=realised,
+                    unrealised_pnl=unrealised,
+                    timestamp=event.timestamp,
+                )
+            )
         except Exception:
             log.exception(f"Failed to sample equity at {event.timestamp}")
 
@@ -150,14 +152,16 @@ class ExcursionComputer:
             mae_pnl = mae_points * pos_event.size
 
             # Publish ExcursionSampledEvent
-            await get_dispatcher().publish(ExcursionSampledEvent(
-                instrument=event.instrument,
-                mfe_points=float(mfe_points),
-                mae_points=float(mae_points),
-                mfe_pnl=float(mfe_pnl),
-                mae_pnl=float(mae_pnl),
-                timestamp=event.timestamp,
-            ))
+            await get_dispatcher().publish(
+                ExcursionSampledEvent(
+                    instrument=event.instrument,
+                    mfe_points=float(mfe_points),
+                    mae_points=float(mae_points),
+                    mfe_pnl=float(mfe_pnl),
+                    mae_pnl=float(mae_pnl),
+                    timestamp=event.timestamp,
+                )
+            )
         except Exception:
             log.exception(f"Failed to compute excursions for {event.instrument}")
 

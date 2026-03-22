@@ -5,7 +5,12 @@ from unittest.mock import patch
 
 import pytest
 
-from tradedesk.events import SessionEndedEvent, SessionStartedEvent, get_dispatcher, reset_dispatcher
+from tradedesk.events import (
+    SessionEndedEvent,
+    SessionStartedEvent,
+    get_dispatcher,
+    reset_dispatcher,
+)
 from tradedesk.recording.events import (
     PositionClosedEvent,
     PositionOpenedEvent,
@@ -156,9 +161,7 @@ def _make_subscriber_with_trades(
     ts = datetime(2024, 1, 1, 0, 0, 0, tzinfo=timezone.utc)
     sub.handle_session_started(SessionStartedEvent(timestamp=ts))
 
-    sub.ledger.record_equity(
-        EquityRecord(timestamp="2024-01-01T00:00:00+00:00", equity=0.0)
-    )
+    sub.ledger.record_equity(EquityRecord(timestamp="2024-01-01T00:00:00+00:00", equity=0.0))
     sub.ledger.record_trade(
         TradeRecord(
             timestamp="2024-01-01T00:00:00+00:00",
@@ -177,9 +180,7 @@ def _make_subscriber_with_trades(
             price=1.21,
         )
     )
-    sub.ledger.record_equity(
-        EquityRecord(timestamp="2024-01-01T01:00:00+00:00", equity=10.0)
-    )
+    sub.ledger.record_equity(EquityRecord(timestamp="2024-01-01T01:00:00+00:00", equity=10.0))
     return sub
 
 
@@ -228,9 +229,7 @@ async def test_session_ended_emits_reporting_complete_event(tmp_path: Path) -> N
 async def test_session_ended_no_output_dir_still_logs_metrics(tmp_path: Path) -> None:
     """When no output_dir is set, metrics are computed but no files are written."""
     sub = RecordingSubscriber()  # no output_dir
-    sub.ledger.record_equity(
-        EquityRecord(timestamp="2024-01-01T00:00:00+00:00", equity=0.0)
-    )
+    sub.ledger.record_equity(EquityRecord(timestamp="2024-01-01T00:00:00+00:00", equity=0.0))
     sub.ledger.record_trade(
         TradeRecord(
             timestamp="2024-01-01T00:00:00+00:00",
@@ -307,9 +306,7 @@ async def test_session_ended_via_dispatcher(tmp_path: Path) -> None:
     start_ts = datetime(2024, 1, 1, 0, 0, 0, tzinfo=timezone.utc)
     await get_dispatcher().publish(SessionStartedEvent(timestamp=start_ts))
 
-    sub.ledger.record_equity(
-        EquityRecord(timestamp="2024-01-01T00:00:00+00:00", equity=0.0)
-    )
+    sub.ledger.record_equity(EquityRecord(timestamp="2024-01-01T00:00:00+00:00", equity=0.0))
     sub.ledger.record_trade(
         TradeRecord(
             timestamp="2024-01-01T00:00:00+00:00",
@@ -328,9 +325,7 @@ async def test_session_ended_via_dispatcher(tmp_path: Path) -> None:
             price=1.21,
         )
     )
-    sub.ledger.record_equity(
-        EquityRecord(timestamp="2024-01-01T01:00:00+00:00", equity=10.0)
-    )
+    sub.ledger.record_equity(EquityRecord(timestamp="2024-01-01T01:00:00+00:00", equity=10.0))
 
     await get_dispatcher().publish(SessionEndedEvent())
 

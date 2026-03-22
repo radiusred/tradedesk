@@ -58,15 +58,17 @@ def load_trades_from_backtest(backtest_dir: Path) -> list[dict[str, str | float]
     # Convert to simple dict format
     trades = []
     for trip in round_trips:
-        trades.append({
-            "instrument": trip.instrument,
-            "direction": trip.direction.value,
-            "entry_ts": trip.entry_ts,
-            "exit_ts": trip.exit_ts,
-            "entry_price": trip.entry_price,
-            "exit_price": trip.exit_price,
-            "size": trip.size,
-            "pnl": trip.pnl,
-        })
+        trades.append(
+            {
+                "instrument": trip.instrument,
+                "direction": trip.direction.value,
+                "entry_ts": trip.entry_ts,
+                "exit_ts": trip.exit_ts,
+                "entry_price": trip.entry_price,
+                "exit_price": trip.exit_price,
+                "size": trip.size,
+                "pnl": trip.pnl,
+            }
+        )
 
     return trades

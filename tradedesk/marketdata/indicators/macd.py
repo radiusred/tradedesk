@@ -91,9 +91,7 @@ class MACD(Indicator):
 
         # Initialize EMAs with SMA when we have enough data
         if self.fast_ema is None and len(self.closes) >= self.fast_period:
-            self.fast_ema = (
-                sum(list(self.closes)[-self.fast_period :]) / self.fast_period
-            )
+            self.fast_ema = sum(list(self.closes)[-self.fast_period :]) / self.fast_period
 
         if self.slow_ema is None and len(self.closes) >= self.slow_period:
             self.slow_ema = sum(self.closes) / self.slow_period
@@ -147,9 +145,7 @@ class MACD(Indicator):
             True if all components (MACD, signal, histogram) are available
         """
         return (
-            self.fast_ema is not None
-            and self.slow_ema is not None
-            and self.signal_ema is not None
+            self.fast_ema is not None and self.slow_ema is not None and self.signal_ema is not None
         )
 
     def reset(self) -> None:

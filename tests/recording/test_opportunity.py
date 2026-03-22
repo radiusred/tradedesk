@@ -73,9 +73,7 @@ class TestInstrumentOpportunity:
 class TestOpportunityRecorder:
     def test_on_instrument_bar_creates_entry(self):
         rec = OpportunityRecorder()
-        rec.on_instrument_bar(
-            instrument="USDJPY", timestamp="2025-01-01T00:00:00Z", active=True
-        )
+        rec.on_instrument_bar(instrument="USDJPY", timestamp="2025-01-01T00:00:00Z", active=True)
         assert "USDJPY" in rec.per_instrument
         assert rec.per_instrument["USDJPY"].bars == 1
 

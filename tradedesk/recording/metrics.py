@@ -40,7 +40,7 @@ class Metrics:
     final_equity: float
     avg_hold_minutes: float
     exits_by_reason: dict[str, int]
-    sharpe_ratio: float 
+    sharpe_ratio: float
 
 
 def _parse_ts(ts: str) -> datetime:
@@ -132,9 +132,7 @@ def round_trips_from_fills(rows: list[dict[str, Any]]) -> list[RoundTrip]:
 
         # If sizes ever differ, this simplistic pairing is insufficient.
         if abs(entry_size - size) > 1e-9:
-            raise ValueError(
-                f"Size mismatch for {instrument}: entry {entry_size} exit {size}"
-            )
+            raise ValueError(f"Size mismatch for {instrument}: entry {entry_size} exit {size}")
 
         pnl = (
             (price - entry_price) * size
@@ -181,9 +179,7 @@ def compute_metrics(
     if reporting_scale <= 0:
         raise ValueError("reporting_scale must be > 0")
 
-    equity = [
-        float(r["equity"]) for r in equity_rows if r.get("equity") not in (None, "")
-    ]
+    equity = [float(r["equity"]) for r in equity_rows if r.get("equity") not in (None, "")]
     final_equity = equity[-1] if equity else 0.0
 
     trips = round_trips_from_fills(trade_rows)
@@ -212,19 +208,19 @@ def compute_metrics(
     daily_pnls: dict[str, float] = {}
     for t in trips:
         # Extract date from exit timestamp (YYYY-MM-DD)
-        day_key = t.exit_ts[:10] 
+        day_key = t.exit_ts[:10]
         daily_pnls[day_key] = daily_pnls.get(day_key, 0.0) + t.pnl
-    
+
     daily_values = list(daily_pnls.values())
     n_days = len(daily_values)
-    
+
     sharpe_ann = 0.0
     if n_days > 1:
         mean_d = sum(daily_values) / n_days
         # Sample standard deviation
         variance_d = sum((x - mean_d) ** 2 for x in daily_values) / (n_days - 1)
         std_d = math.sqrt(variance_d)
-        
+
         if std_d > 0:
             # Annualize by multiplying by sqrt of 252 trading days
             sharpe_ann = (mean_d / std_d) * math.sqrt(252)
@@ -234,12 +230,12 @@ def compute_metrics(
     for t in trips:
         k = t.exit_reason or "unknown"
         exits_by_reason[k] = exits_by_reason.get(k, 0) + 1
-    
+
     hold_mins: list[float] = []
     for t in trips:
         dt = _parse_ts(t.exit_ts) - _parse_ts(t.entry_ts)
         hold_mins.append(dt.total_seconds() / 60.0)
-    
+
     avg_hold = (sum(hold_mins) / len(hold_mins)) if hold_mins else 0.0
 
     return Metrics(
@@ -256,5 +252,5 @@ def compute_metrics(
         final_equity=float(final_equity) * reporting_scale,
         avg_hold_minutes=float(avg_hold),
         exits_by_reason=exits_by_reason,
-        sharpe_ratio=float(sharpe_ann) # The new field
+        sharpe_ratio=float(sharpe_ann),  # The new field
     )

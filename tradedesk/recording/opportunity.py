@@ -39,9 +39,7 @@ class OpportunityRecorder:
     per_instrument: dict[str, InstrumentOpportunity] = field(default_factory=dict)
     _k_active_by_ts: list[tuple[str, int]] = field(default_factory=list)
 
-    def on_instrument_bar(
-        self, *, instrument: str, timestamp: str, active: bool
-    ) -> None:
+    def on_instrument_bar(self, *, instrument: str, timestamp: str, active: bool) -> None:
         rec = self.per_instrument.get(instrument)
         if rec is None:
             rec = InstrumentOpportunity()

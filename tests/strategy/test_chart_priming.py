@@ -3,9 +3,7 @@ from tradedesk.marketdata.subscriptions import ChartSubscription
 
 
 class TestStrategyChartPriming:
-    def test_prime_chart_populates_history_and_indicators(
-        self, DummyStrategy, make_candles
-    ):
+    def test_prime_chart_populates_history_and_indicators(self, DummyStrategy, make_candles):
         Strat = DummyStrategy([ChartSubscription("EPIC", "1MINUTE")])
         strat = Strat(data_provider=None)
 

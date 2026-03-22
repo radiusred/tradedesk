@@ -135,12 +135,8 @@ class TestReconcile:
     def test_multiple_instruments(self):
         result = reconcile(
             journal_positions={
-                "USDJPY": _journal_entry(
-                    instrument="USDJPY", direction="long", size=1.0
-                ),
-                "GBPUSD": _journal_entry(
-                    instrument="GBPUSD", direction="short", size=2.0
-                ),
+                "USDJPY": _journal_entry(instrument="USDJPY", direction="long", size=1.0),
+                "GBPUSD": _journal_entry(instrument="GBPUSD", direction="short", size=2.0),
             },
             broker_positions=[
                 _broker_pos(instrument="USDJPY", direction="BUY", size=1.0),
@@ -157,9 +153,7 @@ class TestReconciliationResult:
 
         result = ReconciliationResult(
             entries=[
-                ReconciliationEntry(
-                    instrument="X", discrepancy=DiscrepancyType.MATCHED
-                ),
+                ReconciliationEntry(instrument="X", discrepancy=DiscrepancyType.MATCHED),
             ]
         )
         assert result.is_clean
@@ -169,9 +163,7 @@ class TestReconciliationResult:
 
         result = ReconciliationResult(
             entries=[
-                ReconciliationEntry(
-                    instrument="X", discrepancy=DiscrepancyType.FAILED_EXIT
-                ),
+                ReconciliationEntry(instrument="X", discrepancy=DiscrepancyType.FAILED_EXIT),
             ]
         )
         assert result.has_emergencies
@@ -181,12 +173,8 @@ class TestReconciliationResult:
 
         result = ReconciliationResult(
             entries=[
-                ReconciliationEntry(
-                    instrument="X", discrepancy=DiscrepancyType.ORPHAN_BROKER
-                ),
-                ReconciliationEntry(
-                    instrument="Y", discrepancy=DiscrepancyType.MATCHED
-                ),
+                ReconciliationEntry(instrument="X", discrepancy=DiscrepancyType.ORPHAN_BROKER),
+                ReconciliationEntry(instrument="Y", discrepancy=DiscrepancyType.MATCHED),
             ]
         )
         assert len(result.orphan_broker_positions) == 1
@@ -196,9 +184,7 @@ class TestReconciliationResult:
 
         result = ReconciliationResult(
             entries=[
-                ReconciliationEntry(
-                    instrument="X", discrepancy=DiscrepancyType.PHANTOM_LOCAL
-                ),
+                ReconciliationEntry(instrument="X", discrepancy=DiscrepancyType.PHANTOM_LOCAL),
             ]
         )
         assert len(result.phantom_local_positions) == 1
@@ -281,14 +267,10 @@ class TestReconciliationManager:
         manager._journal.save.assert_called_once()
 
     @pytest.mark.asyncio
-    async def test_startup_broker_failure(
-        self, manager, mock_client, mock_journal, mock_runner
-    ):
+    async def test_startup_broker_failure(self, manager, mock_client, mock_journal, mock_runner):
         """Broker fails, restore from journal."""
         mock_client.get_positions.side_effect = Exception("Broker down")
-        mock_journal.load.return_value = [
-            _journal_entry(instrument="USDJPY", direction="long")
-        ]
+        mock_journal.load.return_value = [_journal_entry(instrument="USDJPY", direction="long")]
 
         restored = await manager.reconcile_on_startup()
 
@@ -297,9 +279,7 @@ class TestReconciliationManager:
         strat.restore_from_journal.assert_called_once()
 
     @pytest.mark.asyncio
-    async def test_periodic_reconcile_correction(
-        self, manager, mock_client, mock_runner
-    ):
+    async def test_periodic_reconcile_correction(self, manager, mock_client, mock_runner):
         """Periodic check finds discrepancy and fixes it."""
         # Setup: Strategy thinks flat, Broker has position
         mock_client.get_positions.return_value = [

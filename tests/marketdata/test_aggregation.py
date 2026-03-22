@@ -87,18 +87,10 @@ def test_state_is_independent_per_instrument() -> None:
     base_ts = 1767225600000  # 2026-01-01 00:00:00 UTC
     a1 = Candle(timestamp=base_ts + 12 * 60 * 1000, open=1, high=2, low=0.5, close=1.5)
     b1 = Candle(timestamp=base_ts + 12 * 60 * 1000, open=10, high=11, low=9, close=10.5)
-    a2 = Candle(
-        timestamp=base_ts + 17 * 60 * 1000, open=1.5, high=3, low=1.4, close=2.5
-    )
-    b2 = Candle(
-        timestamp=base_ts + 17 * 60 * 1000, open=10.5, high=12, low=10, close=11.5
-    )
-    a3 = Candle(
-        timestamp=base_ts + 22 * 60 * 1000, open=2.5, high=4, low=2.0, close=3.0
-    )
-    b3 = Candle(
-        timestamp=base_ts + 22 * 60 * 1000, open=11.5, high=13, low=11, close=12.0
-    )
+    a2 = Candle(timestamp=base_ts + 17 * 60 * 1000, open=1.5, high=3, low=1.4, close=2.5)
+    b2 = Candle(timestamp=base_ts + 17 * 60 * 1000, open=10.5, high=12, low=10, close=11.5)
+    a3 = Candle(timestamp=base_ts + 22 * 60 * 1000, open=2.5, high=4, low=2.0, close=3.0)
+    b3 = Candle(timestamp=base_ts + 22 * 60 * 1000, open=11.5, high=13, low=11, close=12.0)
 
     assert agg.update(instrument=inst_a, candle=a1) is None
     assert agg.update(instrument=inst_b, candle=b1) is None
