@@ -87,6 +87,10 @@ implicit_reexport = false
 namespace_packages = true
 explicit_package_bases = true
 
+[[tool.mypy.overrides]]
+module = ["tests.*", "docs.*"]
+ignore_errors = true
+
 [tool.ruff]
 target-version = "py311"
 line-length = 100

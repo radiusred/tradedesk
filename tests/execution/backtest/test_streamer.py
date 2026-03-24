@@ -5,10 +5,9 @@ from __future__ import annotations
 import pytest
 
 from tradedesk.execution.backtest.client import BacktestClient
-from tradedesk.execution.backtest.streamer import BacktestStreamer, CandleSeries, MarketSeries
+from tradedesk.execution.backtest.streamer import BacktestStreamer, CandleSeries
 from tradedesk.marketdata import CandleClosedEvent
 from tradedesk.types import Candle
-
 
 # ---------------------------------------------------------------------------
 # Helpers

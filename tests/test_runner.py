@@ -5,8 +5,6 @@ Tests for the runner module.
 
 from unittest.mock import AsyncMock, MagicMock, patch
 
-import pytest
-
 from tradedesk.portfolio.base import BasePortfolio
 from tradedesk.runner import configure_logging, run_portfolio
 

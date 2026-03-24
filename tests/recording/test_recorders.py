@@ -1,8 +1,7 @@
 """Tests for tradedesk.recording.recorders – event-driven recording components."""
 
-import asyncio
-from datetime import datetime, timezone
-from unittest.mock import AsyncMock, MagicMock, patch
+from datetime import datetime
+from unittest.mock import MagicMock, patch
 
 import pytest
 
@@ -66,7 +65,7 @@ class TestEquityRecorder:
         dispatcher = get_dispatcher()
         dispatcher._handlers.clear()
 
-        recorder = EquityRecorder(mock_client, target_period="15MINUTE")
+        _ = EquityRecorder(mock_client, target_period="15MINUTE")
 
         assert CandleClosedEvent in dispatcher._handlers
         handlers = dispatcher._handlers[CandleClosedEvent]
@@ -196,7 +195,7 @@ class TestExcursionComputer:
         dispatcher = get_dispatcher()
         dispatcher._handlers.clear()
 
-        computer = ExcursionComputer(candle_index)
+        _ = ExcursionComputer(candle_index)
 
         assert PositionOpenedEvent in dispatcher._handlers
         assert PositionClosedEvent in dispatcher._handlers
@@ -385,7 +384,7 @@ class TestExcursionComputer:
         """Should log exception and continue if excursion computation fails."""
         # Create computer with empty candle index to trigger error
         empty_index = CandleIndex(ts=[], high=[], low=[])
-        computer = ExcursionComputer(empty_index)
+        _ = ExcursionComputer(empty_index)
 
         published_events = []
 
@@ -405,7 +404,7 @@ class TestExcursionComputer:
         )
         await dispatcher.publish(open_event)
 
-        with patch("tradedesk.recording.recorders.log") as mock_log:
+        with patch("tradedesk.recording.recorders.log"):
             candle_event = CandleClosedEvent(
                 instrument="EURUSD",
                 timeframe="15MINUTE",
@@ -457,7 +456,7 @@ class TestProgressLogger:
         dispatcher = get_dispatcher()
         dispatcher._handlers.clear()
 
-        logger = ProgressLogger(target_period="15MINUTE")
+        _ = ProgressLogger(target_period="15MINUTE")
 
         assert CandleClosedEvent in dispatcher._handlers
 
@@ -470,7 +469,7 @@ class TestProgressLogger:
         dispatcher = get_dispatcher()
         dispatcher._handlers.clear()
 
-        logger = ProgressLogger(target_period="15MINUTE")
+        _logger = ProgressLogger(target_period="15MINUTE")
 
         with patch("tradedesk.recording.recorders.log") as mock_log:
             # Non-target period candle
@@ -499,7 +498,7 @@ class TestProgressLogger:
         dispatcher = get_dispatcher()
         dispatcher._handlers.clear()
 
-        logger = ProgressLogger()  # No target_period
+        _ = ProgressLogger()  # No target_period
 
         # Should not have any handlers
         assert len(dispatcher._handlers) == 0
@@ -535,7 +534,7 @@ class TestTrackerSync:
         dispatcher = get_dispatcher()
         dispatcher._handlers.clear()
 
-        sync = TrackerSync(mock_policy)
+        _ = TrackerSync(mock_policy)
 
         assert PositionOpenedEvent in dispatcher._handlers
         assert PositionClosedEvent in dispatcher._handlers
@@ -604,7 +603,7 @@ class TestTrackerSync:
         dispatcher._handlers.clear()
 
         policy_no_tracker = MagicMock(spec=[])  # No tracker attribute
-        sync = TrackerSync(policy_no_tracker)
+        _ = TrackerSync(policy_no_tracker)
 
         # Open and close position
         open_event = PositionOpenedEvent(

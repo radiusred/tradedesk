@@ -4,7 +4,7 @@ import csv
 
 import pytest
 
-from tradedesk.recording.excursions import CandleIndex, build_candle_index
+from tradedesk.recording.excursions import build_candle_index
 from tradedesk.recording.ledger import TradeLedger, trade_rows_from_trades
 from tradedesk.recording.types import EquityRecord, RecordingMode, TradeRecord
 from tradedesk.types import Candle
