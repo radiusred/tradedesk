@@ -5,7 +5,6 @@ from __future__ import annotations
 from datetime import date
 from pathlib import Path
 
-import pandas as pd
 import pytest
 import zstandard as zstd
 
@@ -27,8 +26,8 @@ from tradedesk.execution.backtest.dukascopy import (
 
 def _make_candle_csv(rows: list[tuple[str, float, float, float, float, float]]) -> str:
     lines = ["timestamp,open,high,low,close,volume"]
-    for ts, o, h, l, c, v in rows:
-        lines.append(f"{ts},{o},{h},{l},{c},{v}")
+    for ts, o, h, lo, c, v in rows:
+        lines.append(f"{ts},{o},{h},{lo},{c},{v}")
     return "\n".join(lines) + "\n"
 
 
@@ -390,10 +389,10 @@ def test_iter_dukascopy_candles_yields_same_as_read(tmp_path: Path) -> None:
     )
 
     assert len(eager) == len(lazy)
-    for e, l in zip(eager, lazy):
-        assert e.timestamp == l.timestamp
-        assert abs(e.open - l.open) < 1e-9
-        assert abs(e.close - l.close) < 1e-9
+    for e, la in zip(eager, lazy):
+        assert e.timestamp == la.timestamp
+        assert abs(e.open - la.open) < 1e-9
+        assert abs(e.close - la.close) < 1e-9
 
 
 def test_iter_dukascopy_candles_empty_range(tmp_path: Path) -> None:
