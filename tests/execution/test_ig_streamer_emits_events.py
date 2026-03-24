@@ -1,5 +1,6 @@
 import asyncio
 from collections.abc import Mapping
+from typing import Any
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
@@ -12,13 +13,13 @@ from tradedesk.strategy.base import BaseStrategy
 
 
 class FakeSubscription:
-    def __init__(self, mode, items, fields):
+    def __init__(self, mode: str, items: list[str], fields: list[str]) -> None:
         self.mode = mode
         self.items = items
         self.fields = fields
-        self._listener = None
+        self._listener: Any = None
 
-    def addListener(self, listener):
+    def addListener(self, listener: Any) -> None:
         self._listener = listener
 
 
@@ -40,12 +41,12 @@ class Strategy(BaseStrategy):
         ChartSubscription("CS.D.EURUSD.CFD.IP", "5MINUTE"),
     ]
 
-    async def on_price_update(self, instrument, bid, offer, timestamp, raw_data):
+    async def on_price_update(self, market_data: MarketData) -> None:
         pass
 
 
 @pytest.mark.asyncio
-async def test_lightstreamer_emits_marketdata_and_candleclose_and_disconnects():
+async def test_lightstreamer_emits_marketdata_and_candleclose_and_disconnects() -> None:
     # Patch Subscription class used by streamer
     ig_streamer.Subscription = FakeSubscription  # type: ignore[attr-defined]
 
@@ -56,7 +57,7 @@ async def test_lightstreamer_emits_marketdata_and_candleclose_and_disconnects():
     # Capture subscriptions passed to subscribe()
     subscribed = []
 
-    def subscribe(sub):
+    def subscribe(sub: Any) -> None:
         subscribed.append(sub)
 
     ls_client.subscribe.side_effect = subscribe
