@@ -296,8 +296,7 @@ The implementation uses two cooperating components:
 ```python
 from dataclasses import dataclass
 
-from tradedesk.indicators.ema import EMA
-from tradedesk.indicators.atr import ATR
+from tradedesk.marketdata.indicators import ATR, EMA
 
 
 @dataclass

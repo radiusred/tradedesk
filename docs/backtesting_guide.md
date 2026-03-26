@@ -1,12 +1,12 @@
 # Backtesting Guide
 
 This guide covers running backtests with tradedesk using candle data loaded from
-CSV files or supplied in-memory.
+the Dukascopy cache or supplied in-memory.
 
 By the end you will have:
 
 - A working strategy
-- A CSV-driven backtest via `run_portfolio`
+- A cache-backed backtest via `run_portfolio`
 - A full recorded backtest via `run_backtest` (with metrics and trade output)
 
 The same strategy runs live against a broker without modification.
@@ -19,21 +19,30 @@ The same strategy runs live against a broker without modification.
 my_backtest/
     strategy.py
     run_backtest.py
-    candles.csv
 ```
 
 ---
 
-## 2. Candle CSV Format
+## 2. Dukascopy Cache Input
 
-```
-timestamp,open,high,low,close,volume
-2025-01-01T00:00:00Z,1.2500,1.2510,1.2490,1.2505,1000
-2025-01-01T00:05:00Z,1.2505,1.2520,1.2500,1.2515,800
-```
+`BacktestClient.from_dukascopy_cache(...)` reads 1-minute candle files from a
+Dukascopy cache directory and aggregates them to the period your strategy
+subscribes to.
 
-Fields `volume` and `tick_count` are optional.
-Timestamps may use `-` or `/` as date separators, with or without a trailing `Z`.
+Required inputs:
+
+- `cache_dir`: root cache directory
+- `symbol`: cache symbol folder, for example `GBPUSD`
+- `instrument`: instrument identifier used by your strategy
+- `period`: target tradedesk period such as `5MINUTE` or `HOUR`
+- `date_from` / `date_to`: inclusive date range
+- `price_side`: `"bid"` or `"ask"` (`"bid"` is the default)
+
+Example shared cache location used at Radius Red:
+
+```text
+/paperclip/tradedesk/marketdata/GBPUSD/2026/00/01_bid.csv.zst
+```
 
 ---
 
@@ -82,6 +91,8 @@ code path as live trading.
 
 ```python
 # run_backtest.py
+from datetime import date
+
 from tradedesk import SimplePortfolio, run_portfolio
 from tradedesk.execution.backtest.client import BacktestClient
 
@@ -89,10 +100,14 @@ from strategy import SimpleMomentumStrategy
 
 
 def client_factory():
-    return BacktestClient.from_csv(
-        "candles.csv",
+    return BacktestClient.from_dukascopy_cache(
+        "/paperclip/tradedesk/marketdata",
+        symbol="GBPUSD",
         instrument="CS.D.GBPUSD.TODAY.IP",
         period="5MINUTE",
+        date_from=date(2025, 1, 1),
+        date_to=date(2025, 1, 31),
+        price_side="bid",
     )
 
 
@@ -112,7 +127,14 @@ To capture the client for inspection, use a closure:
 created = {}
 
 def client_factory():
-    c = BacktestClient.from_csv("candles.csv", instrument="CS.D.GBPUSD.TODAY.IP", period="5MINUTE")
+    c = BacktestClient.from_dukascopy_cache(
+        "/paperclip/tradedesk/marketdata",
+        symbol="GBPUSD",
+        instrument="CS.D.GBPUSD.TODAY.IP",
+        period="5MINUTE",
+        date_from=date(2025, 1, 1),
+        date_to=date(2025, 1, 31),
+    )
     created["client"] = c
     return c
 
@@ -169,6 +191,7 @@ run_portfolio(
 
 ```python
 import asyncio
+from datetime import date
 from pathlib import Path
 
 from tradedesk import SimplePortfolio
@@ -181,7 +204,11 @@ async def main():
     spec = BacktestSpec(
         instrument="CS.D.GBPUSD.TODAY.IP",
         period="5MINUTE",
-        candle_csv=Path("candles.csv"),
+        cache_dir=Path("/paperclip/tradedesk/marketdata"),
+        symbol="GBPUSD",
+        date_from=date(2025, 1, 1),
+        date_to=date(2025, 1, 31),
+        price_side="bid",
         half_spread_adjustment=0.5,  # add half the spread to BID-sourced candles
     )
 

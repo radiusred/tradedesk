@@ -1,6 +1,6 @@
 # Performance Metrics Guide
 
-The `tradedesk.metrics` module provides tools for analyzing trading strategy performance.
+The `tradedesk.recording` module provides tools for analyzing trading strategy performance.
 
 ## Overview
 
@@ -13,7 +13,7 @@ The metrics module helps you:
 ## Quick Start
 
 ```python
-from tradedesk.metrics import compute_metrics
+from tradedesk.recording import compute_metrics
 
 # Your trade fills
 trade_rows = [
@@ -44,7 +44,7 @@ print(f"Max Drawdown: {metrics.max_drawdown:.2f}")
 Convert fill history into complete round-trip trades:
 
 ```python
-from tradedesk.metrics import round_trips_from_fills
+from tradedesk.recording import round_trips_from_fills
 
 fills = [
     {"instrument": "EURUSD", "direction": "BUY", "timestamp": "2025-01-01T10:00:00Z", "price": "1.1000", "size": "2"},
@@ -86,7 +86,7 @@ trips = round_trips_from_fills(fills)
 The `Metrics` dataclass contains comprehensive performance statistics:
 
 ```python
-from tradedesk.metrics import Metrics, compute_metrics
+from tradedesk.recording import Metrics, compute_metrics
 
 metrics = compute_metrics(equity_rows, trade_rows)
 
@@ -157,7 +157,7 @@ assert metrics.final_equity == 0.0
 Build an equity curve from round-trip P&L:
 
 ```python
-from tradedesk.metrics import round_trips_from_fills, equity_rows_from_round_trips
+from tradedesk.recording import round_trips_from_fills, equity_rows_from_round_trips
 
 fills = [
     {"instrument": "EURUSD", "direction": "BUY", "timestamp": "2025-01-01T00:00:00Z", "price": "100", "size": "1"},
@@ -216,7 +216,7 @@ print(f"Avg win: ${metrics_usd.avg_win}")
 Calculate maximum drawdown from an equity curve:
 
 ```python
-from tradedesk.metrics import max_drawdown
+from tradedesk.recording.metrics import max_drawdown
 
 equity = [100, 110, 105, 95, 120, 115]
 dd = max_drawdown(equity)  # -15.0 (peak 110, trough 95)
@@ -229,7 +229,7 @@ assert max_drawdown([100, 101, 102]) == 0.0  # Monotonic up
 ## Complete Example: Strategy Analysis
 
 ```python
-from tradedesk.metrics import compute_metrics, round_trips_from_fills
+from tradedesk.recording import compute_metrics, round_trips_from_fills
 
 class StrategyAnalyzer:
     def __init__(self):

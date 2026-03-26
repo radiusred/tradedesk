@@ -1,6 +1,6 @@
 # Risk Management Guide
 
-The `tradedesk.risk` and `tradedesk.position` modules provide utilities for position sizing and position state tracking.
+The `tradedesk.portfolio` and `tradedesk.execution` modules provide utilities for position sizing and position state tracking.
 
 ## Position Sizing
 
@@ -9,7 +9,7 @@ The `tradedesk.risk` and `tradedesk.position` modules provide utilities for posi
 The `atr_normalised_size()` function calculates position size based on Average True Range (ATR):
 
 ```python
-from tradedesk.risk import atr_normalised_size
+from tradedesk.portfolio import atr_normalised_size
 
 # Calculate position size
 size = atr_normalised_size(
@@ -61,7 +61,7 @@ size = atr_normalised_size(
 
 ```python
 # Adjust position size based on market volatility
-from tradedesk.indicators import ATR
+from tradedesk.marketdata.indicators import ATR
 
 atr_indicator = ATR(period=14)
 
@@ -86,7 +86,7 @@ if current_atr:
 The `PositionTracker` class maintains state for an open position:
 
 ```python
-from tradedesk.position import PositionTracker
+from tradedesk.execution import PositionTracker
 from tradedesk.types import Direction
 
 # Create tracker
@@ -155,7 +155,7 @@ assert position.mfe_points == 7.0  # 107 - 100 (updated to new max)
 ### Complete Position Lifecycle
 
 ```python
-from tradedesk.position import PositionTracker
+from tradedesk.execution import PositionTracker
 from tradedesk.types import Direction
 
 class MyStrategy:

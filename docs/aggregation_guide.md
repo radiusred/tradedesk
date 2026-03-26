@@ -1,6 +1,6 @@
 # Candle Aggregation Guide
 
-The `tradedesk.aggregation` module provides time-bucketing candle aggregation for converting base-period candles into higher timeframes.
+The `tradedesk.marketdata` module provides time-bucketing candle aggregation for converting base-period candles into higher timeframes.
 
 ## Overview
 
@@ -14,7 +14,7 @@ The `tradedesk.aggregation` module provides time-bucketing candle aggregation fo
 ## Basic Usage
 
 ```python
-from tradedesk.aggregation import CandleAggregator
+from tradedesk.marketdata import CandleAggregator
 from tradedesk import Candle
 
 # Create aggregator for 15-minute candles from 5-minute base period
@@ -49,7 +49,7 @@ assert result.close == 1.125 # Last close
 Use `choose_base_period()` to automatically select an appropriate base period for your broker:
 
 ```python
-from tradedesk.aggregation import choose_base_period
+from tradedesk.marketdata import choose_base_period
 
 # Default: Uses common broker periods (SECOND, 1MINUTE, 5MINUTE, HOUR)
 base = choose_base_period("15MINUTE")  # Returns "1MINUTE"
@@ -157,7 +157,7 @@ The aggregator is gap-tolerant:
 ## Complete Example: Live Aggregation
 
 ```python
-from tradedesk.aggregation import CandleAggregator
+from tradedesk.marketdata import CandleAggregator
 
 class LiveAggregationStrategy:
     def __init__(self, target_period: str):
