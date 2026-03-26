@@ -13,6 +13,14 @@ from tradedesk.types import Candle
 log = logging.getLogger(__name__)
 
 
+@dataclass(frozen=True)
+class _AskPriceUpdate:
+    """Internal sentinel: updates ask price on the client without emitting an event."""
+
+    instrument: str
+    close: float
+
+
 def _parse_ts(ts: str) -> datetime:
     # Normalise common variants to something datetime.fromisoformat understands.
     # Accepts:
@@ -66,6 +74,20 @@ def _candle_gen(
         )
 
 
+def _ask_gen(
+    cseries: CandleSeries, seq: Iterator[int]
+) -> Iterator[tuple[datetime, int, _AskPriceUpdate]]:
+    """Yield (timestamp, seq, _AskPriceUpdate) for each ask candle.
+
+    Ask price updates are injected into the priority queue *before* the
+    corresponding bid candle events (lower seq) so that ask prices are always
+    current when a strategy fires after a bid CandleClosedEvent.
+    """
+    for c in cseries.candles:
+        ts = _parse_ts(c.timestamp)
+        yield (ts, next(seq), _AskPriceUpdate(instrument=cseries.instrument, close=c.close))
+
+
 def _market_gen(
     mseries: MarketSeries, seq: Iterator[int]
 ) -> Iterator[tuple[datetime, int, MarketData]]:
@@ -81,6 +103,11 @@ class BacktestStreamer(Streamer):
 
     Replays MarketData and CandleClosedEvent events in timestamp order across all
     series, calling `strategy._handle_event(...)`.
+
+    Ask-side candle series (``ask_series``) are interleaved in the priority queue
+    *before* the corresponding bid candle events so that ask prices are always
+    current when a strategy fires.  Ask candles never emit ``CandleClosedEvent``
+    to the consumer — they only update the client's internal ask price.
     """
 
     def __init__(
@@ -88,10 +115,12 @@ class BacktestStreamer(Streamer):
         client: Any,
         candle_series: Iterable[CandleSeries],
         market_series: Iterable[MarketSeries],
+        ask_series: Iterable[CandleSeries] | None = None,
     ) -> None:
         self._client = client
         self._candle_series = list(candle_series)
         self._market_series = list(market_series)
+        self._ask_series = list(ask_series) if ask_series is not None else []
         self._connected = False
 
     async def connect(self) -> None:
@@ -109,11 +138,21 @@ class BacktestStreamer(Streamer):
         # CandleClosedEvent or MarketData to be orderable.
         seq = itertools.count()
 
-        streams: list[Iterator[Any]] = [_candle_gen(s, seq) for s in self._candle_series]
+        # Ask streams are added FIRST so their events get lower seq values and
+        # are processed before bid candle events at the same timestamp.
+        streams: list[Iterator[Any]] = [_ask_gen(s, seq) for s in self._ask_series]
+        streams += [_candle_gen(s, seq) for s in self._candle_series]
         streams += [_market_gen(s, seq) for s in self._market_series]
+
+        event_ts: str = ""
 
         try:
             for _, __, event in heapq.merge(*streams):
+                if isinstance(event, _AskPriceUpdate):
+                    # Update ask price only — never forward to consumer.
+                    self._client._set_ask_price(event.instrument, event.close)
+                    continue
+
                 if isinstance(event, MarketData):
                     event_ts = event.timestamp
                     # Mark-to-market uses mid price by default
