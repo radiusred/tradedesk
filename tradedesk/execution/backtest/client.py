@@ -1,5 +1,6 @@
 import csv
 import itertools
+import logging
 from dataclasses import dataclass
 from datetime import date
 from pathlib import Path
@@ -20,6 +21,28 @@ from .streamer import (
     MarketSeries,
 )
 
+log = logging.getLogger(__name__)
+
+
+@dataclass(frozen=True)
+class TransactionCosts:
+    """Optional transaction cost overlays applied on top of bid/ask spread.
+
+    All fields default to zero so existing callers are unaffected.
+
+    Attributes:
+        slippage_points: Fixed adverse slippage per fill in price units.
+        slippage_bps: Proportional slippage in basis points (1 bps = 0.01%).
+        commission_per_fill: Fixed commission charged on every fill (£/€/$).
+        commission_per_round_trip: Fixed commission charged once per closed
+            round trip (£/€/$), at exit.
+    """
+
+    slippage_points: float = 0.0
+    slippage_bps: float = 0.0
+    commission_per_fill: float = 0.0
+    commission_per_round_trip: float = 0.0
+
 
 @dataclass
 class Trade:
@@ -28,6 +51,10 @@ class Trade:
     size: float
     price: float
     timestamp: str | None = None
+    raw_price: float = 0.0
+    spread_cost: float = 0.0
+    slippage_cost: float = 0.0
+    commission_cost: float = 0.0
 
 
 @dataclass
@@ -36,6 +63,10 @@ class Position:
     direction: Direction
     size: float
     entry_price: float
+    raw_entry_price: float = 0.0
+    entry_spread_cost: float = 0.0
+    entry_slippage_cost: float = 0.0
+    entry_commission_cost: float = 0.0
 
 
 class BacktestClient(Client):
@@ -57,6 +88,7 @@ class BacktestClient(Client):
     ):
         self._candle_series = candle_series
         self._market_series = market_series or []
+        self._ask_series: list[CandleSeries] = []
 
         self._history: dict[tuple[str, str], list[Candle]] = {
             (s.instrument, s.period): list(s.candles) for s in candle_series
@@ -66,10 +98,12 @@ class BacktestClient(Client):
         self._closed = False
 
         self._mark_price: dict[str, float] = {}
+        self._ask_price: dict[str, float] = {}
         self.trades: list[Trade] = []
         self.positions: dict[str, Position] = {}
         self.realised_pnl: float = 0.0
         self._current_timestamp: str | None = None
+        self._transaction_costs: TransactionCosts = TransactionCosts()
 
     @classmethod
     def from_history(cls, history: dict[tuple[str, str], list[Candle]]) -> "BacktestClient":
@@ -99,14 +133,17 @@ class BacktestClient(Client):
         inst = cls.__new__(cls)
         inst._candle_series = list(candle_series)
         inst._market_series = list(market_series or [])
+        inst._ask_series = []
         inst._history = dict(history)
         inst._started = False
         inst._closed = False
         inst._mark_price = {}
+        inst._ask_price = {}
         inst.trades = []
         inst.positions = {}
         inst.realised_pnl = 0.0
         inst._current_timestamp = None
+        inst._transaction_costs = TransactionCosts()
         return inst
 
     @classmethod
@@ -241,14 +278,27 @@ class BacktestClient(Client):
     async def close(self) -> None:
         self._closed = True
 
+    def set_ask_series(self, ask_series: list[CandleSeries]) -> None:
+        """Register ask-side candle series for bid/ask-aware fill pricing."""
+        self._ask_series = list(ask_series)
+
+    def set_transaction_costs(self, tc: TransactionCosts) -> None:
+        """Configure transaction cost overlays (slippage and commission)."""
+        self._transaction_costs = tc
+
     def get_streamer(self) -> BacktestStreamer:
-        return BacktestStreamer(self, self._candle_series, self._market_series)
+        return BacktestStreamer(
+            self, self._candle_series, self._market_series, ask_series=self._ask_series
+        )
 
     def _set_current_timestamp(self, ts: str) -> None:
         self._current_timestamp = ts
 
     def _set_mark_price(self, instrument: str, price: float) -> None:
         self._mark_price[instrument] = float(price)
+
+    def _set_ask_price(self, instrument: str, price: float) -> None:
+        self._ask_price[instrument] = float(price)
 
     def _get_mark_price(self, instrument: str) -> float:
         if instrument not in self._mark_price:
@@ -294,6 +344,53 @@ class BacktestClient(Client):
         candles = self._history.get((instrument, period), [])
         return candles[-num_points:]
 
+    def _compute_fill_price(
+        self, instrument: str, direction: Direction
+    ) -> tuple[float, float, float, float, float]:
+        """Compute executable fill price with cost decomposition.
+
+        Returns:
+            (fill_price, raw_price, spread_cost, slippage_cost, commission_cost)
+
+        ``fill_price`` is the executable price inclusive of all overlays.
+        ``raw_price`` is the mid price (or bid if ask data unavailable).
+        The three cost fields are in price units, except ``commission_cost``
+        which is the absolute monetary amount for this fill.
+        """
+        bid_price = self._get_mark_price(instrument)
+        ask_price = self._ask_price.get(instrument)
+
+        # Determine executable side
+        if ask_price is not None:
+            # Bid/ask pricing available
+            raw_price = (bid_price + ask_price) / 2
+            if direction == Direction.LONG:
+                exec_price = ask_price  # buy at offer
+            else:
+                exec_price = bid_price  # sell at bid
+            spread_cost = abs(exec_price - raw_price)
+        else:
+            # No ask data — warn if ask series is configured (implies a gap)
+            if self._ask_series:
+                log.warning(
+                    "Missing ask price for %s at %s; using bid price (spread cost = 0)",
+                    instrument,
+                    self._current_timestamp,
+                )
+            raw_price = bid_price
+            exec_price = bid_price
+            spread_cost = 0.0
+
+        # Apply slippage overlay (adverse to the trader)
+        tc = self._transaction_costs
+        slippage = tc.slippage_points + exec_price * tc.slippage_bps / 10_000
+        if direction == Direction.LONG:
+            exec_price += slippage
+        else:
+            exec_price -= slippage
+
+        return exec_price, raw_price, spread_cost, slippage, tc.commission_per_fill
+
     async def place_market_order(
         self,
         instrument: str,
@@ -311,7 +408,9 @@ class BacktestClient(Client):
             raise ValueError("size must be > 0")
 
         _direction = Direction.from_order_side(direction)
-        price = self._get_mark_price(instrument)
+        price, raw_price, spread_cost, slippage_cost, commission_cost = self._compute_fill_price(
+            instrument, _direction
+        )
 
         self.trades.append(
             Trade(
@@ -320,8 +419,15 @@ class BacktestClient(Client):
                 size=float(size),
                 price=price,
                 timestamp=self._current_timestamp,
+                raw_price=raw_price,
+                spread_cost=spread_cost,
+                slippage_cost=slippage_cost,
+                commission_cost=commission_cost,
             )
         )
+
+        # Deduct per-fill commission from realised PnL
+        self.realised_pnl -= commission_cost
 
         # Very simple netting model:
         # - BUY opens/increases LONG, SELL opens/increases SHORT
@@ -334,6 +440,10 @@ class BacktestClient(Client):
                 direction=_direction,
                 size=float(size),
                 entry_price=price,
+                raw_entry_price=raw_price,
+                entry_spread_cost=spread_cost,
+                entry_slippage_cost=slippage_cost,
+                entry_commission_cost=commission_cost,
             )
             # Emit PositionOpenedEvent
             await get_dispatcher().publish(
@@ -347,13 +457,12 @@ class BacktestClient(Client):
             )
         else:
             if pos.direction == _direction:
-                # Increase position: weighted avg entry
+                # Increase position: weighted avg entry (costs tracked from initial open only)
                 new_size = pos.size + float(size)
                 pos.entry_price = (pos.entry_price * pos.size + price * float(size)) / new_size
                 pos.size = new_size
             else:
-                # Opposite direction: close (only supports full close or reduce; compute realised
-                # on reduced amount)
+                # Opposite direction: close (only supports full close or reduce)
                 close_size = min(pos.size, float(size))
 
                 # Compute PnL for the closed portion
@@ -362,11 +471,14 @@ class BacktestClient(Client):
                 else:
                     closed_pnl = (pos.entry_price - price) * close_size
 
+                # Deduct per-round-trip commission at close
+                closed_pnl -= self._transaction_costs.commission_per_round_trip
+
                 self.realised_pnl += closed_pnl
 
                 pos.size -= close_size
                 if pos.size <= 0:
-                    # Position fully closed - emit event
+                    # Position fully closed - emit event with full cost decomposition
                     await get_dispatcher().publish(
                         PositionClosedEvent(
                             instrument=instrument,
@@ -377,6 +489,14 @@ class BacktestClient(Client):
                             pnl=closed_pnl,
                             exit_reason=exit_reason or "market_order",
                             timestamp=parse_timestamp(self._current_timestamp or ""),
+                            raw_entry_price=pos.raw_entry_price,
+                            raw_exit_price=raw_price,
+                            entry_spread_cost=pos.entry_spread_cost,
+                            exit_spread_cost=spread_cost,
+                            entry_slippage_cost=pos.entry_slippage_cost,
+                            exit_slippage_cost=slippage_cost,
+                            entry_commission_cost=pos.entry_commission_cost,
+                            exit_commission_cost=commission_cost,
                         )
                     )
                     self.positions.pop(instrument, None)
@@ -388,6 +508,10 @@ class BacktestClient(Client):
                         direction=_direction,
                         size=residual,
                         entry_price=price,
+                        raw_entry_price=raw_price,
+                        entry_spread_cost=spread_cost,
+                        entry_slippage_cost=slippage_cost,
+                        entry_commission_cost=commission_cost,
                     )
                     # Emit PositionOpenedEvent for the new residual position
                     await get_dispatcher().publish(

@@ -185,6 +185,10 @@ class RecordingSubscriber:
                 size=event.size,
                 price=event.entry_price,
                 reason="entry",
+                raw_price=event.raw_entry_price,
+                spread_cost=event.entry_spread_cost,
+                slippage_cost=event.entry_slippage_cost,
+                commission_cost=event.entry_commission_cost,
             )
             self.ledger.record_trade(entry_trade)
 
@@ -197,6 +201,10 @@ class RecordingSubscriber:
             size=event.size,
             price=event.exit_price,
             reason=event.exit_reason,
+            raw_price=event.raw_exit_price,
+            spread_cost=event.exit_spread_cost,
+            slippage_cost=event.exit_slippage_cost,
+            commission_cost=event.exit_commission_cost,
         )
         self.ledger.record_trade(exit_trade)
 

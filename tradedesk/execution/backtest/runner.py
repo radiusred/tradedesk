@@ -3,7 +3,8 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+import logging
+from dataclasses import dataclass, field
 from datetime import date
 from pathlib import Path
 from typing import TYPE_CHECKING, Callable
@@ -24,7 +25,11 @@ from tradedesk.recording import (
 )
 from tradedesk.types import Candle
 
-from .client import BacktestClient
+from .client import BacktestClient, TransactionCosts
+from .dukascopy import read_dukascopy_candles
+from .streamer import CandleSeries
+
+log = logging.getLogger(__name__)
 
 
 @dataclass(frozen=True)
@@ -41,6 +46,7 @@ class BacktestSpec:
     size: float = 1.0
     half_spread_adjustment: float = 0.0
     reporting_scale: float = 1.0
+    transaction_costs: TransactionCosts = field(default_factory=TransactionCosts)
 
 
 async def run_backtest(
@@ -74,6 +80,30 @@ async def run_backtest(
         price_side=spec.price_side,
     )
     await raw_client.start()
+
+    # Load ask-side candles for bid/ask-aware fill pricing.
+    # Falls back to bid-only fills with a warning when ask data is unavailable.
+    try:
+        ask_candles = read_dukascopy_candles(
+            Path(spec.cache_dir),
+            spec.symbol,
+            spec.period,
+            spec.date_from,
+            spec.date_to,
+            price_side="ask",
+        )
+        raw_client.set_ask_series(
+            [CandleSeries(instrument=spec.instrument, period=spec.period, candles=ask_candles)]
+        )
+    except Exception as exc:
+        log.warning(
+            "Could not load ask candles for %s (%s); bid/ask fill pricing disabled: %s",
+            spec.symbol,
+            spec.period,
+            exc,
+        )
+
+    raw_client.set_transaction_costs(spec.transaction_costs)
 
     # Apply half-spread adjustment if specified (e.g., BID -> MID normalization)
     adj = float(spec.half_spread_adjustment or 0.0)

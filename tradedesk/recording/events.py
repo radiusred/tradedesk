@@ -29,6 +29,15 @@ class PositionClosedEvent(DomainEvent):
     exit_price: float
     pnl: float
     exit_reason: str
+    # Cost decomposition (all default to 0; populated when bid/ask data is available)
+    raw_entry_price: float = 0.0
+    raw_exit_price: float = 0.0
+    entry_spread_cost: float = 0.0
+    exit_spread_cost: float = 0.0
+    entry_slippage_cost: float = 0.0
+    exit_slippage_cost: float = 0.0
+    entry_commission_cost: float = 0.0
+    exit_commission_cost: float = 0.0
 
 
 @event

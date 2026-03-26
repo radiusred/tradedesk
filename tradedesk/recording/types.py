@@ -30,8 +30,13 @@ class TradeRecord:
     instrument: str
     direction: str  # "BUY" or "SELL"
     size: float  # stake (e.g. £/point)
-    price: float  # executed price (IG points)
+    price: float  # executable fill price (ask for BUY, bid for SELL, with overlays applied)
     reason: str = ""
+    # Cost decomposition — all zero when bid/ask data is unavailable or bid/ask mode is disabled
+    raw_price: float = 0.0  # mid price at fill time
+    spread_cost: float = 0.0  # half-spread charged (price units)
+    slippage_cost: float = 0.0  # fixed + proportional slippage (price units)
+    commission_cost: float = 0.0  # commission charged (monetary units, e.g. £)
 
 
 @dataclass(frozen=True)

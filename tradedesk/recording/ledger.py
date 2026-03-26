@@ -29,6 +29,10 @@ def trade_rows_from_trades(trades: list[TradeRecord]) -> list[dict[str, str]]:
             "size": str(t.size),
             "price": str(t.price),
             "reason": t.reason,
+            "raw_price": str(t.raw_price),
+            "spread_cost": str(t.spread_cost),
+            "slippage_cost": str(t.slippage_cost),
+            "commission_cost": str(t.commission_cost),
         }
         for t in trades
     ]
@@ -101,7 +105,20 @@ class TradeLedger:
         path.parent.mkdir(parents=True, exist_ok=True)
         with path.open("w", newline="") as f:
             w = csv.writer(f)
-            w.writerow(["timestamp", "instrument", "direction", "size", "price", "reason"])
+            w.writerow(
+                [
+                    "timestamp",
+                    "instrument",
+                    "direction",
+                    "size",
+                    "price",
+                    "reason",
+                    "raw_price",
+                    "spread_cost",
+                    "slippage_cost",
+                    "commission_cost",
+                ]
+            )
             for t in self.trades:
                 w.writerow(
                     [
@@ -111,6 +128,10 @@ class TradeLedger:
                         round(t.size, 4),
                         t.price,
                         t.reason,
+                        round(t.raw_price, 6) if t.raw_price else "",
+                        round(t.spread_cost, 6) if t.spread_cost else "",
+                        round(t.slippage_cost, 6) if t.slippage_cost else "",
+                        round(t.commission_cost, 4) if t.commission_cost else "",
                     ]
                 )
 
@@ -123,7 +144,8 @@ class TradeLedger:
 
         Output schema:
         instrument,direction,entry_ts,exit_ts,entry_price,exit_price,size,pnl,
-        hold_minutes,exit_reason,mfe_points,mae_points,mfe_pnl,mae_pnl
+        hold_minutes,exit_reason,mfe_points,mae_points,mfe_pnl,mae_pnl,
+        raw_entry_price,raw_exit_price,spread_cost,slippage_cost,commission_cost
         """
         path.parent.mkdir(parents=True, exist_ok=True)
 
@@ -140,6 +162,11 @@ class TradeLedger:
         ]
 
         trips = round_trips_from_fills(trade_rows)
+
+        # Build cost lookup keyed by (instrument, timestamp, direction)
+        cost_lookup: dict[tuple[str, str, str], TradeRecord] = {}
+        for rec in self.trades:
+            cost_lookup[(rec.instrument, rec.timestamp, rec.direction)] = rec
 
         with path.open("w", newline="") as f:
             w = csv.writer(f)
@@ -159,6 +186,11 @@ class TradeLedger:
                     "mae_points",
                     "mfe_pnl",
                     "mae_pnl",
+                    "raw_entry_price",
+                    "raw_exit_price",
+                    "spread_cost",
+                    "slippage_cost",
+                    "commission_cost",
                 ]
             )
 
@@ -183,6 +215,34 @@ class TradeLedger:
                     mfe_pnl_val = round(exc.mfe_pnl, 2)
                     mae_pnl_val = round(exc.mae_pnl, 2)
 
+                # Resolve entry and exit cost records
+                entry_dir = "BUY" if t.direction.value == "long" else "SELL"
+                exit_dir = "SELL" if t.direction.value == "long" else "BUY"
+                entry_rec = cost_lookup.get((t.instrument, t.entry_ts, entry_dir))
+                exit_rec = cost_lookup.get((t.instrument, t.exit_ts, exit_dir))
+
+                raw_entry = (
+                    round(entry_rec.raw_price, 6) if entry_rec and entry_rec.raw_price else ""
+                )
+                raw_exit = (
+                    round(exit_rec.raw_price, 6) if exit_rec and exit_rec.raw_price else ""
+                )
+                rt_spread = round(
+                    (entry_rec.spread_cost if entry_rec else 0.0)
+                    + (exit_rec.spread_cost if exit_rec else 0.0),
+                    6,
+                ) or ""
+                rt_slip = round(
+                    (entry_rec.slippage_cost if entry_rec else 0.0)
+                    + (exit_rec.slippage_cost if exit_rec else 0.0),
+                    6,
+                ) or ""
+                rt_comm = round(
+                    (entry_rec.commission_cost if entry_rec else 0.0)
+                    + (exit_rec.commission_cost if exit_rec else 0.0),
+                    4,
+                ) or ""
+
                 w.writerow(
                     [
                         t.instrument,
@@ -199,6 +259,11 @@ class TradeLedger:
                         mae_pts,
                         mfe_pnl_val,
                         mae_pnl_val,
+                        raw_entry,
+                        raw_exit,
+                        rt_spread,
+                        rt_slip,
+                        rt_comm,
                     ]
                 )
 
