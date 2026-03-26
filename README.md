@@ -61,12 +61,12 @@ Backtesting uses the same event model as live trading.
 
 High-level flow:
 
--   CSV or historical provider feeds market data
--   Backtest runner drives event loop
--   Strategy executes normally
+-   Dukascopy cache data is loaded via `BacktestClient.from_dukascopy_cache(...)`
+-   `run_backtest(...)` drives the event loop and recording pipeline
+-   Strategy code executes unchanged
 -   Portfolio and recording operate identically to live mode
 
-See `docs/backtesting_guide.md` for detailed usage.
+See `docs/backtesting_guide.md` for the current cache-backed workflow.
 
 
 ## Live Trading (IG)
@@ -116,7 +116,19 @@ Users can subscribe to recording events for custom reporting pipelines.
 
 ## Installation
 
-Install using your preferred environment manager. Ensure Python 3.11+.
+Python 3.11+ is required.
+
+Install the published package:
+
+```bash
+pip install tradedesk
+```
+
+For local development:
+
+```bash
+pip install -e '.[dev]'
+```
 
 
 ## Documentation
@@ -131,6 +143,15 @@ See the `docs/` directory for:
 -   Risk management guide
 -   Metrics guide
 
+Public package entry points are grouped under:
+
+-   `tradedesk.marketdata`
+-   `tradedesk.execution`
+-   `tradedesk.execution.backtest`
+-   `tradedesk.portfolio`
+-   `tradedesk.recording`
+-   `tradedesk.strategy`
+
 
 tradedesk is designed for clarity, determinism, and event-level
 transparency.
@@ -142,4 +163,3 @@ Licensed under the Apache License, Version 2.0.
 See: [https://www.apache.org/licenses/LICENSE-2.0](https://www.apache.org/licenses/LICENSE-2.0)
 
 Copyright 2026 [Radius Red Ltd.](https://github.com/radiusred)
-
