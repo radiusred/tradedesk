@@ -11,7 +11,7 @@ from ..marketdata import CandleClosedEvent
 from ..types import Direction
 from .journal import JournalEntry, PositionJournal
 from .runner import PortfolioRunner
-from .types import Instrument, ReconcilableStrategy
+from .types import ReconcilableStrategy
 
 log = logging.getLogger(__name__)
 
@@ -324,7 +324,7 @@ class ReconciliationManager:
                 restored_instruments = self._restore_from_journal(journal_positions)
             return restored_instruments
 
-        managed_instruments = {str(inst) for inst in self._runner.strategies.keys()}
+        managed_instruments = {str(s.instrument) for s in self._runner.strategies.values()}
 
         result = reconcile(
             journal_positions=journal_positions,
@@ -398,9 +398,9 @@ class ReconciliationManager:
     def _restore_from_journal(self, journal_positions: dict[str, JournalEntry]) -> set[str]:
         """Restore positions from journal only (broker unreachable)."""
         restored: set[str] = set()
-        for inst, s in self._runner.strategies.items():
+        for s in self._runner.strategies.values():
             strat = cast(ReconcilableStrategy, s)
-            epic = str(inst)
+            epic = str(s.instrument)
             entry = journal_positions.get(epic)
             if entry is None or entry.direction is None:
                 continue
@@ -428,9 +428,9 @@ class ReconciliationManager:
         broker_by_instrument = {bp.instrument: bp for bp in broker_positions}
         restored: set[str] = set()
 
-        for inst, s in self._runner.strategies.items():
+        for s in self._runner.strategies.values():
             strat = cast(ReconcilableStrategy, s)
-            epic = str(inst)
+            epic = str(s.instrument)
             entry = next((e for e in result.entries if e.instrument == epic), None)
             if entry is None:
                 continue
@@ -511,9 +511,9 @@ class ReconciliationManager:
         or adopted might be stale (e.g. stop-loss breached, regime deactivated).
         This method checks each one and exits immediately if warranted.
         """
-        for inst, s in self._runner.strategies.items():
+        for s in self._runner.strategies.values():
             strat = cast(ReconcilableStrategy, s)
-            epic = str(inst)
+            epic = str(s.instrument)
             if epic not in restored_instruments:
                 continue
             if strat.position.is_flat():
@@ -558,9 +558,9 @@ class ReconciliationManager:
             return
 
         entries = []
-        for inst, s in self._runner.strategies.items():
+        for s in self._runner.strategies.values():
             strat = cast(ReconcilableStrategy, s)
-            entries.append(strat.to_journal_entry(str(inst)))
+            entries.append(strat.to_journal_entry(str(s.instrument)))
 
         self._journal.save(entries)
 
@@ -578,12 +578,12 @@ class ReconciliationManager:
 
         # Build current local state
         journal_positions: dict[str, JournalEntry] = {}
-        for inst, s in self._runner.strategies.items():
+        for s in self._runner.strategies.values():
             strat = cast(ReconcilableStrategy, s)
-            epic = str(inst)
+            epic = str(s.instrument)
             journal_positions[epic] = strat.to_journal_entry(epic)
 
-        managed_instruments = {str(inst) for inst in self._runner.strategies.keys()}
+        managed_instruments = {str(s.instrument) for s in self._runner.strategies.values()}
 
         # Exclude instruments with recent position changes to avoid settlement race
         skipped = self._recently_changed_instruments.copy()
@@ -613,7 +613,11 @@ class ReconciliationManager:
             if entry.discrepancy == DiscrepancyType.MATCHED:
                 continue
 
-            maybe_strat = self._runner.strategies.get(Instrument(entry.instrument))
+            maybe_strat = next(
+                (s for s in self._runner.strategies.values()
+                 if str(s.instrument) == entry.instrument),
+                None,
+            )
             if maybe_strat is None:
                 continue
             strat = cast(ReconcilableStrategy, maybe_strat)

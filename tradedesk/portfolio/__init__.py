@@ -19,6 +19,7 @@ from .types import (
     Instrument,
     PortfolioStrategy,
     ReconcilableStrategy,
+    SleeveId,
     StrategySpec,
 )
 
@@ -42,6 +43,7 @@ __all__ = [
     "ReconciliationResult",
     "RiskAllocationPolicy",
     "SimplePortfolio",
+    "SleeveId",
     "StrategySpec",
     "WeightedRollingTracker",
     "atr_normalised_size",

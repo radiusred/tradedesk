@@ -4,7 +4,7 @@ from abc import ABC, abstractmethod
 from dataclasses import dataclass
 from typing import Mapping
 
-from .types import Instrument
+from .types import Instrument, SleeveId
 
 
 def atr_normalised_size(
@@ -43,19 +43,26 @@ class RiskAllocationPolicy(ABC):
     Base class for portfolio risk allocation policies.
 
     Risk allocation policies determine how to distribute a portfolio's risk budget
-    across multiple instruments based on regime activity or other criteria.
+    across multiple strategy sleeves based on regime activity or other criteria.
+
+    Allocation is keyed by ``SleeveId`` so that two strategies on the same
+    instrument (e.g. ``AdaptiveFade_AUDCAD`` and ``BollingerReversion_AUDCAD``)
+    receive independent risk budgets.
     """
 
     @abstractmethod
-    def allocate(self, active_instruments: list[Instrument]) -> Mapping[Instrument, float]:
+    def allocate(self, active_sleeves: Mapping[SleeveId, Instrument]) -> Mapping[SleeveId, float]:
         """
-        Allocate risk budget across active instruments.
+        Allocate risk budget across active strategy sleeves.
 
         Args:
-            active_instruments: List of instruments to allocate risk to
+            active_sleeves: Mapping of SleeveId to its underlying Instrument for
+                strategies whose regime is currently active.  Passing the instrument
+                allows policies to look up per-instrument history even when sleeve
+                names differ from raw instrument symbols.
 
         Returns:
-            Mapping of instrument to allocated risk amount (typically used as risk_per_trade)
+            Mapping of SleeveId to allocated risk amount (used as risk_per_trade).
         """
         pass
 
@@ -63,27 +70,27 @@ class RiskAllocationPolicy(ABC):
 @dataclass(frozen=True)
 class EqualSplitRiskPolicy(RiskAllocationPolicy):
     """
-    Split a fixed portfolio risk budget across concurrently active regimes.
+    Split a fixed portfolio risk budget equally across concurrently active sleeves.
 
     Semantics:
-      - If k active regimes: allocate budget/k to each active instrument.
-      - If k == 0: allocate nothing (caller decides what to do when no regimes active).
+      - If k active sleeves: allocate budget/k to each active sleeve.
+      - If k == 0: allocate nothing (caller falls back to default_risk_per_trade).
     """
 
     portfolio_risk_budget: float
 
-    def allocate(self, active_instruments: list[Instrument]) -> Mapping[Instrument, float]:
+    def allocate(self, active_sleeves: Mapping[SleeveId, Instrument]) -> Mapping[SleeveId, float]:
         """
-        Allocate risk budget across active instruments.
+        Allocate risk budget across active strategy sleeves.
 
         Args:
-            active_instruments: List of instruments with active regimes
+            active_sleeves: Mapping of SleeveId to its underlying Instrument.
 
         Returns:
-            Mapping of instrument to allocated risk amount
+            Mapping of SleeveId to allocated risk amount.
         """
-        if not active_instruments:
+        if not active_sleeves:
             return {}
-        k = len(active_instruments)
+        k = len(active_sleeves)
         per = float(self.portfolio_risk_budget) / float(k)
-        return {inst: per for inst in active_instruments}
+        return {sleeve: per for sleeve in active_sleeves}

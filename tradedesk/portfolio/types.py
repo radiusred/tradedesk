@@ -5,7 +5,7 @@ This module defines the data structures and interfaces used by the
 instruments.
 """
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any, Callable, NewType, Protocol
 
 if TYPE_CHECKING:
@@ -15,6 +15,7 @@ if TYPE_CHECKING:
     from .journal import JournalEntry
 
 Instrument = NewType("Instrument", str)
+SleeveId = NewType("SleeveId", str)
 
 
 @dataclass(frozen=True)
@@ -31,12 +32,17 @@ class StrategySpec:
         strategy_cls: The strategy class to instantiate.
         kwargs: A dictionary of keyword arguments to pass to the strategy's
             `__init__` method during instantiation.
+        sleeve_name: Optional unique name for this strategy sleeve. If not
+            provided, defaults to ``"{ClassName}_{instrument}"``. Must be
+            unique across all sleeves in a portfolio — two sleeves on the
+            same instrument require explicit distinct names.
     """
 
     instrument: str
     period: str
     strategy_cls: Callable[..., Any]
     kwargs: dict[str, Any]
+    sleeve_name: str | None = field(default=None)
 
 
 class PortfolioStrategy(Protocol):

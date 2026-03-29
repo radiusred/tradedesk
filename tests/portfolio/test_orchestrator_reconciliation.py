@@ -10,7 +10,7 @@ import pytest
 from tradedesk import Direction
 from tradedesk.execution import BrokerPosition
 from tradedesk.execution.position import PositionTracker
-from tradedesk.portfolio import Instrument, JournalEntry, PositionJournal
+from tradedesk.portfolio import Instrument, JournalEntry, PositionJournal, SleeveId
 from tradedesk.portfolio.reconciliation import ReconciliationManager
 from tradedesk.types import Candle
 
@@ -68,6 +68,7 @@ class _FakeStrategy:
     def __init__(self, client=None, epic="", period="", **kwargs):
         self.client = client
         self.epic = epic
+        self.instrument = Instrument(epic)
         self.position = PositionTracker()
         self._on_position_change = None
         self.entry_atr = 0.0
@@ -126,7 +127,7 @@ def _build_manager(epics, *, journal, client=None):
     strategies = {}
     for epic in epics:
         strat = _FakeStrategy(client=client, epic=epic)
-        strategies[Instrument(epic)] = strat
+        strategies[SleeveId(epic)] = strat
 
     runner = MagicMock()
     runner.strategies = strategies
@@ -139,7 +140,7 @@ def _build_manager(epics, *, journal, client=None):
     )
 
     # Register position-change callbacks (mirrors real orchestrator wiring)
-    for inst, strat in strategies.items():
+    for strat in strategies.values():
         strat._on_position_change = mgr.persist_positions
 
     return mgr
@@ -147,7 +148,7 @@ def _build_manager(epics, *, journal, client=None):
 
 def _strat(mgr, epic):
     """Get strategy by epic string."""
-    return mgr._runner.strategies[Instrument(epic)]
+    return mgr._runner.strategies[SleeveId(epic)]
 
 
 @pytest.fixture
