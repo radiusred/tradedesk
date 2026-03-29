@@ -5,7 +5,7 @@ import pytest
 from tradedesk.marketdata.events import CandleClosedEvent
 from tradedesk.portfolio.risk import EqualSplitRiskPolicy
 from tradedesk.portfolio.runner import PortfolioRunner
-from tradedesk.portfolio.types import Instrument
+from tradedesk.portfolio.types import Instrument, SleeveId
 
 
 class FakeStrategy:
@@ -33,16 +33,16 @@ class FakeStrategy:
 
 @pytest.mark.asyncio
 async def test_runner_splits_risk_across_active_strategies():
-    """Test that PortfolioRunner splits risk budget across active strategies."""
+    """Test that PortfolioRunner splits risk budget across active sleeves."""
     s1 = FakeStrategy("EURUSD", active=True)
     s2 = FakeStrategy("GBPUSD", active=True)
     s3 = FakeStrategy("USDJPY", active=False)
 
     r = PortfolioRunner(
         strategies={
-            Instrument("EURUSD"): s1,
-            Instrument("GBPUSD"): s2,
-            Instrument("USDJPY"): s3,
+            SleeveId("s1"): s1,
+            SleeveId("s2"): s2,
+            SleeveId("s3"): s3,
         },
         policy=EqualSplitRiskPolicy(portfolio_risk_budget=10.0),
         default_risk_per_trade=10.0,
@@ -62,3 +62,39 @@ async def test_runner_splits_risk_across_active_strategies():
     assert s1.evaluate_signals_calls == 1
     assert s2.update_state_calls == 0
     assert s2.evaluate_signals_calls == 0
+
+
+@pytest.mark.asyncio
+async def test_runner_fans_out_to_dual_sleeve_same_instrument():
+    """Both sleeves on the same instrument receive the candle and share risk budget."""
+    fade = FakeStrategy("AUDCAD", active=True)
+    bollinger = FakeStrategy("AUDCAD", active=True)
+    other = FakeStrategy("EURUSD", active=False)
+
+    r = PortfolioRunner(
+        strategies={
+            SleeveId("AdaptiveFade_AUDCAD"): fade,
+            SleeveId("BollingerReversion_AUDCAD"): bollinger,
+            SleeveId("BollingerReversion_EURUSD"): other,
+        },
+        policy=EqualSplitRiskPolicy(portfolio_risk_budget=10.0),
+        default_risk_per_trade=10.0,
+    )
+
+    await r.on_candle_close(
+        CandleClosedEvent(instrument=Instrument("AUDCAD"), timeframe="15MINUTE", candle=None)
+    )
+
+    # Both AUDCAD sleeves active -> 5.0 each (2 active out of 3 sleeves)
+    assert fade._rpt == 5.0
+    assert bollinger._rpt == 5.0
+    # Inactive EURUSD sleeve gets default
+    assert other._rpt == 10.0
+    # Both AUDCAD sleeves should have processed the candle
+    assert fade.update_state_calls == 1
+    assert fade.evaluate_signals_calls == 1
+    assert bollinger.update_state_calls == 1
+    assert bollinger.evaluate_signals_calls == 1
+    # EURUSD sleeve should not have processed the AUDCAD candle
+    assert other.update_state_calls == 0
+    assert other.evaluate_signals_calls == 0

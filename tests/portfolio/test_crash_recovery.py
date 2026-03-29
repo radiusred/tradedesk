@@ -20,7 +20,13 @@ import pytest
 
 from tradedesk import Direction
 from tradedesk.execution import BrokerPosition, PositionTracker
-from tradedesk.portfolio import Instrument, JournalEntry, PositionJournal, ReconciliationManager
+from tradedesk.portfolio import (
+    Instrument,
+    JournalEntry,
+    PositionJournal,
+    ReconciliationManager,
+    SleeveId,
+)
 from tradedesk.types import Candle
 
 # ---------------------------------------------------------------------------
@@ -61,6 +67,7 @@ class _FakeStrategy:
 
     def __init__(self, epic: str = "") -> None:
         self.epic = epic
+        self.instrument = Instrument(epic)
         self.position = PositionTracker()
         self.entry_atr: float = 0.0
         self._on_position_change: Callable[[str], None] | None = None
@@ -101,7 +108,7 @@ def _build_manager(
 ) -> ReconciliationManager:
     if client is None:
         client = AsyncMock()
-    strategies = {Instrument(e): _FakeStrategy(e) for e in epics}
+    strategies = {SleeveId(e): _FakeStrategy(e) for e in epics}
     runner = MagicMock()
     runner.strategies = strategies
     mgr = ReconciliationManager(
@@ -111,13 +118,13 @@ def _build_manager(
         target_period="HOUR",
         enable_event_subscription=False,
     )
-    for inst, strat in strategies.items():
+    for strat in strategies.values():
         strat._on_position_change = mgr.persist_positions
     return mgr
 
 
 def _strat(mgr: ReconciliationManager, epic: str) -> _FakeStrategy:
-    return mgr._runner.strategies[Instrument(epic)]  # type: ignore[return-value]
+    return mgr._runner.strategies[SleeveId(epic)]  # type: ignore[return-value]
 
 
 @pytest.fixture

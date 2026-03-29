@@ -14,7 +14,7 @@ from tradedesk.portfolio.reconciliation import (
     _direction_matches,
     reconcile,
 )
-from tradedesk.portfolio.types import Instrument
+from tradedesk.portfolio.types import Instrument, SleeveId
 
 
 def _journal_entry(instrument="USDJPY", direction="long", size=1.0):
@@ -194,6 +194,7 @@ class TestReconciliationManager:
     @pytest.fixture
     def mock_strategy(self):
         strat = Mock()
+        strat.instrument = Instrument("USDJPY")
         strat.position = Mock()
         strat.position.is_flat.return_value = True
         strat.position.direction = None
@@ -209,8 +210,8 @@ class TestReconciliationManager:
     @pytest.fixture
     def mock_runner(self, mock_strategy):
         runner = Mock()
-        # Populate with one default strategy
-        runner.strategies = {Instrument("USDJPY"): mock_strategy}
+        # Populate with one default strategy, keyed by SleeveId
+        runner.strategies = {SleeveId("USDJPY"): mock_strategy}
         return runner
 
     @pytest.fixture
@@ -260,7 +261,7 @@ class TestReconciliationManager:
         restored = await manager.reconcile_on_startup()
 
         assert "USDJPY" in restored
-        strat = mock_runner.strategies[Instrument("USDJPY")]
+        strat = mock_runner.strategies[SleeveId("USDJPY")]
         # Verify open called
         strat.position.open.assert_called_with(Direction.LONG, 1.0, 150.0)
         # Should save to persist the adoption
@@ -275,7 +276,7 @@ class TestReconciliationManager:
         restored = await manager.reconcile_on_startup()
 
         assert "USDJPY" in restored
-        strat = mock_runner.strategies[Instrument("USDJPY")]
+        strat = mock_runner.strategies[SleeveId("USDJPY")]
         strat.restore_from_journal.assert_called_once()
 
     @pytest.mark.asyncio
@@ -289,7 +290,7 @@ class TestReconciliationManager:
         # Force reconcile
         await manager.periodic_reconcile()
 
-        strat = mock_runner.strategies[Instrument("USDJPY")]
+        strat = mock_runner.strategies[SleeveId("USDJPY")]
         strat.position.open.assert_called_with(Direction.LONG, 1.0, 150.0)
         manager._journal.save.assert_called_once()
 
@@ -297,7 +298,7 @@ class TestReconciliationManager:
     async def test_post_warmup_check(self, manager, mock_client, mock_runner):
         """Verifies exit check on restored positions."""
         # Setup strategy to look like it has a position
-        strat = mock_runner.strategies[Instrument("USDJPY")]
+        strat = mock_runner.strategies[SleeveId("USDJPY")]
         strat.position.is_flat.return_value = False
 
         mock_client.get_historical_candles.return_value = [Mock(close=155.0)]
