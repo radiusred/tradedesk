@@ -360,6 +360,22 @@ class BacktestClient(Client):
         bid_price = self._get_mark_price(instrument)
         ask_price = self._ask_price.get(instrument)
 
+        # Guard: reject anomalous ask prices (e.g. corrupted Dukascopy data
+        # where prices are in raw decimal instead of pipettes).
+        if ask_price is not None and bid_price != 0:
+            divergence = abs(ask_price - bid_price) / abs(bid_price)
+            if divergence > 0.05:
+                log.warning(
+                    "Anomalous ask price for %s at %s: bid=%.6f ask=%.6f "
+                    "(divergence=%.2f%%); falling back to bid-only pricing",
+                    instrument,
+                    self._current_timestamp,
+                    bid_price,
+                    ask_price,
+                    divergence * 100,
+                )
+                ask_price = None
+
         # Determine executable side
         if ask_price is not None:
             # Bid/ask pricing available
