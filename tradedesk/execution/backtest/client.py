@@ -362,6 +362,22 @@ class BacktestClient(Client):
 
         # Determine executable side
         if ask_price is not None:
+            # Sanity-check: reject ask prices that diverge wildly from bid
+            # (e.g. data scaled in raw decimals vs pipettes).
+            relative_diff = abs(ask_price - bid_price) / bid_price if bid_price else 0.0
+            if relative_diff > 0.05:
+                log.warning(
+                    "Ask price for %s at %s looks anomalous (bid=%.2f, ask=%.2f, "
+                    "diff=%.1f%%); falling back to bid-only pricing",
+                    instrument,
+                    self._current_timestamp,
+                    bid_price,
+                    ask_price,
+                    relative_diff * 100,
+                )
+                ask_price = None
+
+        if ask_price is not None:
             # Bid/ask pricing available
             raw_price = (bid_price + ask_price) / 2
             if direction == Direction.LONG:

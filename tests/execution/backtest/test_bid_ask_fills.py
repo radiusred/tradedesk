@@ -239,3 +239,19 @@ async def test_position_closed_event_carries_cost_fields() -> None:
     assert ev.exit_commission_cost == pytest.approx(0.5)
 
     dispatcher.unsubscribe(PositionClosedEvent, capture)
+
+
+@pytest.mark.asyncio
+async def test_anomalous_ask_falls_back_to_bid(caplog: pytest.LogCaptureFixture) -> None:
+    """Ask price that diverges >5% from bid is rejected; fills use bid only."""
+    # Simulate corrupted ask data (raw decimal vs pipette scale mismatch)
+    client = _client_with_bid_ask(bid_close=10250.0, ask_close=1.025)
+    await client.start()
+
+    with caplog.at_level(logging.WARNING):
+        result = await client.place_market_order("INST", "BUY", size=1.0)
+
+    # Should fall back to bid-only pricing
+    assert result["price"] == 10250.0
+    assert client.trades[0].spread_cost == 0.0
+    assert "anomalous" in caplog.text
