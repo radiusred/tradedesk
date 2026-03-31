@@ -239,3 +239,32 @@ async def test_position_closed_event_carries_cost_fields() -> None:
     assert ev.exit_commission_cost == pytest.approx(0.5)
 
     dispatcher.unsubscribe(PositionClosedEvent, capture)
+
+
+@pytest.mark.asyncio
+async def test_anomalous_ask_price_falls_back_to_bid(caplog: pytest.LogCaptureFixture) -> None:
+    """Ask prices diverging >5% from bid are treated as corrupted data."""
+    # bid=10250, ask=1.025 simulates corrupted Dukascopy decimal-vs-pipette data
+    client = _client_with_bid_ask(bid_close=10250.0, ask_close=1.025)
+    await client.start()
+
+    with caplog.at_level(logging.WARNING, logger="tradedesk.execution.backtest.client"):
+        result = await client.place_market_order("INST", "BUY", size=1.0)
+
+    # Should fall back to bid-only pricing
+    assert result["price"] == 10250.0
+    assert client.trades[0].spread_cost == 0.0
+    assert client.trades[0].raw_price == 10250.0
+    assert any("Anomalous ask price" in r.message for r in caplog.records)
+
+
+@pytest.mark.asyncio
+async def test_normal_spread_not_rejected() -> None:
+    """Normal bid/ask spreads within 5% are used as-is."""
+    # ~0.5% spread — well within threshold
+    client = _client_with_bid_ask(bid_close=100.0, ask_close=100.5)
+    await client.start()
+
+    result = await client.place_market_order("INST", "BUY", size=1.0)
+
+    assert result["price"] == 100.5  # fills at ask, not fallback
