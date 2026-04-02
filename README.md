@@ -4,6 +4,8 @@
 
 # tradedesk
 
+Contributing: [CONTRIBUTING.md](./CONTRIBUTING.md)
+
 tradedesk is an event-driven trading framework for building, running,
 and evaluating systematic trading strategies across both backtesting and live
 broker environments.
@@ -38,6 +40,10 @@ As a user, you primarily:
 -   Implement a strategy that reacts to candle updates
 -   Optionally subscribe to events for custom analytics or logging
 
+
+## Architecture Overview
+
+For a concise public map of the system, see ARCHITECTURE.md. tradedesk is built around an event-driven core that wires together market data, strategy logic, portfolio management, execution adapters (IG for live trading, Dukascopy-backed backtests), and a recording layer for metrics and reports. The public interfaces expose reusable building blocks (marketdata, strategy, portfolio, recording) with clear data-flow guarantees across backtest and live paths.
 
 ## Basic Strategy Structure
 
