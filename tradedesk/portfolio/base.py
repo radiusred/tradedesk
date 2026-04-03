@@ -44,8 +44,13 @@ class BasePortfolio(ABC):
       - SessionEndedEvent fires on exit
     """
 
-    def __init__(self, client: Client) -> None:
+    def __init__(
+        self,
+        client: Client,
+        spread_limits: dict[str, float] | None = None,
+    ) -> None:
         self._client = client
+        self._spread_limits = spread_limits
         self.last_update = datetime.now(timezone.utc)
         self.subscriptions: list[MarketSubscription | ChartSubscription] = []
         self.watchdog_threshold: float = 60.0
@@ -75,7 +80,9 @@ class BasePortfolio(ABC):
 
     async def run(self) -> None:
         """Full lifecycle: wire services → startup events → stream → shutdown."""
-        _order_handler = OrderExecutionHandler(self._client)  # noqa: F841
+        _order_handler = OrderExecutionHandler(  # noqa: F841
+            self._client, spread_limits=self._spread_limits
+        )
         try:
             await get_dispatcher().publish(SessionStartedEvent())
             await get_dispatcher().publish(SessionReadyEvent())
