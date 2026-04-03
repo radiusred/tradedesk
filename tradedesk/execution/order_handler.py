@@ -75,10 +75,25 @@ async def request_order(request: OrderRequest, *, timeout: float = 30.0) -> Orde
 
 
 class OrderExecutionHandler:
-    """Subscribes to ``OrderRequestEvent`` and executes orders via a Client."""
+    """Subscribes to ``OrderRequestEvent`` and executes orders via a Client.
 
-    def __init__(self, client: Client) -> None:
+    Parameters
+    ----------
+    client:
+        The broker client used to place orders and fetch market data.
+    spread_limits:
+        Optional mapping of instrument (epic) to maximum permitted raw spread
+        (offer − bid in price units).  When set, orders are blocked if the
+        current spread exceeds the threshold.
+    """
+
+    def __init__(
+        self,
+        client: Client,
+        spread_limits: dict[str, float] | None = None,
+    ) -> None:
         self._client = client
+        self._spread_limits = spread_limits or {}
         get_dispatcher().subscribe(OrderRequestEvent, self._on_order_request)
 
     async def _on_order_request(self, event: DomainEvent) -> None:
@@ -95,8 +110,56 @@ class OrderExecutionHandler:
             OrderCompletedEvent(request_id=event.request_id, result=result)
         )
 
+    async def _check_spread(self, instrument: str) -> str | None:
+        """Check if current spread exceeds the configured limit.
+
+        Returns an error message if the spread is too wide, or ``None`` if OK.
+        """
+        max_spread = self._spread_limits.get(instrument)
+        if max_spread is None:
+            return None
+
+        try:
+            snapshot = await self._client.get_market_snapshot(instrument)
+        except Exception as exc:
+            log.warning(
+                "Spread gate: could not fetch snapshot for %s — allowing order: %s",
+                instrument,
+                exc,
+            )
+            return None
+
+        market = (snapshot.get("snapshot") or {}).get("marketData") or {}
+        bid_raw = market.get("bid")
+        offer_raw = market.get("offer")
+
+        if bid_raw is None or offer_raw is None:
+            log.warning(
+                "Spread gate: no bid/offer in snapshot for %s — allowing order",
+                instrument,
+            )
+            return None
+
+        bid = float(bid_raw)
+        offer = float(offer_raw)
+        spread = offer - bid
+
+        if spread > max_spread:
+            return (
+                f"Spread gate blocked order: {instrument} "
+                f"spread {spread:.6f} exceeds limit {max_spread:.6f} "
+                f"(bid={bid}, offer={offer})"
+            )
+        return None
+
     async def _execute(self, request: OrderRequest) -> OrderResult:
         try:
+            # Spread gate: block if current spread is too wide
+            spread_error = await self._check_spread(request.instrument)
+            if spread_error is not None:
+                log.warning(spread_error)
+                return OrderResult(success=False, error=spread_error)
+
             q_size = await self._client.quantise_size(request.instrument, request.size)
 
             resp: dict[str, Any] = await self._client.place_market_order_confirmed(
