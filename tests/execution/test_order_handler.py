@@ -95,7 +95,7 @@ async def test_request_order_uses_fallback_price_field():
 
 
 def _snapshot(bid: float, offer: float) -> dict:
-    return {"snapshot": {"marketData": {"bid": bid, "offer": offer}}}
+    return {"snapshot": {"bid": bid, "offer": offer}}
 
 
 @pytest.mark.asyncio
@@ -176,7 +176,7 @@ async def test_spread_gate_allows_on_snapshot_failure():
 async def test_spread_gate_allows_on_missing_bid_offer():
     """If snapshot lacks bid/offer, the order is allowed through."""
     client = AsyncMock()
-    client.get_market_snapshot.return_value = {"snapshot": {"marketData": {}}}
+    client.get_market_snapshot.return_value = {"snapshot": {}}
     client.quantise_size = AsyncMock(side_effect=lambda inst, size: size)
     client.place_market_order_confirmed.return_value = {"level": 1.1000}
 

@@ -129,9 +129,9 @@ class OrderExecutionHandler:
             )
             return None
 
-        market = (snapshot.get("snapshot") or {}).get("marketData") or {}
-        bid_raw = market.get("bid")
-        offer_raw = market.get("offer")
+        snap = snapshot.get("snapshot") or {}
+        bid_raw = snap.get("bid")
+        offer_raw = snap.get("offer")
 
         if bid_raw is None or offer_raw is None:
             log.warning(
