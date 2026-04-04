@@ -267,17 +267,38 @@ class Lightstreamer(Streamer):
                 )
 
         async def _heartbeat_monitor() -> None:
+            silence_threshold = 300.0  # 5 min of no data → suppress warnings
+            suppressed = False
             while True:
-                await asyncio.sleep(self.heartbeat_sleep)
+                sleep = 60 if suppressed else self.heartbeat_sleep
+                await asyncio.sleep(sleep)
                 delta = (datetime.now(timezone.utc) - consumer.last_update).total_seconds()
                 if delta > consumer.watchdog_threshold:
-                    log.warning(
-                        "❤  Heartbeat Alert: no updates for %s in %.1fs. Connection may be stale.",
-                        consumer.__class__.__name__,
-                        delta,
-                    )
-                elif delta < self.heartbeat_sleep:
-                    log.debug("❤  OK: Last update %.1fs ago", delta)
+                    if not suppressed and delta >= silence_threshold:
+                        log.warning(
+                            "❤  Stream silent for %s (%.0fs). "
+                            "Suppressing heartbeat warnings until data resumes.",
+                            consumer.__class__.__name__,
+                            delta,
+                        )
+                        suppressed = True
+                    elif not suppressed:
+                        log.warning(
+                            "❤  Heartbeat Alert: no updates for %s in %.1fs."
+                            " Connection may be stale.",
+                            consumer.__class__.__name__,
+                            delta,
+                        )
+                else:
+                    if suppressed:
+                        log.info(
+                            "❤  Stream resumed for %s after silence. Last update %.1fs ago.",
+                            consumer.__class__.__name__,
+                            delta,
+                        )
+                        suppressed = False
+                    elif delta < self.heartbeat_sleep:
+                        log.debug("❤  OK: Last update %.1fs ago", delta)
 
         async def market_consumer() -> None:
             while True:

@@ -453,6 +453,45 @@ async def test_heartbeat_monitor_warns_on_stale_connection(
 ) -> None:
     """Heartbeat monitor emits a warning when no updates arrive within the threshold."""
     import logging
+    from datetime import datetime, timedelta, timezone
+
+    ig_streamer.Subscription = FakeSubscription  # type: ignore[attr-defined]
+    ls_client = MagicMock()
+    ls_client.connectionDetails = MagicMock()
+    ig_streamer.LightstreamerClient = lambda *a, **k: ls_client  # type: ignore[attr-defined]
+
+    client = MagicMock()
+    client.ls_url = "https://example"
+    client.ls_cst = "CST"
+    client.ls_xst = "XST"
+    client.client_id = "CID"
+    client.account_id = "AID"
+
+    strat = Strategy(client)
+    strat._handle_event = AsyncMock()  # type: ignore[attr-defined]
+    # Backdate last_update just past the watchdog threshold but under the
+    # silence suppression threshold (300s), so the normal warning fires.
+    strat.last_update = datetime.now(timezone.utc) - timedelta(seconds=120)
+    strat.watchdog_threshold = 60.0
+
+    streamer = ig_streamer.Lightstreamer(client)
+    streamer.heartbeat_sleep = 0  # fast loop for test
+
+    with caplog.at_level(logging.WARNING, logger="tradedesk.execution.ig.price_streamer"):
+        task = asyncio.create_task(streamer.run(strat))
+        await asyncio.sleep(0.05)
+        task.cancel()
+        await task
+
+    assert any("Heartbeat Alert" in r.message for r in caplog.records)
+
+
+@pytest.mark.asyncio
+async def test_heartbeat_suppresses_after_prolonged_silence(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """After prolonged silence (>5 min), heartbeat suppresses repeated warnings."""
+    import logging
     from datetime import datetime, timezone
 
     ig_streamer.Subscription = FakeSubscription  # type: ignore[attr-defined]
@@ -469,7 +508,7 @@ async def test_heartbeat_monitor_warns_on_stale_connection(
 
     strat = Strategy(client)
     strat._handle_event = AsyncMock()  # type: ignore[attr-defined]
-    # Backdate last_update far enough to trigger the watchdog
+    # Backdate far enough to exceed the 300s silence threshold.
     strat.last_update = datetime(2020, 1, 1, tzinfo=timezone.utc)
     strat.watchdog_threshold = 60.0
 
@@ -482,7 +521,9 @@ async def test_heartbeat_monitor_warns_on_stale_connection(
         task.cancel()
         await task
 
-    assert any("Heartbeat Alert" in r.message for r in caplog.records)
+    assert any("Stream silent" in r.message for r in caplog.records)
+    # Should NOT emit repeated "Heartbeat Alert" messages.
+    assert not any("Heartbeat Alert" in r.message for r in caplog.records)
 
 
 @pytest.mark.asyncio
