@@ -16,6 +16,16 @@ from .types import ReconcilableStrategy
 log = logging.getLogger(__name__)
 
 
+def _estimate_entry_atr(strat: ReconcilableStrategy) -> float:
+    """Best-effort ATR estimate from the strategy's regime for adopted positions."""
+    regime = getattr(strat, "regime", None)
+    if regime is not None:
+        atr = getattr(regime, "atr_value", None)
+        if atr is not None:
+            return float(atr)
+    return 0.0
+
+
 class DiscrepancyType(Enum):
     """Classification of journal-vs-broker mismatches."""
 
@@ -454,12 +464,14 @@ class ReconciliationManager:
                 broker_pos = broker_by_instrument.get(epic)
                 entry_price = broker_pos.entry_price if broker_pos else 0.0
                 strat.position.open(direction, entry.broker_size or 0.0, entry_price)
+                strat.entry_atr = _estimate_entry_atr(strat)
                 log.info(
-                    "Adopted orphan: %s %s size=%s entry=%s",
+                    "Adopted orphan: %s %s size=%s entry=%s atr=%s",
                     epic,
                     entry.broker_direction,
                     entry.broker_size,
                     entry_price,
+                    strat.entry_atr,
                 )
                 restored.add(epic)
 
@@ -486,12 +498,14 @@ class ReconciliationManager:
                 broker_pos = broker_by_instrument.get(epic)
                 entry_price = broker_pos.entry_price if broker_pos else 0.0
                 strat.position.open(direction, entry.broker_size or 0.0, entry_price)
+                strat.entry_atr = _estimate_entry_atr(strat)
                 log.warning(
-                    "Adopted broker position: %s %s size=%s entry=%s (was: %s)",
+                    "Adopted broker position: %s %s size=%s entry=%s atr=%s (was: %s)",
                     epic,
                     entry.broker_direction,
                     entry.broker_size,
                     entry_price,
+                    strat.entry_atr,
                     entry.discrepancy.value,
                 )
                 restored.add(epic)
@@ -643,12 +657,14 @@ class ReconciliationManager:
                 bp = broker_by_instrument.get(entry.instrument)
                 entry_price = bp.entry_price if bp else 0.0
                 strat.position.open(direction, entry.broker_size or 0.0, entry_price)
+                strat.entry_atr = _estimate_entry_atr(strat)
                 log.warning(
-                    "Adopted broker position: %s %s size=%s entry=%.4f (was: %s)",
+                    "Adopted broker position: %s %s size=%s entry=%.4f atr=%s (was: %s)",
                     entry.instrument,
                     entry.broker_direction,
                     entry.broker_size,
                     entry_price,
+                    strat.entry_atr,
                     entry.discrepancy.value,
                 )
                 adopted_instruments.add(entry.instrument)
@@ -672,11 +688,13 @@ class ReconciliationManager:
                 entry_price = bp.entry_price if bp else 0.0
                 strat.position.reset()
                 strat.position.open(direction, entry.broker_size or 0.0, entry_price)
+                strat.entry_atr = _estimate_entry_atr(strat)
                 log.warning(
-                    "Direction corrected: %s local=%s broker=%s; adopting broker state",
+                    "Direction corrected: %s local=%s broker=%s; adopting broker state (atr=%s)",
                     entry.instrument,
                     entry.journal_direction,
                     entry.broker_direction,
+                    strat.entry_atr,
                 )
                 adopted_instruments.add(entry.instrument)
                 corrected = True

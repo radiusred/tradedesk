@@ -199,6 +199,9 @@ class TestReconciliationManager:
         strat.position.is_flat.return_value = True
         strat.position.direction = None
         strat.position.size = 0.0
+        strat.entry_atr = 0.0
+        strat.regime = Mock()
+        strat.regime.atr_value = None
         # Default behavior for to_journal_entry
         strat.to_journal_entry.side_effect = lambda inst: _journal_entry(
             instrument=inst, direction=None
@@ -266,6 +269,57 @@ class TestReconciliationManager:
         strat.position.open.assert_called_with(Direction.LONG, 1.0, 150.0)
         # Should save to persist the adoption
         manager._journal.save.assert_called_once()
+
+    @pytest.mark.asyncio
+    async def test_startup_orphan_adoption_sets_entry_atr(
+        self, manager, mock_client, mock_runner
+    ):
+        """Orphan adoption populates entry_atr from regime ATR estimate."""
+        strat = mock_runner.strategies[SleeveId("USDJPY")]
+        strat.regime = Mock()
+        strat.regime.atr_value = 1.25
+
+        mock_client.get_positions.return_value = [
+            _broker_pos(instrument="USDJPY", direction="BUY", size=1.0)
+        ]
+
+        await manager.reconcile_on_startup()
+
+        assert strat.entry_atr == 1.25
+
+    @pytest.mark.asyncio
+    async def test_startup_orphan_adoption_no_regime_atr_defaults_zero(
+        self, manager, mock_client, mock_runner
+    ):
+        """Orphan adoption falls back to 0.0 when regime has no ATR."""
+        strat = mock_runner.strategies[SleeveId("USDJPY")]
+        strat.regime = Mock()
+        strat.regime.atr_value = None
+
+        mock_client.get_positions.return_value = [
+            _broker_pos(instrument="USDJPY", direction="BUY", size=1.0)
+        ]
+
+        await manager.reconcile_on_startup()
+
+        assert strat.entry_atr == 0.0
+
+    @pytest.mark.asyncio
+    async def test_periodic_orphan_adoption_sets_entry_atr(
+        self, manager, mock_client, mock_runner
+    ):
+        """Periodic reconciliation adoption also populates entry_atr."""
+        strat = mock_runner.strategies[SleeveId("USDJPY")]
+        strat.regime = Mock()
+        strat.regime.atr_value = 0.95
+
+        mock_client.get_positions.return_value = [
+            _broker_pos(instrument="USDJPY", direction="BUY", size=1.0)
+        ]
+
+        await manager.periodic_reconcile()
+
+        assert strat.entry_atr == 0.95
 
     @pytest.mark.asyncio
     async def test_startup_broker_failure(self, manager, mock_client, mock_journal, mock_runner):

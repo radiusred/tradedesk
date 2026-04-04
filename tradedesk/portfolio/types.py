@@ -114,6 +114,7 @@ class ReconcilableStrategy(Protocol):
     """
 
     position: "PositionTracker"
+    entry_atr: float
 
     def to_journal_entry(self, instrument: str) -> "JournalEntry":
         """Serialise position and strategy-specific state to a journal entry."""
