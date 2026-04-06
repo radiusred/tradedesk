@@ -89,7 +89,7 @@ docs: update backtesting guide
 If you find a bug or have a feature request, open an issue describing the goal
 and expected behaviour. Include steps to reproduce for bugs.
 
-If unsure about scope or approach, open an issue to discuss before implementing.
+If unsure, open an issue describing the goal and request guidance before implementing.
 
 ---
 
@@ -98,4 +98,4 @@ If unsure about scope or approach, open an issue to discuss before implementing.
 Licensed under the Apache License, Version 2.0.
 See: https://www.apache.org/licenses/LICENSE-2.0
 
-Copyright 2026 [Radius Red Ltd.](https://github.com/radiusred)
+Copyright 2026 [Radius Red Ltd.](https://github.com/radiusred) | [Contact](mailto:opensource@radiusred.uk)
