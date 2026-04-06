@@ -234,4 +234,4 @@ for minute_candle in historical_1min_candles:
 Licensed under the Apache License, Version 2.0.
 See: https://www.apache.org/licenses/LICENSE-2.0
 
-Copyright 2026 [Radius Red Ltd.](https://github.com/radiusred)
+Copyright 2026 [Radius Red Ltd.](https://github.com/radiusred) | [Contact](mailto:opensource@radiusred.uk)
