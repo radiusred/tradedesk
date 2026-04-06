@@ -210,3 +210,12 @@ periodic check to avoid false positives during the broker settlement window
 
 See `tests/portfolio/test_crash_recovery.py` for end-to-end crash simulation
 tests covering all the scenarios described above.
+
+---
+
+## License
+
+Licensed under the Apache License, Version 2.0.
+See: https://www.apache.org/licenses/LICENSE-2.0
+
+Copyright 2026 [Radius Red Ltd.](https://github.com/radiusred) | [Contact](mailto:opensource@radiusred.uk)
