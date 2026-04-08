@@ -6,6 +6,7 @@ from unittest.mock import AsyncMock, MagicMock
 import pytest
 
 import tradedesk.execution.ig.price_streamer as ig_streamer
+from tradedesk.execution.ig.price_streamer import StaleStreamError
 from tradedesk.marketdata.events import CandleClosedEvent
 from tradedesk.marketdata.instrument import MarketData
 from tradedesk.marketdata.subscriptions import ChartSubscription, MarketSubscription
@@ -512,7 +513,7 @@ async def test_heartbeat_suppresses_after_prolonged_silence(
     strat.last_update = datetime(2020, 1, 1, tzinfo=timezone.utc)
     strat.watchdog_threshold = 60.0
 
-    streamer = ig_streamer.Lightstreamer(client)
+    streamer = ig_streamer.Lightstreamer(client, max_stale_seconds=0)
     streamer.heartbeat_sleep = 0  # fast loop for test
 
     with caplog.at_level(logging.WARNING, logger="tradedesk.execution.ig.price_streamer"):
@@ -564,6 +565,73 @@ async def test_heartbeat_threshold_tuned_for_chart_only() -> None:
 
     # For chart-only streams, threshold should be raised to at least one bar (5 minutes)
     assert strat.watchdog_threshold >= 300
+
+    task.cancel()
+    await task
+
+
+@pytest.mark.asyncio
+async def test_stale_stream_raises_after_max_stale_seconds() -> None:
+    """Heartbeat monitor raises StaleStreamError when staleness exceeds max_stale_seconds."""
+    from datetime import datetime, timezone
+
+    ig_streamer.Subscription = FakeSubscription  # type: ignore[attr-defined]
+    ls_client = MagicMock()
+    ls_client.connectionDetails = MagicMock()
+    ig_streamer.LightstreamerClient = lambda *a, **k: ls_client  # type: ignore[attr-defined]
+
+    client = MagicMock()
+    client.ls_url = "https://example"
+    client.ls_cst = "CST"
+    client.ls_xst = "XST"
+    client.client_id = "CID"
+    client.account_id = "AID"
+
+    strat = Strategy(client)
+    strat._handle_event = AsyncMock()  # type: ignore[attr-defined]
+    # Backdate last_update far beyond max_stale_seconds
+    strat.last_update = datetime(2020, 1, 1, tzinfo=timezone.utc)
+    strat.watchdog_threshold = 1.0
+
+    streamer = ig_streamer.Lightstreamer(client, max_stale_seconds=2.0)
+    streamer.heartbeat_sleep = 0  # fast loop for test
+
+    with pytest.raises(StaleStreamError):
+        await streamer.run(strat)
+
+    ls_client.disconnect.assert_called()
+
+
+@pytest.mark.asyncio
+async def test_stale_stream_disabled_when_max_stale_zero() -> None:
+    """Setting max_stale_seconds=0 disables the fatal watchdog (warns only)."""
+    from datetime import datetime, timezone
+
+    ig_streamer.Subscription = FakeSubscription  # type: ignore[attr-defined]
+    ls_client = MagicMock()
+    ls_client.connectionDetails = MagicMock()
+    ig_streamer.LightstreamerClient = lambda *a, **k: ls_client  # type: ignore[attr-defined]
+
+    client = MagicMock()
+    client.ls_url = "https://example"
+    client.ls_cst = "CST"
+    client.ls_xst = "XST"
+    client.client_id = "CID"
+    client.account_id = "AID"
+
+    strat = Strategy(client)
+    strat._handle_event = AsyncMock()  # type: ignore[attr-defined]
+    strat.last_update = datetime(2020, 1, 1, tzinfo=timezone.utc)
+    strat.watchdog_threshold = 1.0
+
+    # max_stale_seconds=0 disables the fatal watchdog
+    streamer = ig_streamer.Lightstreamer(client, max_stale_seconds=0)
+    streamer.heartbeat_sleep = 0
+
+    task = asyncio.create_task(streamer.run(strat))
+    # Let it run a few heartbeat cycles — should NOT raise
+    await asyncio.sleep(0.05)
+    assert not task.done()
 
     task.cancel()
     await task
