@@ -102,3 +102,12 @@ Examples:
 - Tests must pass on Python 3.11–3.14 with `uv run pytest`
 - Coverage must remain above 85%
 - Follow domain import rules in `pyproject.toml` (top-level re-exports only across domains)
+
+---
+
+## License
+
+Licensed under the Apache License, Version 2.0.
+See: https://www.apache.org/licenses/LICENSE-2.0
+
+Copyright 2026 [Radius Red Ltd.](https://github.com/radiusred) | [Contact](mailto:opensource@radiusred.uk)
