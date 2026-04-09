@@ -1,8 +1,19 @@
 """Volume Weighted Average Price (VWAP) indicator implementation."""
 
+from datetime import datetime, timedelta, timezone
+
 from tradedesk.types import Candle
 
 from .base import Indicator
+
+
+def _parse_utc_dt(ts: str) -> datetime:
+    """Parse an ISO-8601 timestamp string to a UTC datetime."""
+    ts = ts.replace("Z", "+00:00")
+    dt = datetime.fromisoformat(ts)
+    if dt.tzinfo is None:
+        dt = dt.replace(tzinfo=timezone.utc)
+    return dt
 
 
 class VWAP(Indicator):
@@ -17,21 +28,43 @@ class VWAP(Indicator):
 
     Session reset:
       - By default, resets when the UTC date (YYYY-MM-DD) changes in the candle timestamp.
-      - Assumes candle timestamps are ISO8601 strings with a leading 'YYYY-MM-DD'.
+      - When ``reset_hour_utc`` is set, resets when the candle crosses that
+        UTC hour boundary instead (e.g. 7 for London open).  This takes
+        precedence over ``reset_daily_utc``.
+      - Assumes candle timestamps are ISO8601 strings.
     """
 
-    def __init__(self, *, use_typical_price: bool = True, reset_daily_utc: bool = True):
+    def __init__(
+        self,
+        *,
+        use_typical_price: bool = True,
+        reset_daily_utc: bool = True,
+        reset_hour_utc: int | None = None,
+    ):
         self.use_typical_price = bool(use_typical_price)
         self.reset_daily_utc = bool(reset_daily_utc)
+        self.reset_hour_utc = reset_hour_utc
 
         self._session_key: str | None = None
         self._cum_pv: float = 0.0
         self._cum_v: float = 0.0
 
+    def _session_key_for(self, ts: str) -> str:
+        """Derive the session key from a candle timestamp."""
+        if self.reset_hour_utc is not None:
+            dt = _parse_utc_dt(ts)
+            hour = self.reset_hour_utc
+            # Session starts at reset_hour_utc; a candle before that hour
+            # belongs to the previous day's session.
+            if dt.hour < hour:
+                dt = dt.replace(hour=0) - timedelta(days=1)
+            return f"{dt.strftime('%Y-%m-%d')}T{hour:02d}"
+        return ts[:10]  # "YYYY-MM-DD"
+
     def update(self, candle: Candle) -> float | None:
         ts = str(candle.timestamp)
-        if self.reset_daily_utc:
-            session_key = ts[:10]  # "YYYY-MM-DD"
+        if self.reset_hour_utc is not None or self.reset_daily_utc:
+            session_key = self._session_key_for(ts)
             if self._session_key is None:
                 self._session_key = session_key
             elif session_key != self._session_key:
