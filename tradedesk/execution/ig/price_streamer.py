@@ -25,10 +25,6 @@ except Exception:  # pragma: no cover
     Subscription = None
 
 
-class StaleStreamError(RuntimeError):
-    """Raised when the Lightstreamer stream has been stale beyond the allowed threshold."""
-
-
 class Lightstreamer(Streamer):
     """
     IG Lightstreamer implementation of the provider-neutral Streamer interface.
@@ -37,11 +33,10 @@ class Lightstreamer(Streamer):
     incoming updates into BaseStrategy callbacks.
     """
 
-    def __init__(self, client: Any, *, max_stale_seconds: float = 300.0):
+    def __init__(self, client: Any):
         self.client = client
         self._ls_client = None
         self.heartbeat_sleep = 10
-        self.max_stale_seconds = max_stale_seconds
 
     async def connect(self) -> None:
         # Connection is established inside run() to preserve the existing flow.
@@ -279,17 +274,6 @@ class Lightstreamer(Streamer):
                 await asyncio.sleep(sleep)
                 delta = (datetime.now(timezone.utc) - consumer.last_update).total_seconds()
                 if delta > consumer.watchdog_threshold:
-                    if self.max_stale_seconds > 0 and delta > self.max_stale_seconds:
-                        log.error(
-                            "❤  FATAL: Stream stale for %.1fs (limit %.1fs). "
-                            "Terminating to trigger container restart.",
-                            delta,
-                            self.max_stale_seconds,
-                        )
-                        raise StaleStreamError(
-                            f"No updates for {delta:.0f}s "
-                            f"(max_stale_seconds={self.max_stale_seconds:.0f})"
-                        )
                     if not suppressed and delta >= silence_threshold:
                         log.warning(
                             "❤  Stream silent for %s (%.0fs). "
