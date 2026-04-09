@@ -12,6 +12,7 @@ from .base import Indicator
 from .bollinger_bands import BollingerBands
 from .cci import CCI
 from .ema import EMA
+from .keltner_channel import KeltnerChannel
 from .macd import MACD
 from .mfi import MFI
 from .obv import OBV
@@ -36,4 +37,5 @@ __all__ = [
     "VWAP",
     "OBV",
     "CCI",
+    "KeltnerChannel",
 ]
