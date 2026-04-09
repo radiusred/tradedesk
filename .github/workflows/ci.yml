@@ -5,6 +5,44 @@ on:
     branches: [ main ]
 
 jobs:
+  library-suitability:
+    name: Public-library suitability check
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Reject deployment-platform strings in library source
+        run: |
+          # Fail if any deployment-platform-specific string appears in library Python source.
+          # These strings signal that code is coupled to a specific deployment environment,
+          # which is never acceptable in a public open-source library.
+          # Docs, config files, and tests are excluded.
+          patterns=(
+            "Cloud Run"
+            "cloud run"
+            "GCP"
+            "Google Cloud"
+            "AWS"
+            "Azure"
+            "Kubernetes"
+            "kubernetes"
+            "container restart"
+            "systemd"
+          )
+          found=0
+          for pattern in "${patterns[@]}"; do
+            if grep -rn --include="*.py" "$pattern" tradedesk/; then
+              echo "ERROR: deployment-platform string '$pattern' found in library source."
+              found=1
+            fi
+          done
+          if [ "$found" -eq 1 ]; then
+            echo ""
+            echo "Library source must not reference deployment platforms."
+            echo "See CONTRIBUTING.md for the public-library contract."
+            exit 1
+          fi
+
   typecheck:
     name: Type check
     runs-on: ubuntu-latest
