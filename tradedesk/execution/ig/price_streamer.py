@@ -26,7 +26,11 @@ except Exception:  # pragma: no cover
 
 
 class StaleStreamError(RuntimeError):
-    """Raised when the Lightstreamer stream has been stale beyond the allowed threshold."""
+    """Raised when the Lightstreamer stream has been stale beyond the allowed threshold.
+
+    This error is used internally to signal that reconnection is needed.
+    Callers can also catch it if ``auto_reconnect`` is disabled.
+    """
 
 
 class Lightstreamer(Streamer):
@@ -35,13 +39,28 @@ class Lightstreamer(Streamer):
 
     This class encapsulates all Lightstreamer-specific wiring and translates
     incoming updates into BaseStrategy callbacks.
+
+    When ``auto_reconnect`` is enabled (the default), the streamer will
+    automatically disconnect and reconnect when the stream is stale for
+    longer than ``max_stale_seconds``.
     """
 
-    def __init__(self, client: Any, *, max_stale_seconds: float = 300.0):
+    def __init__(
+        self,
+        client: Any,
+        *,
+        max_stale_seconds: float = 300.0,
+        auto_reconnect: bool = True,
+        max_reconnect_attempts: int = 0,
+        reconnect_delay: float = 5.0,
+    ):
         self.client = client
-        self._ls_client = None
+        self._ls_client: Any = None
         self.heartbeat_sleep = 10
         self.max_stale_seconds = max_stale_seconds
+        self.auto_reconnect = auto_reconnect
+        self.max_reconnect_attempts = max_reconnect_attempts
+        self.reconnect_delay = reconnect_delay
 
     async def connect(self) -> None:
         # Connection is established inside run() to preserve the existing flow.
@@ -57,6 +76,33 @@ class Lightstreamer(Streamer):
     async def run(self, consumer: Any) -> None:
         if LightstreamerClient is None or Subscription is None:
             raise RuntimeError("Lightstreamer client library not available")
+
+        attempts = 0
+        while True:
+            try:
+                await self._run_session(consumer)
+                return  # clean exit (e.g. cancellation)
+            except StaleStreamError:
+                attempts += 1
+                if not self.auto_reconnect:
+                    raise
+                if self.max_reconnect_attempts > 0 and attempts >= self.max_reconnect_attempts:
+                    log.error(
+                        "Reconnect limit reached (%d attempts). Giving up.",
+                        attempts,
+                    )
+                    raise
+                log.info(
+                    "Reconnecting after stale stream (attempt %d). "
+                    "Waiting %.1fs before reconnect.",
+                    attempts,
+                    self.reconnect_delay,
+                )
+                await asyncio.sleep(self.reconnect_delay)
+
+    async def _run_session(self, consumer: Any) -> None:
+        """Run a single Lightstreamer session until cancellation or stale-stream detection."""
+        assert Subscription is not None  # for type narrowing; guarded by run()
 
         log.info(
             "Starting Lightstreamer streaming for %s subscriptions",
@@ -280,9 +326,9 @@ class Lightstreamer(Streamer):
                 delta = (datetime.now(timezone.utc) - consumer.last_update).total_seconds()
                 if delta > consumer.watchdog_threshold:
                     if self.max_stale_seconds > 0 and delta > self.max_stale_seconds:
-                        log.error(
-                            "❤  FATAL: Stream stale for %.1fs (limit %.1fs). "
-                            "Terminating to trigger container restart.",
+                        log.warning(
+                            "❤  Stream stale for %.1fs (limit %.1fs). "
+                            "Initiating reconnection.",
                             delta,
                             self.max_stale_seconds,
                         )

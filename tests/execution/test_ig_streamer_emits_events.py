@@ -475,7 +475,8 @@ async def test_heartbeat_monitor_warns_on_stale_connection(
     strat.last_update = datetime.now(timezone.utc) - timedelta(seconds=120)
     strat.watchdog_threshold = 60.0
 
-    streamer = ig_streamer.Lightstreamer(client)
+    # Disable reconnect so the warning fires without triggering reconnection
+    streamer = ig_streamer.Lightstreamer(client, max_stale_seconds=0)
     streamer.heartbeat_sleep = 0  # fast loop for test
 
     with caplog.at_level(logging.WARNING, logger="tradedesk.execution.ig.price_streamer"):
@@ -571,14 +572,21 @@ async def test_heartbeat_threshold_tuned_for_chart_only() -> None:
 
 
 @pytest.mark.asyncio
-async def test_stale_stream_raises_after_max_stale_seconds() -> None:
-    """Heartbeat monitor raises StaleStreamError when staleness exceeds max_stale_seconds."""
+async def test_stale_stream_reconnects_automatically() -> None:
+    """Streamer disconnects and reconnects when staleness exceeds max_stale_seconds."""
     from datetime import datetime, timezone
 
     ig_streamer.Subscription = FakeSubscription  # type: ignore[attr-defined]
-    ls_client = MagicMock()
-    ls_client.connectionDetails = MagicMock()
-    ig_streamer.LightstreamerClient = lambda *a, **k: ls_client  # type: ignore[attr-defined]
+
+    ls_clients: list[MagicMock] = []
+
+    def make_ls_client(*a: Any, **k: Any) -> MagicMock:
+        c = MagicMock()
+        c.connectionDetails = MagicMock()
+        ls_clients.append(c)
+        return c
+
+    ig_streamer.LightstreamerClient = make_ls_client  # type: ignore[attr-defined]
 
     client = MagicMock()
     client.ls_url = "https://example"
@@ -593,18 +601,28 @@ async def test_stale_stream_raises_after_max_stale_seconds() -> None:
     strat.last_update = datetime(2020, 1, 1, tzinfo=timezone.utc)
     strat.watchdog_threshold = 1.0
 
-    streamer = ig_streamer.Lightstreamer(client, max_stale_seconds=2.0)
+    streamer = ig_streamer.Lightstreamer(
+        client,
+        max_stale_seconds=2.0,
+        max_reconnect_attempts=3,
+        reconnect_delay=0,
+    )
     streamer.heartbeat_sleep = 0  # fast loop for test
 
+    # auto_reconnect is True by default — it should reconnect until max attempts
     with pytest.raises(StaleStreamError):
         await streamer.run(strat)
 
-    ls_client.disconnect.assert_called()
+    # initial session + 2 successful reconnects + final raise on 3rd attempt
+    assert len(ls_clients) == 3
+    # Each old client should have been disconnected
+    for c in ls_clients:
+        c.disconnect.assert_called()
 
 
 @pytest.mark.asyncio
-async def test_stale_stream_disabled_when_max_stale_zero() -> None:
-    """Setting max_stale_seconds=0 disables the fatal watchdog (warns only)."""
+async def test_stale_stream_raises_when_auto_reconnect_disabled() -> None:
+    """StaleStreamError propagates when auto_reconnect is False."""
     from datetime import datetime, timezone
 
     ig_streamer.Subscription = FakeSubscription  # type: ignore[attr-defined]
@@ -624,12 +642,146 @@ async def test_stale_stream_disabled_when_max_stale_zero() -> None:
     strat.last_update = datetime(2020, 1, 1, tzinfo=timezone.utc)
     strat.watchdog_threshold = 1.0
 
-    # max_stale_seconds=0 disables the fatal watchdog
+    streamer = ig_streamer.Lightstreamer(
+        client, max_stale_seconds=2.0, auto_reconnect=False,
+    )
+    streamer.heartbeat_sleep = 0
+
+    with pytest.raises(StaleStreamError):
+        await streamer.run(strat)
+
+    ls_client.disconnect.assert_called()
+
+
+@pytest.mark.asyncio
+async def test_stale_stream_reconnects_unlimited_when_max_zero() -> None:
+    """max_reconnect_attempts=0 means unlimited retries; streamer keeps reconnecting."""
+    from datetime import datetime, timezone
+
+    ig_streamer.Subscription = FakeSubscription  # type: ignore[attr-defined]
+
+    connect_count = 0
+
+    def make_ls_client(*a: Any, **k: Any) -> MagicMock:
+        nonlocal connect_count
+        connect_count += 1
+        c = MagicMock()
+        c.connectionDetails = MagicMock()
+        return c
+
+    ig_streamer.LightstreamerClient = make_ls_client  # type: ignore[attr-defined]
+
+    client = MagicMock()
+    client.ls_url = "https://example"
+    client.ls_cst = "CST"
+    client.ls_xst = "XST"
+    client.client_id = "CID"
+    client.account_id = "AID"
+
+    strat = Strategy(client)
+    strat._handle_event = AsyncMock()  # type: ignore[attr-defined]
+    strat.last_update = datetime(2020, 1, 1, tzinfo=timezone.utc)
+    strat.watchdog_threshold = 1.0
+
+    streamer = ig_streamer.Lightstreamer(
+        client,
+        max_stale_seconds=2.0,
+        max_reconnect_attempts=0,  # unlimited
+        reconnect_delay=0,
+    )
+    streamer.heartbeat_sleep = 0
+
+    task = asyncio.create_task(streamer.run(strat))
+    # Let it reconnect several times
+    await asyncio.sleep(0.15)
+    # Should have reconnected multiple times without giving up
+    assert connect_count >= 3
+
+    task.cancel()
+    await task
+
+
+@pytest.mark.asyncio
+async def test_reconnect_reestablishes_subscriptions() -> None:
+    """After reconnect, the streamer creates fresh LS client and subscriptions."""
+    from datetime import datetime, timezone
+
+    ig_streamer.Subscription = FakeSubscription  # type: ignore[attr-defined]
+
+    connect_calls: list[MagicMock] = []
+    subscribe_calls: list[Any] = []
+
+    def make_ls_client(*a: Any, **k: Any) -> MagicMock:
+        c = MagicMock()
+        c.connectionDetails = MagicMock()
+        c.subscribe.side_effect = lambda sub: subscribe_calls.append(sub)
+        connect_calls.append(c)
+        return c
+
+    ig_streamer.LightstreamerClient = make_ls_client  # type: ignore[attr-defined]
+
+    client = MagicMock()
+    client.ls_url = "https://example"
+    client.ls_cst = "CST"
+    client.ls_xst = "XST"
+    client.client_id = "CID"
+    client.account_id = "AID"
+
+    strat = Strategy(client)
+    strat._handle_event = AsyncMock()  # type: ignore[attr-defined]
+    strat.last_update = datetime(2020, 1, 1, tzinfo=timezone.utc)
+    strat.watchdog_threshold = 1.0
+
+    streamer = ig_streamer.Lightstreamer(
+        client,
+        max_stale_seconds=2.0,
+        max_reconnect_attempts=2,
+        reconnect_delay=0,
+    )
+    streamer.heartbeat_sleep = 0
+
+    with pytest.raises(StaleStreamError):
+        await streamer.run(strat)
+
+    # 2 sessions: initial + 1 successful reconnect, then 2nd attempt hits limit
+    assert len(connect_calls) == 2
+    # Each session creates 2 subscriptions (1 market + 1 chart)
+    assert len(subscribe_calls) == 4
+    # First client disconnected before reconnect
+    connect_calls[0].disconnect.assert_called()
+    # Each session got connect() called
+    for c in connect_calls:
+        c.connect.assert_called_once()
+
+
+@pytest.mark.asyncio
+async def test_stale_stream_disabled_when_max_stale_zero() -> None:
+    """Setting max_stale_seconds=0 disables the reconnect watchdog (warns only)."""
+    from datetime import datetime, timezone
+
+    ig_streamer.Subscription = FakeSubscription  # type: ignore[attr-defined]
+    ls_client = MagicMock()
+    ls_client.connectionDetails = MagicMock()
+    ig_streamer.LightstreamerClient = lambda *a, **k: ls_client  # type: ignore[attr-defined]
+
+    client = MagicMock()
+    client.ls_url = "https://example"
+    client.ls_cst = "CST"
+    client.ls_xst = "XST"
+    client.client_id = "CID"
+    client.account_id = "AID"
+
+    strat = Strategy(client)
+    strat._handle_event = AsyncMock()  # type: ignore[attr-defined]
+    strat.last_update = datetime(2020, 1, 1, tzinfo=timezone.utc)
+    strat.watchdog_threshold = 1.0
+
+    # max_stale_seconds=0 disables the reconnect watchdog
     streamer = ig_streamer.Lightstreamer(client, max_stale_seconds=0)
     streamer.heartbeat_sleep = 0
 
     task = asyncio.create_task(streamer.run(strat))
-    # Let it run a few heartbeat cycles — should NOT raise
+    # Let it run a few heartbeat cycles — should NOT raise or reconnect
     await asyncio.sleep(0.05)
     assert not task.done()
 
