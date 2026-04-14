@@ -83,6 +83,12 @@ class TestPositionJournal:
         (journal_dir / "positions.json").write_text("not valid json!!!")
         assert journal.load() is None
 
+    def test_load_returns_none_on_empty_file(self, journal, journal_dir):
+        """Empty journal file (e.g. fresh container) treated as no journal."""
+        journal_dir.mkdir(parents=True, exist_ok=True)
+        (journal_dir / "positions.json").write_text("")
+        assert journal.load() is None
+
     def test_clear_removes_file(self, journal, journal_dir):
         journal.save([_make_entry()])
         assert (journal_dir / "positions.json").exists()

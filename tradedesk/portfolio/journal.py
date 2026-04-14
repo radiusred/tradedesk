@@ -64,7 +64,11 @@ class PositionJournal:
             return None
 
         try:
-            data = json.loads(self._path.read_text())
+            text = self._path.read_text()
+            if not text.strip():
+                log.debug("Journal file is empty, treating as no journal")
+                return None
+            data = json.loads(text)
             entries = []
             for e in data.get("positions", []):
                 # Backward compat: rename legacy "epic" key to "instrument"
@@ -73,7 +77,10 @@ class PositionJournal:
                 entries.append(JournalEntry(**e))
             return entries
         except Exception:
-            log.exception("Failed to load position journal from %s", self._path)
+            log.warning(
+                "Failed to load position journal from %s, starting fresh",
+                self._path,
+            )
             return None
 
     def clear(self) -> None:
