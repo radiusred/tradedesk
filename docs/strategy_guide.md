@@ -280,6 +280,13 @@ Design goals:
 
 This example is *not* a recommendation for live trading. It is a reference implementation pattern.
 
+## Code alignment
+
+This guide is aligned with the actual code in the public repo paths:
+- Base strategy and lifecycle: `tradedesk/tradedesk/strategy/base.py` (methods like `on_price_update` and `on_candle_close`).
+- Strategy coordination: `tradedesk/tradedesk/strategy` and `ChartSubscription` usage in `strategy/base.py`.
+For hands-on examples, refer to the code comments in those modules; the public docs mirror the implemented behavior to ensure engineers can move from concept to runnable code with confidence.
+
 ### Strategy definition
 
 We will implement:
@@ -598,6 +605,18 @@ def test_open_position_requires_stop():
 These tests are intentionally minimal: they verify the invariants that prevent undefined behaviour.
 
 ---
+
+## Code Alignment
+
+This guide is aligned with the actual code in the public repo paths:
+- `tradedesk/tradedesk/strategy/base.py`
+- `tradedesk/tradedesk/marketdata/subscriptions.py`
+- `tradedesk/tradedesk/execution/backtest/client.py`
+- `tradedesk/tradedesk/execution/backtest/runner.py`
+- `tradedesk/tradedesk/portfolio/base.py`
+- `tradedesk/tradedesk/portfolio/runner.py`
+
+For the backtest-specific anchors, see `docs/backtesting_guide_code_alignment.md`.
 
 ## License
 

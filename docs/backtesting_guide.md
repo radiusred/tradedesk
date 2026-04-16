@@ -11,6 +11,9 @@ By the end you will have:
 
 The same strategy runs live against a broker without modification.
 
+### Code Alignment
+See code alignment document: docs/backtesting_guide_code_alignment.md
+
 ---
 
 ## 1. Project Structure

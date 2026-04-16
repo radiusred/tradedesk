@@ -161,7 +161,16 @@ Public package entry points are grouped under:
 
 tradedesk is designed for clarity, determinism, and event-level
 transparency.
----
+
+## See Also
+- docs/backtesting_guide.md
+- docs/strategy_guide.md
+- docs/indicator_guide.md
+- docs/crash-recovery.md
+
+## Contributing
+
+See CONTRIBUTING.md for guidelines on contributing to tradedesk.
 
 ## License
 
