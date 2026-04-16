@@ -21,6 +21,7 @@ Usage::
 import asyncio
 import logging
 import uuid
+from collections.abc import Callable
 from typing import Any
 
 from tradedesk.execution import Client, OrderCompletedEvent, OrderRequestEvent
@@ -85,15 +86,22 @@ class OrderExecutionHandler:
         Optional mapping of instrument (epic) to maximum permitted raw spread
         (offer − bid in price units).  When set, orders are blocked if the
         current spread exceeds the threshold.
+    order_gate:
+        Optional callable checked before every order execution.  Must return
+        ``None`` to allow the order, or an error string to reject it.  Used
+        by higher-level components (e.g. pause/kill switches) to block new
+        orders without interrupting the streaming loop.
     """
 
     def __init__(
         self,
         client: Client,
         spread_limits: dict[str, float] | None = None,
+        order_gate: Callable[[], str | None] | None = None,
     ) -> None:
         self._client = client
         self._spread_limits = spread_limits or {}
+        self._order_gate = order_gate
         get_dispatcher().subscribe(OrderRequestEvent, self._on_order_request)
 
     async def _on_order_request(self, event: DomainEvent) -> None:
@@ -154,6 +162,13 @@ class OrderExecutionHandler:
 
     async def _execute(self, request: OrderRequest) -> OrderResult:
         try:
+            # Order gate: external pre-flight check (e.g. pause switch)
+            if self._order_gate is not None:
+                gate_error = self._order_gate()
+                if gate_error is not None:
+                    log.warning("Order gate blocked %s: %s", request.instrument, gate_error)
+                    return OrderResult(success=False, error=gate_error)
+
             # Spread gate: block if current spread is too wide
             spread_error = await self._check_spread(request.instrument)
             if spread_error is not None:

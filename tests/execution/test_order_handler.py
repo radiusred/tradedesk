@@ -224,3 +224,64 @@ async def test_spread_gate_blocks_index_instrument():
     assert result.success is False
     assert "Spread gate blocked" in result.error
     client.place_market_order_confirmed.assert_not_awaited()
+
+
+# ---------------------------------------------------------------------------
+# Order gate tests
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_order_gate_blocks_when_returning_error():
+    """Order is blocked when order_gate returns an error string."""
+    client = AsyncMock()
+    client.quantise_size = AsyncMock(side_effect=lambda inst, size: size)
+    client.place_market_order_confirmed.return_value = {"level": 100.0}
+
+    OrderExecutionHandler(client, order_gate=lambda: "paused")
+
+    result = await request_order(
+        OrderRequest(instrument="TEST", direction="BUY", size=1.0)
+    )
+
+    assert result.success is False
+    assert "paused" in result.error
+    client.place_market_order_confirmed.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_order_gate_allows_when_returning_none():
+    """Order proceeds when order_gate returns None."""
+    client = AsyncMock()
+    client.quantise_size = AsyncMock(side_effect=lambda inst, size: size)
+    client.place_market_order_confirmed.return_value = {"level": 100.0}
+
+    OrderExecutionHandler(client, order_gate=lambda: None)
+
+    result = await request_order(
+        OrderRequest(instrument="TEST", direction="BUY", size=1.0)
+    )
+
+    assert result.success is True
+
+
+@pytest.mark.asyncio
+async def test_order_gate_checked_before_spread_gate():
+    """Order gate is checked before the spread gate (no snapshot fetch)."""
+    client = AsyncMock()
+    client.quantise_size = AsyncMock(side_effect=lambda inst, size: size)
+
+    OrderExecutionHandler(
+        client,
+        spread_limits={"TEST": 0.001},
+        order_gate=lambda: "blocked by gate",
+    )
+
+    result = await request_order(
+        OrderRequest(instrument="TEST", direction="BUY", size=1.0)
+    )
+
+    assert result.success is False
+    assert "blocked by gate" in result.error
+    # Spread gate should not be reached
+    client.get_market_snapshot.assert_not_awaited()
