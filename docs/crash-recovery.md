@@ -190,7 +190,30 @@ python -m ig_trader  # or start container
 | WARNING  | `Direction corrected: INSTRUMENT`             | Direction mismatch; broker wins            |
 | CRITICAL | `FAILED EXIT DETECTED: INSTRUMENT`            | **Manual intervention required**           |
 | WARNING  | `restoring from journal only`                 | Broker unavailable at startup              |
-| WARNING  | `Heartbeat Alert: no updates for N in Xs`     | Lightstreamer connection may be stale      |
+| WARNING  | `Heartbeat Alert: no updates for N in Xs`     | Lightstreamer stream is quiet or stale     |
+| INFO     | `Reconnecting after stale stream (attempt N)` | Automatic Lightstreamer reconnect started  |
+
+---
+
+## Stale Stream Recovery
+
+The IG Lightstreamer client now includes a stale-stream watchdog. By default,
+if no updates arrive for longer than `max_stale_seconds`, the streamer raises an
+internal `StaleStreamError`, disconnects, waits for `reconnect_delay`, and
+starts a fresh session automatically.
+
+Operationally this means a heartbeat warning is no longer just an observation.
+In the default configuration it is the precursor to an automatic reconnect
+cycle, not a signal that an operator must restart the process immediately.
+
+Manual action is only required if:
+
+1. `auto_reconnect` has been disabled
+2. A finite `max_reconnect_attempts` limit is reached
+3. The reconnect loop keeps failing because IG or network access is unavailable
+
+If the process exits after repeated stale-stream failures, inspect the logs for
+the reconnect attempt count before restarting the portfolio process.
 
 ---
 

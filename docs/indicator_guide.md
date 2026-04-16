@@ -135,6 +135,48 @@ The choice of multiplier is a strategy parameter, not an indicator concern.
 
 ---
 
+## Keltner Channel
+
+### Conceptual overview
+
+Keltner Channel combines a trend estimate with a volatility envelope.
+
+It uses:
+
+* An EMA for the centre line
+* ATR for the channel width
+
+This makes it useful for:
+
+* Breakout filters
+* Trend-following entry logic
+* Volatility-aware trailing logic
+
+### Mathematical definition
+
+For a period *N* and multiplier *M*:
+
+* Middle = EMA(close, N)
+* Upper = EMA(close, N) + M × ATR(N)
+* Lower = EMA(close, N) − M × ATR(N)
+
+### Interpretation
+
+* Price near the upper band suggests strong upside expansion
+* Price near the lower band suggests strong downside expansion
+* A narrow channel suggests compression; a widening channel suggests rising volatility
+
+### Implementation notes in tradedesk
+
+* `KeltnerChannel` is candle-driven
+* The current implementation uses the same period for both EMA and ATR
+* `update(...)` returns a mapping with `middle`, `upper`, and `lower`
+* The indicator is only ready once both the internal EMA and ATR are ready
+
+As with ATR, strategies should treat `None` channel values as a warmup condition, not as a trade signal.
+
+---
+
 ## Moving Average Convergence Divergence (MACD)
 
 ### Conceptual overview
