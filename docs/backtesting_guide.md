@@ -12,7 +12,8 @@ By the end you will have:
 The same strategy runs live against a broker without modification.
 
 ### Code Alignment
-See code alignment document: docs/backtesting_guide_code_alignment.md
+See [docs/backtesting_guide_code_alignment.md](./backtesting_guide_code_alignment.md)
+for the specific public modules this guide references.
 
 ---
 
@@ -279,4 +280,3 @@ Licensed under the Apache License, Version 2.0.
 See: https://www.apache.org/licenses/LICENSE-2.0
 
 Copyright 2026 [Radius Red Ltd.](https://github.com/radiusred) | [Contact](mailto:opensource@radiusred.uk)
-```

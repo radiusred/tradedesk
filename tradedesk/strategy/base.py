@@ -43,7 +43,7 @@ class BaseStrategy(abc.ABC):
 
     Provides common infrastructure for market data streaming and processing.
     Subclasses implement trading logic by overriding on_price_update() and/or
-    on_candle_update().
+    on_candle_close().
 
     Example:
         class MyStrategy(BaseStrategy):
@@ -193,7 +193,7 @@ class BaseStrategy(abc.ABC):
             - Only chart subscriptions in chart_warmup_plan() are considered.
             - Missing history entries are skipped silently.
             - Extra history entries not present in subscriptions are ignored.
-            - This does NOT call on_candle_update().
+            - This does NOT call on_candle_close().
         """
         for instrument_period, _warmup in self.chart_warmup_plan().items():
             candles = history.get(instrument_period)
@@ -237,7 +237,7 @@ class BaseStrategy(abc.ABC):
 
         Notes:
         - Candles are assumed to be ordered oldest -> newest.
-        - This does NOT call on_candle_update(), so strategy trading logic is not triggered.
+        - This does NOT call on_candle_close(), so strategy trading logic is not triggered.
         """
         key = (sub.instrument, sub.period)
 

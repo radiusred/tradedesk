@@ -54,7 +54,7 @@ Typical flow:
 
 1.  Market data arrives (tick or candle)
 2.  Aggregation produces candles
-3.  Strategy receives `on_candle_update`
+3.  Strategy receives `on_candle_close`
 4.  Strategy emits order requests
 5.  Execution layer processes orders
 6.  Portfolio updates positions
@@ -97,7 +97,8 @@ The portfolio subsystem:
 -   Reconciles fills
 -   Emits portfolio events
 
-Risk controls can reject or modify orders before execution.
+Risk controls such as spread limits and portfolio-level order gates can reject
+orders before broker submission.
 
 
 ## Recording & Reporting
