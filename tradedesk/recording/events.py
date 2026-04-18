@@ -38,6 +38,8 @@ class PositionClosedEvent(DomainEvent):
     exit_slippage_cost: float = 0.0
     entry_commission_cost: float = 0.0
     exit_commission_cost: float = 0.0
+    financing_cost: float = 0.0
+    admin_cost: float = 0.0
 
 
 @event

@@ -2,7 +2,7 @@ import csv
 import itertools
 import logging
 from dataclasses import dataclass
-from datetime import date
+from datetime import date, timedelta
 from pathlib import Path
 from typing import Any
 
@@ -44,6 +44,22 @@ class TransactionCosts:
     commission_per_round_trip: float = 0.0
 
 
+@dataclass(frozen=True)
+class FinancingCosts:
+    """Per-instrument overnight financing and admin fee model.
+
+    IG charges financing + admin fees daily on open positions.  On Fridays,
+    a multiplier is applied to cover the weekend (typically 3×).
+
+    Daily charge = notional × (admin_apr + finance_apr) / 365
+    where notional = size × mark_price at the overnight crossing.
+    """
+
+    admin_apr: float = 0.0
+    finance_apr: float = 0.0
+    friday_multiplier: int = 3
+
+
 @dataclass
 class Trade:
     instrument: str
@@ -67,6 +83,9 @@ class Position:
     entry_spread_cost: float = 0.0
     entry_slippage_cost: float = 0.0
     entry_commission_cost: float = 0.0
+    financing_cost_accrued: float = 0.0
+    admin_cost_accrued: float = 0.0
+    last_financing_date: date | None = None
 
 
 class BacktestClient(Client):
@@ -104,6 +123,8 @@ class BacktestClient(Client):
         self.realised_pnl: float = 0.0
         self._current_timestamp: str | None = None
         self._transaction_costs: TransactionCosts = TransactionCosts()
+        self._financing_costs: dict[str, FinancingCosts] = {}
+        self._last_event_date: date | None = None
 
     @classmethod
     def from_history(cls, history: dict[tuple[str, str], list[Candle]]) -> "BacktestClient":
@@ -144,6 +165,8 @@ class BacktestClient(Client):
         inst.realised_pnl = 0.0
         inst._current_timestamp = None
         inst._transaction_costs = TransactionCosts()
+        inst._financing_costs = {}
+        inst._last_event_date = None
         return inst
 
     @classmethod
@@ -286,6 +309,10 @@ class BacktestClient(Client):
         """Configure transaction cost overlays (slippage and commission)."""
         self._transaction_costs = tc
 
+    def set_financing_costs(self, instrument: str, fc: FinancingCosts) -> None:
+        """Configure overnight financing/admin fee model for an instrument."""
+        self._financing_costs[instrument] = fc
+
     def get_streamer(self) -> BacktestStreamer:
         return BacktestStreamer(
             self, self._candle_series, self._market_series, ask_series=self._ask_series
@@ -293,12 +320,57 @@ class BacktestClient(Client):
 
     def _set_current_timestamp(self, ts: str) -> None:
         self._current_timestamp = ts
+        current_date = parse_timestamp(ts).date()
+        if (
+            self._financing_costs
+            and self.positions
+            and self._last_event_date is not None
+            and current_date > self._last_event_date
+        ):
+            self._apply_overnight_financing(self._last_event_date, current_date)
+        self._last_event_date = current_date
 
     def _set_mark_price(self, instrument: str, price: float) -> None:
         self._mark_price[instrument] = float(price)
 
     def _set_ask_price(self, instrument: str, price: float) -> None:
         self._ask_price[instrument] = float(price)
+
+    def _apply_overnight_financing(self, prev_date: date, current_date: date) -> None:
+        """Debit overnight financing/admin fees for all open positions.
+
+        Called when the event stream crosses a day boundary.  For each calendar
+        day between *prev_date* (exclusive) and *current_date* (inclusive), the
+        charge is ``notional × rate / 365``.  Fridays carry a configurable
+        multiplier (default 3×) to cover the weekend.
+        """
+        for instrument, pos in list(self.positions.items()):
+            fc = self._financing_costs.get(instrument)
+            if fc is None or (fc.admin_apr == 0.0 and fc.finance_apr == 0.0):
+                continue
+
+            start = pos.last_financing_date if pos.last_financing_date is not None else prev_date
+            if current_date <= start:
+                continue
+
+            mark = self._mark_price.get(instrument)
+            if mark is None:
+                continue
+
+            notional = pos.size * mark
+            financing_days = 0
+            d = start
+            while d < current_date:
+                financing_days += fc.friday_multiplier if d.weekday() == 4 else 1
+                d += timedelta(days=1)
+
+            admin_charge = notional * fc.admin_apr / 365 * financing_days
+            finance_charge = notional * fc.finance_apr / 365 * financing_days
+
+            pos.admin_cost_accrued += admin_charge
+            pos.financing_cost_accrued += finance_charge
+            self.realised_pnl -= admin_charge + finance_charge
+            pos.last_financing_date = current_date
 
     def _get_mark_price(self, instrument: str) -> float:
         if instrument not in self._mark_price:
@@ -513,6 +585,8 @@ class BacktestClient(Client):
                             exit_slippage_cost=slippage_cost,
                             entry_commission_cost=pos.entry_commission_cost,
                             exit_commission_cost=commission_cost,
+                            financing_cost=pos.financing_cost_accrued,
+                            admin_cost=pos.admin_cost_accrued,
                         )
                     )
                     self.positions.pop(instrument, None)

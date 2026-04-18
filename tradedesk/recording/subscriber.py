@@ -192,7 +192,7 @@ class RecordingSubscriber:
             )
             self.ledger.record_trade(entry_trade)
 
-        # Record exit trade
+        # Record exit trade (financing/admin costs attach to exit since they accrue over the hold)
         exit_direction = "SELL" if event.direction == "BUY" else "BUY"
         exit_trade = TradeRecord(
             timestamp=event.timestamp.isoformat(),
@@ -205,6 +205,8 @@ class RecordingSubscriber:
             spread_cost=event.exit_spread_cost,
             slippage_cost=event.exit_slippage_cost,
             commission_cost=event.exit_commission_cost,
+            financing_cost=event.financing_cost,
+            admin_cost=event.admin_cost,
         )
         self.ledger.record_trade(exit_trade)
 
