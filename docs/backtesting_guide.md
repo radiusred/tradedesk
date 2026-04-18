@@ -55,8 +55,10 @@ Example shared cache location used at Radius Red:
 ```python
 # strategy.py
 import logging
-from tradedesk.strategy import BaseStrategy
+from tradedesk import OrderRequest
+from tradedesk.execution import request_order
 from tradedesk.marketdata import CandleClosedEvent, ChartSubscription
+from tradedesk.strategy import BaseStrategy
 
 log = logging.getLogger(__name__)
 
@@ -70,10 +72,14 @@ class SimpleMomentumStrategy(BaseStrategy):
 
         if candle.close > candle.open:
             log.info("Bullish candle — would buy")
-            # await self.client.place_market_order(event.instrument, "BUY", size=1.0)
+            # await request_order(
+            #     OrderRequest(instrument=event.instrument, direction="BUY", size=1.0)
+            # )
         elif candle.close < candle.open:
             log.info("Bearish candle — would sell")
-            # await self.client.place_market_order(event.instrument, "SELL", size=1.0)
+            # await request_order(
+            #     OrderRequest(instrument=event.instrument, direction="SELL", size=1.0)
+            # )
 
         # Store candle in chart history (default behaviour)
         await super().on_candle_close(event)
@@ -84,7 +90,9 @@ Key points:
 - Declare subscriptions via `SUBSCRIPTIONS` (or pass them to `__init__`).
 - `on_candle_close` fires for each completed candle.
 - Call `super().on_candle_close(event)` to keep chart history up to date.
-- `self.client.place_market_order(instrument, "BUY" | "SELL", size)` places orders.
+- Prefer `await request_order(OrderRequest(...))` inside strategies. That route goes
+  through `OrderExecutionHandler`, so any configured spread limits or `order_gate`
+  callbacks still apply.
 
 ---
 

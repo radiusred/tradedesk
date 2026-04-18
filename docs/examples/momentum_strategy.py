@@ -17,7 +17,8 @@ import logging
 from collections import deque
 from pathlib import Path
 
-from tradedesk import SimplePortfolio, run_portfolio
+from tradedesk import OrderRequest, SimplePortfolio, run_portfolio
+from tradedesk.execution import request_order
 from tradedesk.execution.ig import IGClient
 from tradedesk.marketdata import MarketData, MarketSubscription
 from tradedesk.strategy import BaseStrategy
@@ -68,10 +69,12 @@ class MomentumStrategy(BaseStrategy):
 
         if momentum > 0.001:
             log.info("UP signal: %s momentum=%.5f", instrument, momentum)
-            # await self.client.place_market_order(instrument, "BUY", size=1.0)
+            # await request_order(OrderRequest(instrument=instrument, direction="BUY", size=1.0))
         elif momentum < -0.001:
             log.info("DOWN signal: %s momentum=%.5f", instrument, momentum)
-            # await self.client.place_market_order(instrument, "SELL", size=1.0)
+            # await request_order(
+            #     OrderRequest(instrument=instrument, direction="SELL", size=1.0)
+            # )
 
 
 if __name__ == "__main__":

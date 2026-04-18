@@ -188,7 +188,7 @@ if signal == Signal.ENTRY_LONG:
     if stop is None:
         return  # fail closed
 
-    await self.client.place_market_order(epic, "BUY", size)
+    await request_order(OrderRequest(instrument=epic, direction="BUY", size=size))
     state.open_position(Direction.LONG, entry_price)
 ```
 
@@ -437,9 +437,10 @@ Notes:
 import logging
 from collections.abc import Callable
 
+from tradedesk import OrderRequest
+from tradedesk.execution import request_order
+from tradedesk.marketdata import CandleClosedEvent, ChartSubscription
 from tradedesk.strategy import BaseStrategy
-from tradedesk.subscriptions import ChartSubscription
-from tradedesk.marketdata.events import CandleClosedEvent
 
 log = logging.getLogger(__name__)
 
@@ -494,7 +495,7 @@ class EmaAtrStrategy(BaseStrategy):
     async def on_candle_close(self, candle_close: CandleClosedEvent) -> None:
         await super().on_candle_close(candle_close)
 
-        epic = candle_close.epic
+        epic = candle_close.instrument
         st = self.states.get(epic)
         if st is None:
             return
@@ -508,9 +509,13 @@ class EmaAtrStrategy(BaseStrategy):
                 return
 
             if st.position.direction == "LONG":
-                await self.client.place_market_order(epic, "SELL", self.size)
+                await request_order(
+                    OrderRequest(instrument=epic, direction="SELL", size=self.size)
+                )
             else:
-                await self.client.place_market_order(epic, "BUY", self.size)
+                await request_order(
+                    OrderRequest(instrument=epic, direction="BUY", size=self.size)
+                )
 
             st.close_position()
             log.info("Exited %s", epic)
@@ -524,11 +529,15 @@ class EmaAtrStrategy(BaseStrategy):
         # Fail closed if stop cannot be computed (enforced in open_position).
         mid = float(candle.close)
         if sig == "LONG":
-            await self.client.place_market_order(epic, "BUY", self.size)
+            await request_order(
+                OrderRequest(instrument=epic, direction="BUY", size=self.size)
+            )
             st.open_position(direction="LONG", entry_price=mid, entry_ts=str(candle.timestamp))
             log.info("Entered LONG %s", epic)
         else:
-            await self.client.place_market_order(epic, "SELL", self.size)
+            await request_order(
+                OrderRequest(instrument=epic, direction="SELL", size=self.size)
+            )
             st.open_position(direction="SHORT", entry_price=mid, entry_ts=str(candle.timestamp))
             log.info("Entered SHORT %s", epic)
 ```
@@ -536,27 +545,33 @@ class EmaAtrStrategy(BaseStrategy):
 Notes:
 - This example is candle-driven only, which simplifies event ordering.
 - `warmup_from_provider()` warms state directly without relying on `register_indicator()`.
+- `request_order()` is the strategy-facing order API. It keeps execution inside
+  `OrderExecutionHandler`, which is where portfolio-level spread limits and
+  `order_gate` callbacks are enforced.
 
 ### 3) Run a deterministic backtest
 
 ```python
-from tradedesk import run_strategies
-from tradedesk.providers.backtest.client import BacktestClient
+from tradedesk import SimplePortfolio, run_portfolio
+from tradedesk.execution import BacktestClient
 
 # history: {(epic, timeframe): [Candle, ...]}
-client = BacktestClient.from_history(history)
+created = {}
 
 def client_factory():
+    client = BacktestClient.from_history(history)
+    created["client"] = client
     return client
 
-strategy_specs = [
-    (
-        EmaAtrStrategy,
-        {
-            "epics": ["IX.D.FTSE.DAILY.IP"],
-            "timeframe": "5MINUTE",
-            "size": 1.0,
-            "state_factory": lambda e: EmaAtrState(
+run_portfolio(
+    portfolio_factory=lambda client: SimplePortfolio(
+        client,
+        EmaAtrStrategy(
+            client,
+            epics=["IX.D.FTSE.DAILY.IP"],
+            timeframe="5MINUTE",
+            size=1.0,
+            state_factory=lambda e: EmaAtrState(
                 epic=e,
                 ema_fast=12,
                 ema_slow=26,
@@ -564,18 +579,13 @@ strategy_specs = [
                 atr_stop_mult=2.0,
                 max_hold_bars=6,
             ),
-        },
-    )
-]
-
-run_strategies(
-    strategy_specs=strategy_specs,
+        ),
+    ),
     client_factory=client_factory,
     log_level="INFO",
 )
 
-# BacktestClient typically exposes trades; capture them and compute metrics.
-# The exact API depends on your client implementation.
+client = created["client"]
 print(getattr(client, "trades", []))
 ```
 

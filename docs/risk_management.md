@@ -227,16 +227,14 @@ class MyStrategy:
 # LONG position
 entry = 1.1000
 current = 1.1050
-size = 2.0
 
-pnl_points = (current - entry) * size  # 0.0050 * 2.0 = 0.01 points
+pnl_points = current - entry  # 0.0050 points
 
 # SHORT position
 entry = 1.1000
 current = 1.0950
-size = 2.0
 
-pnl_points = (entry - current) * size  # 0.0050 * 2.0 = 0.01 points
+pnl_points = entry - current  # 0.0050 points
 ```
 
 The `PositionTracker.current_pnl_points()` method handles this automatically:
@@ -245,13 +243,13 @@ The `PositionTracker.current_pnl_points()` method handles this automatically:
 # LONG position
 position.open(Direction.LONG, size=2.0, entry_price=1.1000)
 pnl = position.current_pnl_points(current_price=1.1050)
-assert pnl == pytest.approx(0.01)  # (1.1050 - 1.1000) * 2.0
+assert pnl == pytest.approx(0.005)  # 1.1050 - 1.1000
 
 # SHORT position
 position.reset()
 position.open(Direction.SHORT, size=2.0, entry_price=1.1000)
 pnl = position.current_pnl_points(current_price=1.0950)
-assert pnl == pytest.approx(0.01)  # (1.1000 - 1.0950) * 2.0
+assert pnl == pytest.approx(0.005)  # 1.1000 - 1.0950
 ```
 
 ## Best Practices
