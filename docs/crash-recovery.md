@@ -1,238 +1,184 @@
-# Crash Recovery Runbook
+# Crash Recovery and Position Reconciliation
 
-This runbook covers how to recover the `ig_trader` portfolio process after an
-unexpected crash or restart while positions are open.
+This guide describes the public crash-recovery behavior shipped in
+`tradedesk.portfolio.ReconciliationManager`.
 
----
-
-## Background
-
-The system uses a two-layer persistence mechanism:
-
-1. **Position journal** (`positions.json`) — written atomically on every
-   position change (open, close). Records direction, size, entry price,
-   bars held, MFE, and entry ATR.
-
-2. **Reconciliation manager** — on startup, loads the journal and compares it
-   against live broker positions via `GET /positions`. The broker is the
-   **source of truth**; the journal is a crash-recovery hint.
+The framework persists local position state to a journal, compares that journal
+with live broker positions on startup, and corrects local state when the two do
+not match. It does not define broker-specific operator steps; those belong in
+the runtime that embeds `tradedesk`.
 
 ---
 
-## Recovery Scenarios
+## Components
 
-### 1. Normal restart (broker and journal agree)
+Crash recovery in `tradedesk` has three moving parts:
 
-Outcome: positions are fully restored with all metadata intact.
+1. `PositionJournal` stores one `JournalEntry` per managed instrument.
+2. `ReconciliationManager` compares journal state with broker positions.
+3. Strategies implement `ReconcilableStrategy` so positions can be restored or
+   adopted and then re-checked after warmup.
 
-```
-Journal: EURUSD LONG size=1.0 bars_held=5 mfe=2.5
-Broker:  EURUSD BUY  size=1.0
-→ MATCHED — position restored from journal (preserves bars_held, mfe, entry_atr)
-```
-
-No manual action required.
+The broker remains the source of truth. The journal is a recovery hint that
+preserves local metadata such as size, direction, bars held, MFE, and entry ATR.
 
 ---
 
-### 2. Phantom local position (journal says open, broker says flat)
+## Startup lifecycle
 
-The position was closed at the broker (manually, or a fill arrived after the
-crash) but the journal still shows it as open.
+When event subscription is enabled, `ReconciliationManager` wires itself into
+the portfolio session lifecycle:
 
-```
-Journal: EURUSD LONG size=1.0
-Broker:  (no position)
-→ PHANTOM_LOCAL — local state reset to flat, journal updated
-```
+1. `SessionStartedEvent` triggers `reconcile_on_startup()`.
+2. The journal is loaded from disk if present.
+3. The broker client is queried for current positions.
+4. Local and broker state are compared instrument by instrument.
+5. Corrected state is written back to the journal when needed.
+6. `SessionReadyEvent` triggers `post_warmup_check()` for any restored or
+   adopted positions.
 
-Outcome: strategy resets to flat. No manual action required.
-
----
-
-### 3. Orphan broker position (journal empty, broker has a position)
-
-The journal was not written before the crash (e.g. crash on entry), but the
-order was accepted by the broker.
-
-```
-Journal: (no entry for EURUSD)
-Broker:  EURUSD BUY size=1.0
-→ ORPHAN_BROKER — position adopted into local state, post-warmup exit check runs
-```
-
-After adoption the strategy runs `check_restored_position` against the latest
-candle. If an exit condition is met the position is closed immediately.
-
-No manual action required, but review the logs for adopted positions and verify
-the exit evaluation result.
+That last step matters because a recovered position may already satisfy exit
+conditions once fresh indicators are primed.
 
 ---
 
-### 4. Failed exit (EMERGENCY)
+## Discrepancy types
 
-The strategy attempted to close a position (journal direction=None) but the
-broker still has it open. This is the most critical scenario.
+`tradedesk.portfolio.reconciliation.DiscrepancyType` defines the mismatch
+categories handled by the framework.
 
-```
-Journal: EURUSD direction=None (flat)
-Broker:  EURUSD BUY size=1.0
-→ FAILED_EXIT — CRITICAL log emitted, broker position adopted
-```
+### `MATCHED`
 
-**Action required:**
+The journal and broker agree on direction and size. The strategy position is
+restored from the journal so local metadata is preserved.
 
-1. Check the log for `FAILED EXIT DETECTED` to identify the instrument.
-2. Log into the IG web platform and verify the position manually.
-3. If the position should be closed: close it manually via the IG platform.
-4. Once flat, restart the portfolio process. The journal will reconcile to flat.
+### `PHANTOM_LOCAL`
 
----
+The journal says a position is open but the broker reports no position. The
+local position is reset to flat.
 
-### 5. Size mismatch (partial fill)
+### `ORPHAN_BROKER`
 
-The journal records the requested size but the broker filled a smaller amount.
+The broker has a position that is missing from the journal. The framework
+adopts the broker position into local state and schedules a post-warmup exit
+check.
 
-```
-Journal: EURUSD LONG size=2.0
-Broker:  EURUSD BUY  size=1.5
-→ SIZE_MISMATCH — local size corrected to broker size (1.5)
-```
+### `SIZE_MISMATCH`
 
-No manual action required. Exit logic re-evaluated with broker size.
+Both sides agree on direction but not size. The journal metadata is restored
+and the local position size is corrected to the broker size.
 
----
+### `DIRECTION_MISMATCH`
 
-### 6. Direction mismatch
+The journal and broker disagree on direction. Broker state wins and the local
+position is reopened from broker data.
 
-The journal records one direction but the broker has the opposite.
+### `FAILED_EXIT`
 
-```
-Journal: EURUSD LONG size=1.0
-Broker:  EURUSD SELL size=1.0
-→ DIRECTION_MISMATCH — broker direction adopted, exit check runs
-```
-
-This is unusual and may indicate a separate manual trade on the same epic.
-Review the IG platform to verify the direction before restarting.
+The journal records flat state (`direction=None`) but the broker still has an
+open position. This is treated as an emergency discrepancy: the broker
+position is adopted and a critical log entry is emitted.
 
 ---
 
-### 7. Broker unreachable on startup
+## Broker-unavailable fallback
 
-If the broker API is unavailable, the manager falls back to the journal alone
-and restores positions without verification.
+If `client.get_positions()` fails during startup reconciliation, the framework
+logs the failure and restores open positions from the journal only.
 
-```
-Broker: HTTP 500 / timeout
-→ Positions restored from journal (unverified)
-```
-
-**Action required:**
-
-1. Monitor logs for `restoring from journal only`.
-2. Once the broker is reachable, the next **periodic reconciliation** will
-   verify and correct state automatically (default: every 4 candles).
-3. Until then, treat restored positions as tentative — do not add to them.
+This preserves continuity, but the restored state is provisional until broker
+state can be fetched again. On the next successful periodic reconciliation,
+local state is corrected back to broker truth.
 
 ---
 
-### 8. Corrupt journal
+## Periodic reconciliation
 
-If `positions.json` is corrupt (disk error, interrupted write), the manager
-logs the error, discards the journal, and falls back to broker positions.
+Recovery is not limited to restarts. `ReconciliationManager` also performs
+periodic reconciliation every `reconcile_interval` target-period candles
+(default: `4`).
 
+During that periodic check:
+
+- instruments with recent order completions are skipped once to avoid broker
+  settlement races
+- phantom local positions are cleared
+- orphan or failed-exit broker positions are adopted
+- size and direction mismatches are corrected
+- newly adopted positions are passed through `post_warmup_check()`
+
+If corrections were applied, the journal is persisted immediately.
+
+---
+
+## Strategy requirements
+
+To participate in crash recovery, a strategy must satisfy the
+`ReconcilableStrategy` protocol used by `ReconciliationManager`.
+
+That means the strategy must be able to:
+
+- serialize local state with `to_journal_entry(...)`
+- restore prior state with `restore_from_journal(...)`
+- evaluate a recovered position with `check_restored_position(...)`
+
+Without those hooks, the framework cannot safely restore or adopt positions on
+the strategy's behalf.
+
+---
+
+## Log messages
+
+The reconciliation code emits stable log fragments that are useful when wiring
+runtime-specific alerts.
+
+| Level    | Message fragment                              | Meaning                                |
+|----------|-----------------------------------------------|----------------------------------------|
+| INFO     | `Journal loaded: N entries (M open, K flat)`  | Journal restored successfully          |
+| INFO     | `No journal found; starting fresh`            | No prior persisted state               |
+| INFO     | `Startup reconciliation: all N positions match` | Journal and broker agree             |
+| WARNING  | `Phantom position cleared: INSTRUMENT`        | Local-only position was reset          |
+| WARNING  | `Adopting orphan broker position: INSTRUMENT` | Broker-only position was adopted       |
+| WARNING  | `Size corrected: INSTRUMENT`                  | Broker size replaced local size        |
+| WARNING  | `Direction corrected: INSTRUMENT`             | Broker direction replaced local state  |
+| CRITICAL | `FAILED EXIT DETECTED: INSTRUMENT`            | Journal says flat, broker still open   |
+| WARNING  | `restoring from journal only`                 | Startup broker fetch failed            |
+
+---
+
+## Minimal integration sketch
+
+```python
+from tradedesk.portfolio import PortfolioRunner, PositionJournal, ReconciliationManager
+
+journal = PositionJournal("/var/lib/my-runtime/positions.json")
+
+runner = PortfolioRunner(
+    strategies=strategies,
+    policy=policy,
+    default_risk_per_trade=default_risk,
+)
+
+reconciliation = ReconciliationManager(
+    runner=runner,
+    client=broker_client,
+    journal=journal,
+    target_period="MINUTE_15",
+    reconcile_interval=4,
+)
 ```
-Journal: unreadable (corrupt JSON)
-→ load() returns None → broker positions adopted as orphans
-```
 
-No manual action required. If the broker shows no open positions, the process
-starts fresh.
-
----
-
-## Manual Intervention Steps
-
-When a `FAILED_EXIT` is detected or you need to manually force a clean state:
-
-```bash
-# 1. Stop the portfolio process
-pkill -f ig_trader  # or stop the container / systemd unit
-
-# 2. Inspect the journal
-cat /path/to/journal/positions.json | python3 -m json.tool
-
-# 3. If you want to clear the journal entirely (e.g. all positions confirmed flat)
-rm /path/to/journal/positions.json
-
-# 4. Restart the process — it will reconcile against the broker
-python -m ig_trader  # or start container
-```
-
-> **Warning:** Only delete the journal after confirming all positions are
-> flat at the broker. Deleting while positions are open will force orphan
-> adoption on restart, which triggers exit checks but may have slippage
-> implications.
-
----
-
-## Log Messages Reference
-
-| Level    | Message fragment                              | Meaning                                    |
-|----------|-----------------------------------------------|--------------------------------------------|
-| INFO     | `Journal loaded: N entries (M open, K flat)`  | Normal startup with journal                |
-| INFO     | `No journal found; starting fresh`            | First run or clean shutdown                |
-| INFO     | `Startup reconciliation: all N positions match` | Clean reconciliation                     |
-| WARNING  | `Phantom position cleared: INSTRUMENT`        | Closed externally; local reset to flat     |
-| WARNING  | `Adopting orphan broker position: INSTRUMENT` | No journal entry; broker state adopted     |
-| WARNING  | `Size corrected: INSTRUMENT`                  | Partial fill reconciled                    |
-| WARNING  | `Direction corrected: INSTRUMENT`             | Direction mismatch; broker wins            |
-| CRITICAL | `FAILED EXIT DETECTED: INSTRUMENT`            | **Manual intervention required**           |
-| WARNING  | `restoring from journal only`                 | Broker unavailable at startup              |
-| WARNING  | `Heartbeat Alert: no updates for N in Xs`     | Lightstreamer stream is quiet or stale     |
-| INFO     | `Reconnecting after stale stream (attempt N)` | Automatic Lightstreamer reconnect started  |
-
----
-
-## Stale Stream Recovery
-
-The IG Lightstreamer client now includes a stale-stream watchdog. By default,
-if no updates arrive for longer than `max_stale_seconds`, the streamer raises an
-internal `StaleStreamError`, disconnects, waits for `reconnect_delay`, and
-starts a fresh session automatically.
-
-Operationally this means a heartbeat warning is no longer just an observation.
-In the default configuration it is the precursor to an automatic reconnect
-cycle, not a signal that an operator must restart the process immediately.
-
-Manual action is only required if:
-
-1. `auto_reconnect` has been disabled
-2. A finite `max_reconnect_attempts` limit is reached
-3. The reconnect loop keeps failing because IG or network access is unavailable
-
-If the process exits after repeated stale-stream failures, inspect the logs for
-the reconnect attempt count before restarting the portfolio process.
-
----
-
-## Periodic Reconciliation
-
-Even during normal operation, the manager reconciles every `reconcile_interval`
-target-period candles (default: 4). This catches any drift that occurs during
-live trading without requiring a restart.
-
-Instruments with **recent position changes** are excluded from a single
-periodic check to avoid false positives during the broker settlement window
-(e.g. a fill that was just submitted but not yet reflected in `GET /positions`).
+The embedding runtime is responsible for choosing the journal path, surfacing
+alerts, and defining any manual operator procedure when the runtime receives a
+critical reconciliation signal.
 
 ---
 
 ## Testing
 
-See `tests/portfolio/test_crash_recovery.py` for end-to-end crash simulation
-tests covering all the scenarios described above.
+See `tests/portfolio/test_crash_recovery.py` for end-to-end coverage of journal
+loading, discrepancy classification, broker fallback, and post-recovery exit
+checks.
 
 ---
 
