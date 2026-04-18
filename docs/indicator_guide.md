@@ -62,7 +62,7 @@ Indicators differ in how frequently they should be updated:
 * Capture short-term momentum and microstructure
 * Sensitive to noise
 
-Example: MACD (as used in `ig_trader`)
+Example: MACD on a fast event stream
 
 ### Candle-driven indicators
 
@@ -209,8 +209,8 @@ Then:
 
 ### Implementation notes in tradedesk
 
-* MACD is treated as **tick-driven** in `ig_trader`
-* Candle closes may be fed as synthetic ticks during backtests
+* MACD can be driven by any consistent price-event stream
+* Candle closes and tick updates will produce different lag and noise profiles
 * MACD requires substantial warmup to stabilise
 
 MACD signals are particularly sensitive to:
