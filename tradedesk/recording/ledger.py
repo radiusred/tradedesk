@@ -33,6 +33,8 @@ def trade_rows_from_trades(trades: list[TradeRecord]) -> list[dict[str, str]]:
             "spread_cost": str(t.spread_cost),
             "slippage_cost": str(t.slippage_cost),
             "commission_cost": str(t.commission_cost),
+            "financing_cost": str(t.financing_cost),
+            "admin_cost": str(t.admin_cost),
         }
         for t in trades
     ]
@@ -117,6 +119,8 @@ class TradeLedger:
                     "spread_cost",
                     "slippage_cost",
                     "commission_cost",
+                    "financing_cost",
+                    "admin_cost",
                 ]
             )
             for t in self.trades:
@@ -132,6 +136,8 @@ class TradeLedger:
                         round(t.spread_cost, 6) if t.spread_cost else "",
                         round(t.slippage_cost, 6) if t.slippage_cost else "",
                         round(t.commission_cost, 4) if t.commission_cost else "",
+                        round(t.financing_cost, 4) if t.financing_cost else "",
+                        round(t.admin_cost, 4) if t.admin_cost else "",
                     ]
                 )
 
@@ -191,6 +197,8 @@ class TradeLedger:
                     "spread_cost",
                     "slippage_cost",
                     "commission_cost",
+                    "financing_cost",
+                    "admin_cost",
                 ]
             )
 
@@ -242,6 +250,14 @@ class TradeLedger:
                     + (exit_rec.commission_cost if exit_rec else 0.0),
                     4,
                 ) or ""
+                rt_financing = (
+                    round(exit_rec.financing_cost, 4)
+                    if exit_rec and exit_rec.financing_cost
+                    else ""
+                )
+                rt_admin = (
+                    round(exit_rec.admin_cost, 4) if exit_rec and exit_rec.admin_cost else ""
+                )
 
                 w.writerow(
                     [
@@ -264,6 +280,8 @@ class TradeLedger:
                         rt_spread,
                         rt_slip,
                         rt_comm,
+                        rt_financing,
+                        rt_admin,
                     ]
                 )
 

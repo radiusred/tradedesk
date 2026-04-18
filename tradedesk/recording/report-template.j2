@@ -16,6 +16,24 @@ The "{{ output_path.name }}" back test ran over a period of **{{ equity_daily|le
 - Profit Factor: **{{ "%.2f"|format(pm.profit_factor|float) }}**
 - Win Rate: **{{ "%.1f"|format(pm.win_rate|float * 100) }}%**
 
+{% if financing_summary.available %}
+### Overnight Financing Costs
+
+| Component | Total Cost |
+|-----------|----------:|
+| Financing | {{ "%.2f"|format(financing_summary.total_financing) }} |
+| Admin Fee | {{ "%.2f"|format(financing_summary.total_admin) }} |
+| **Total** | **{{ "%.2f"|format(financing_summary.total) }}** |
+
+{% if financing_summary.instruments %}
+| Instrument | Financing | Admin | Total |
+|------------|----------:|------:|------:|
+{% for row in financing_summary.instruments -%}
+| {{ row.instrument }} | {{ "%.2f"|format(row.financing) }} | {{ "%.2f"|format(row.admin) }} | {{ "%.2f"|format(row.financing + row.admin) }} |
+{% endfor %}
+{% endif %}
+{% endif %}
+
 ---
 
 # Detailed Performance Analysis

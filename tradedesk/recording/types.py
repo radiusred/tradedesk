@@ -37,6 +37,8 @@ class TradeRecord:
     spread_cost: float = 0.0  # half-spread charged (price units)
     slippage_cost: float = 0.0  # fixed + proportional slippage (price units)
     commission_cost: float = 0.0  # commission charged (monetary units, e.g. £)
+    financing_cost: float = 0.0  # overnight financing accrued over hold period
+    admin_cost: float = 0.0  # overnight admin fee accrued over hold period
 
 
 @dataclass(frozen=True)
