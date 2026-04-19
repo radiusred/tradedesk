@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import logging
+import uuid
 from datetime import datetime
 from pathlib import Path
 from typing import Optional
@@ -185,6 +186,9 @@ class RecordingSubscriber:
                 size=event.size,
                 price=event.entry_price,
                 reason="entry",
+                strategy=event.strategy,
+                position_id=event.position_id,
+                trade_id=str(uuid.uuid4()),
                 raw_price=event.raw_entry_price,
                 spread_cost=event.entry_spread_cost,
                 slippage_cost=event.entry_slippage_cost,
@@ -201,6 +205,9 @@ class RecordingSubscriber:
             size=event.size,
             price=event.exit_price,
             reason=event.exit_reason,
+            strategy=event.strategy,
+            position_id=event.position_id,
+            trade_id=str(uuid.uuid4()),
             raw_price=event.raw_exit_price,
             spread_cost=event.exit_spread_cost,
             slippage_cost=event.exit_slippage_cost,

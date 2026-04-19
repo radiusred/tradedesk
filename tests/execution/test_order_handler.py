@@ -31,6 +31,7 @@ async def test_request_order_success():
         currency="USD",
         force_open=True,
         exit_reason="",
+        strategy="",
     )
 
 

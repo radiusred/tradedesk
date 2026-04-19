@@ -1,6 +1,7 @@
 import csv
 import itertools
 import logging
+import uuid
 from dataclasses import dataclass
 from datetime import date, timedelta
 from pathlib import Path
@@ -86,6 +87,8 @@ class Position:
     financing_cost_accrued: float = 0.0
     admin_cost_accrued: float = 0.0
     last_financing_date: date | None = None
+    strategy: str = ""
+    position_id: str = ""
 
 
 class BacktestClient(Client):
@@ -496,6 +499,7 @@ class BacktestClient(Client):
             raise ValueError("size must be > 0")
 
         _direction = Direction.from_order_side(direction)
+        strategy = kwargs.pop("strategy", "")
         price, raw_price, spread_cost, slippage_cost, commission_cost = self._compute_fill_price(
             instrument, _direction
         )
@@ -523,6 +527,7 @@ class BacktestClient(Client):
         pos = self.positions.get(instrument)
 
         if pos is None:
+            pid = str(uuid.uuid4())
             self.positions[instrument] = Position(
                 instrument=instrument,
                 direction=_direction,
@@ -532,6 +537,8 @@ class BacktestClient(Client):
                 entry_spread_cost=spread_cost,
                 entry_slippage_cost=slippage_cost,
                 entry_commission_cost=commission_cost,
+                strategy=strategy,
+                position_id=pid,
             )
             # Emit PositionOpenedEvent
             await get_dispatcher().publish(
@@ -541,6 +548,12 @@ class BacktestClient(Client):
                     size=float(size),
                     entry_price=price,
                     timestamp=parse_timestamp(self._current_timestamp or ""),
+                    strategy=strategy,
+                    position_id=pid,
+                    raw_entry_price=raw_price,
+                    entry_spread_cost=spread_cost,
+                    entry_slippage_cost=slippage_cost,
+                    entry_commission_cost=commission_cost,
                 )
             )
         else:
@@ -577,6 +590,8 @@ class BacktestClient(Client):
                             pnl=closed_pnl,
                             exit_reason=exit_reason or "market_order",
                             timestamp=parse_timestamp(self._current_timestamp or ""),
+                            strategy=pos.strategy,
+                            position_id=pos.position_id,
                             raw_entry_price=pos.raw_entry_price,
                             raw_exit_price=raw_price,
                             entry_spread_cost=pos.entry_spread_cost,
@@ -593,6 +608,7 @@ class BacktestClient(Client):
                 # If order size > position size, open residual opposite position
                 residual = float(size) - close_size
                 if residual > 0:
+                    residual_pid = str(uuid.uuid4())
                     self.positions[instrument] = Position(
                         instrument=instrument,
                         direction=_direction,
@@ -602,6 +618,8 @@ class BacktestClient(Client):
                         entry_spread_cost=spread_cost,
                         entry_slippage_cost=slippage_cost,
                         entry_commission_cost=commission_cost,
+                        strategy=strategy,
+                        position_id=residual_pid,
                     )
                     # Emit PositionOpenedEvent for the new residual position
                     await get_dispatcher().publish(
@@ -611,6 +629,12 @@ class BacktestClient(Client):
                             size=residual,
                             entry_price=price,
                             timestamp=parse_timestamp(self._current_timestamp or ""),
+                            strategy=strategy,
+                            position_id=residual_pid,
+                            raw_entry_price=raw_price,
+                            entry_spread_cost=spread_cost,
+                            entry_slippage_cost=slippage_cost,
+                            entry_commission_cost=commission_cost,
                         )
                     )
 
