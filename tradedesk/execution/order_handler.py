@@ -184,6 +184,7 @@ class OrderExecutionHandler:
                 currency=request.currency,
                 force_open=request.force_open,
                 exit_reason=request.exit_reason,
+                strategy=request.strategy,
             )
 
             # Extract fill price (IG uses "level"; others may use "price")

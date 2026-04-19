@@ -32,6 +32,9 @@ class TradeRecord:
     size: float  # stake (e.g. £/point)
     price: float  # executable fill price (ask for BUY, bid for SELL, with overlays applied)
     reason: str = ""
+    strategy: str = ""
+    position_id: str = ""
+    trade_id: str = ""
     # Cost decomposition — all zero when bid/ask data is unavailable or bid/ask mode is disabled
     raw_price: float = 0.0  # mid price at fill time
     spread_cost: float = 0.0  # half-spread charged (price units)

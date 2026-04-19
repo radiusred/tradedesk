@@ -16,6 +16,12 @@ class PositionOpenedEvent(DomainEvent):
     direction: str  # "BUY" or "SELL"
     size: float
     entry_price: float
+    strategy: str = ""
+    position_id: str = ""
+    raw_entry_price: float = 0.0
+    entry_spread_cost: float = 0.0
+    entry_slippage_cost: float = 0.0
+    entry_commission_cost: float = 0.0
 
 
 @event
@@ -29,6 +35,8 @@ class PositionClosedEvent(DomainEvent):
     exit_price: float
     pnl: float
     exit_reason: str
+    strategy: str = ""
+    position_id: str = ""
     # Cost decomposition (all default to 0; populated when bid/ask data is available)
     raw_entry_price: float = 0.0
     raw_exit_price: float = 0.0
