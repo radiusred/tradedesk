@@ -161,6 +161,40 @@ print(f"Positions:    {client.positions}")
 print(f"Realised PnL: {client.realised_pnl}")
 ```
 
+If you need explicit slippage, commission, or overnight financing/admin-fee
+modelling, configure the `BacktestClient` before handing it to the portfolio:
+
+```python
+from datetime import date
+
+from tradedesk.execution.backtest import BacktestClient, FinancingCosts, TransactionCosts
+
+created = {}
+
+def client_factory():
+    c = BacktestClient.from_dukascopy_cache(
+        "/paperclip/tradedesk/marketdata",
+        symbol="GBPUSD",
+        instrument="CS.D.GBPUSD.TODAY.IP",
+        period="5MINUTE",
+        date_from=date(2025, 1, 1),
+        date_to=date(2025, 1, 31),
+    )
+    c.set_transaction_costs(
+        TransactionCosts(slippage_points=0.00005, commission_per_fill=2.5)
+    )
+    c.set_financing_costs(
+        "CS.D.GBPUSD.TODAY.IP",
+        FinancingCosts(admin_apr=0.03, finance_apr=0.06, friday_multiplier=3),
+    )
+    created["client"] = c
+    return c
+```
+
+`run_backtest(...)` currently exposes `transaction_costs` via `BacktestSpec`.
+If you need overnight financing/admin fees, build and configure the
+`BacktestClient` yourself as above before running the session.
+
 ---
 
 ## 5. In-Memory Backtest
@@ -247,8 +281,10 @@ Output artefacts are written to `out_dir/`:
 
 | File | Contents |
 |------|----------|
-| `trades.csv` | One row per fill: timestamp, direction, price, size |
+| `trades.csv` | One row per fill, including executable price, raw price, and any recorded spread/slippage/commission/financing/admin costs |
+| `round_trips.csv` | One row per reconstructed round trip, including exit reason, excursions, and aggregated cost columns |
 | `equity.csv` | Equity curve snapshots |
+| `analysis.md` | Human-readable performance summary; includes an overnight financing/admin-fee section when those costs were recorded |
 
 ---
 
