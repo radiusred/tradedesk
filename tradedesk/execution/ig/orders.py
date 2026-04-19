@@ -126,6 +126,7 @@ class IGOrderHandler:
             force_open=force_open,
             time_in_force=time_in_force,
             guaranteed_stop=guaranteed_stop,
+            **kwargs,
         )
         deal_ref = res.get("dealReference")
         if not deal_ref:
