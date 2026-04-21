@@ -22,9 +22,11 @@ import asyncio
 import logging
 import uuid
 from collections.abc import Callable
+from datetime import datetime, timezone
 from typing import Any
 
 from tradedesk.execution import Client, OrderCompletedEvent, OrderRequestEvent
+from tradedesk.recording.events import PositionOpenedEvent
 
 from ..events import DomainEvent, get_dispatcher
 from ..types import OrderRequest, OrderResult
@@ -201,12 +203,27 @@ class OrderExecutionHandler:
             else:
                 fill_size = q_size
 
-            return OrderResult(
+            result = OrderResult(
                 success=True,
                 fill_price=fill_price,
                 fill_size=fill_size,
                 raw=resp,
             )
+
+            if request.force_open and not self._client.publishes_position_events:
+                await get_dispatcher().publish(
+                    PositionOpenedEvent(
+                        instrument=request.instrument,
+                        direction=request.direction,
+                        size=fill_size,
+                        entry_price=fill_price,
+                        strategy=request.strategy,
+                        position_id=resp.get("dealId", ""),
+                        timestamp=datetime.now(timezone.utc),
+                    )
+                )
+
+            return result
         except Exception as e:
             log.error("Order execution failed for %s: %s", request.instrument, e)
             return OrderResult(success=False, error=str(e))
