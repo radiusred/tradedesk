@@ -4,7 +4,9 @@ from unittest.mock import AsyncMock
 
 import pytest
 
+from tradedesk.events import get_dispatcher
 from tradedesk.execution.order_handler import OrderExecutionHandler, request_order
+from tradedesk.recording.events import PositionOpenedEvent
 from tradedesk.types import OrderRequest
 
 
@@ -286,3 +288,96 @@ async def test_order_gate_checked_before_spread_gate():
     assert "blocked by gate" in result.error
     # Spread gate should not be reached
     client.get_market_snapshot.assert_not_awaited()
+
+
+# ---------------------------------------------------------------------------
+# PositionOpenedEvent emission tests
+# ---------------------------------------------------------------------------
+
+
+def _make_client(publishes_position_events: bool = False) -> AsyncMock:
+    client = AsyncMock()
+    client.publishes_position_events = publishes_position_events
+    client.quantise_size = AsyncMock(side_effect=lambda inst, size: size)
+    client.place_market_order_confirmed.return_value = {
+        "level": 105.50,
+        "size": 1.0,
+        "dealId": "DEAL123",
+    }
+    return client
+
+
+@pytest.mark.asyncio
+async def test_position_opened_event_emitted_on_force_open():
+    """PositionOpenedEvent is published after a successful fill with force_open=True."""
+    client = _make_client()
+    OrderExecutionHandler(client)
+
+    captured = []
+    get_dispatcher().subscribe(PositionOpenedEvent, lambda e: captured.append(e))
+
+    result = await request_order(
+        OrderRequest(instrument="EURUSD", direction="BUY", size=1.0, strategy="bb")
+    )
+
+    assert result.success is True
+    assert len(captured) == 1
+    evt = captured[0]
+    assert evt.instrument == "EURUSD"
+    assert evt.direction == "BUY"
+    assert evt.size == 1.0
+    assert evt.entry_price == 105.50
+    assert evt.strategy == "bb"
+    assert evt.position_id == "DEAL123"
+
+
+@pytest.mark.asyncio
+async def test_no_position_event_when_force_open_false():
+    """No PositionOpenedEvent when force_open is False (closing trade)."""
+    client = _make_client()
+    OrderExecutionHandler(client)
+
+    captured = []
+    get_dispatcher().subscribe(PositionOpenedEvent, lambda e: captured.append(e))
+
+    result = await request_order(
+        OrderRequest(instrument="EURUSD", direction="SELL", size=1.0, force_open=False)
+    )
+
+    assert result.success is True
+    assert len(captured) == 0
+
+
+@pytest.mark.asyncio
+async def test_no_position_event_when_client_publishes_own():
+    """No PositionOpenedEvent when client.publishes_position_events is True."""
+    client = _make_client(publishes_position_events=True)
+    OrderExecutionHandler(client)
+
+    captured = []
+    get_dispatcher().subscribe(PositionOpenedEvent, lambda e: captured.append(e))
+
+    result = await request_order(
+        OrderRequest(instrument="EURUSD", direction="BUY", size=1.0)
+    )
+
+    assert result.success is True
+    assert len(captured) == 0
+
+
+@pytest.mark.asyncio
+async def test_no_position_event_on_failed_order():
+    """No PositionOpenedEvent when the order fails."""
+    client = _make_client()
+    client.place_market_order_confirmed.side_effect = RuntimeError("rejected")
+    OrderExecutionHandler(client)
+
+    captured = []
+    get_dispatcher().subscribe(PositionOpenedEvent, lambda e: captured.append(e))
+
+    result = await request_order(
+        OrderRequest(instrument="EURUSD", direction="BUY", size=1.0)
+    )
+
+    assert result.success is False
+    assert len(captured) == 0

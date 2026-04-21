@@ -9,6 +9,8 @@ from .streamer import Streamer
 class Client(abc.ABC):
     """Abstract base for broker/provider clients."""
 
+    publishes_position_events: bool = False
+
     @abc.abstractmethod
     async def start(self) -> None:
         """Initialise the client (e.g. create session, authenticate)."""
