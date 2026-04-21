@@ -104,10 +104,18 @@ class Lightstreamer(Streamer):
         """Run a single Lightstreamer session until cancellation or stale-stream detection."""
         assert Subscription is not None  # for type narrowing; guarded by run()
 
+        market_subs = [s for s in consumer.subscriptions if isinstance(s, MarketSubscription)]
+        chart_subs = [s for s in consumer.subscriptions if isinstance(s, ChartSubscription)]
+
         log.info(
-            "Starting Lightstreamer streaming for %s subscriptions",
-            len(consumer.subscriptions),
+            "Starting Lightstreamer streaming: %d chart + %d market subscriptions",
+            len(chart_subs),
+            len(market_subs),
         )
+        for s in chart_subs:
+            log.info("  CHART sub: %s", s.get_item_name())
+        for s in market_subs:
+            log.info("  MARKET sub: %s", s.get_item_name())
 
         market_queue: asyncio.Queue[dict[str, Any]] = asyncio.Queue()
         chart_queue: asyncio.Queue[dict[str, Any]] = asyncio.Queue()
@@ -116,19 +124,19 @@ class Lightstreamer(Streamer):
         ls_client = LightstreamerClient(self.client.ls_url, "DEFAULT")
         self._ls_client = ls_client
 
-        ls_client.connectionDetails.setUser(self.client.client_id or self.client.account_id or "")
+        ls_user = self.client.client_id or self.client.account_id or ""
+        ls_client.connectionDetails.setUser(ls_user)
         ls_client.connectionDetails.setPassword(
             f"CST-{self.client.ls_cst}|XST-{self.client.ls_xst}"
         )
 
         log.info(
-            "LS connecting to %s with clientId %s",
+            "LS connecting to %s (user=%s, accountId=%s, clientId=%s)",
             self.client.ls_url,
+            ls_user,
+            self.client.account_id,
             self.client.client_id,
         )
-
-        market_subs = [s for s in consumer.subscriptions if isinstance(s, MarketSubscription)]
-        chart_subs = [s for s in consumer.subscriptions if isinstance(s, ChartSubscription)]
 
         subscriptions = []
 
@@ -172,10 +180,15 @@ class Lightstreamer(Streamer):
                         log.exception("Error processing market update: %s", e)
 
                 def onSubscriptionError(self, code: Any, message: Any) -> None:
-                    log.error("Market subscription error: %s - %s", code, message)
+                    log.error(
+                        "Market subscription error (items=%s): %s - %s",
+                        market_items,
+                        code,
+                        message,
+                    )
 
                 def onSubscription(self) -> None:
-                    log.info("Market subscription active")
+                    log.info("Market subscription active (items=%s)", market_items)
 
                 def onUnsubscription(self) -> None:
                     log.info("Market unsubscribed")
@@ -252,8 +265,9 @@ class Lightstreamer(Streamer):
 
                         def onSubscriptionError(self, code: Any, message: Any) -> None:
                             log.error(
-                                "Chart subscription error for %s: %s - %s",
+                                "Chart subscription error for %s (item=%s): %s - %s",
                                 sub.instrument,
+                                sub.get_item_name(),
                                 code,
                                 message,
                             )
