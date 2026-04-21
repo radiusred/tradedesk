@@ -112,10 +112,10 @@ class Lightstreamer(Streamer):
             len(chart_subs),
             len(market_subs),
         )
-        for s in chart_subs:
-            log.info("  CHART sub: %s", s.get_item_name())
-        for s in market_subs:
-            log.info("  MARKET sub: %s", s.get_item_name())
+        for chart_sub in chart_subs:
+            log.info("  CHART sub: %s", chart_sub.get_item_name())
+        for market_sub in market_subs:
+            log.info("  MARKET sub: %s", market_sub.get_item_name())
 
         market_queue: asyncio.Queue[dict[str, Any]] = asyncio.Queue()
         chart_queue: asyncio.Queue[dict[str, Any]] = asyncio.Queue()
