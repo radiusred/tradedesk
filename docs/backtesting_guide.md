@@ -93,6 +93,10 @@ Key points:
 - Prefer `await request_order(OrderRequest(...))` inside strategies. That route goes
   through `OrderExecutionHandler`, so any configured spread limits or `order_gate`
   callbacks still apply.
+- The same order path also preserves recording parity: when a live client does
+  not publish its own position-open events, `OrderExecutionHandler` emits
+  `PositionOpenedEvent` after a confirmed opening fill so recording subscribers
+  see the same entry lifecycle boundary as they do in backtests.
 
 ---
 
@@ -298,7 +302,9 @@ When `run_portfolio` (or `portfolio.run()`) executes:
 4. Each completed candle calls `portfolio._handle_event(CandleClosedEvent)`:
    - Publishes the event to the dispatcher (recording subscribers react here)
    - Calls `portfolio.on_candle_close(event)` → `strategy.on_candle_close(event)`
-5. `BacktestClient.place_market_order` simulates fills at the candle's close price
+5. `BacktestClient.place_market_order_confirmed` simulates the fill at the
+   candle's close price, and the execution path emits the matching lifecycle
+   events used by recording
 6. `SessionEndedEvent` fires on completion
 
 ---
@@ -315,6 +321,12 @@ run_portfolio(
     client_factory=IGClient,
 )
 ```
+
+When you switch to IG-backed DEMO or LIVE runs, `request_order(...)` still goes
+through the same execution handler. If the client does not publish its own
+position-open event, tradedesk emits `PositionOpenedEvent` after the confirmed
+opening fill so recording subscribers and custom observers continue to receive
+entry lifecycle events.
 
 ---
 
