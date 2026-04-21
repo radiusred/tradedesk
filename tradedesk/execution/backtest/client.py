@@ -101,6 +101,8 @@ class BacktestClient(Client):
     - place_market_order executes virtual market fills at the latest mark price
     """
 
+    publishes_position_events = True
+
     _deal_counter = itertools.count(1)
 
     def __init__(

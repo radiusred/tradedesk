@@ -5,6 +5,7 @@ from unittest.mock import AsyncMock
 import pytest
 
 from tradedesk.execution.order_handler import OrderExecutionHandler, request_order
+from tradedesk.recording.events import PositionOpenedEvent
 from tradedesk.types import OrderRequest
 
 
@@ -286,3 +287,113 @@ async def test_order_gate_checked_before_spread_gate():
     assert "blocked by gate" in result.error
     # Spread gate should not be reached
     client.get_market_snapshot.assert_not_awaited()
+
+
+# ---------------------------------------------------------------------------
+# PositionOpenedEvent emission tests
+# ---------------------------------------------------------------------------
+
+
+def _make_client(publishes_position_events: bool = False) -> AsyncMock:
+    """Create a mock client with the publishes_position_events attribute."""
+    client = AsyncMock()
+    client.publishes_position_events = publishes_position_events
+    client.quantise_size = AsyncMock(side_effect=lambda inst, size: size)
+    client.place_market_order_confirmed.return_value = {
+        "level": 105.50,
+        "size": 1.0,
+        "dealId": "DEAL-123",
+    }
+    return client
+
+
+@pytest.mark.asyncio
+async def test_position_opened_event_emitted_for_ig_fill():
+    """PositionOpenedEvent is published when client does not emit its own."""
+    client = _make_client(publishes_position_events=False)
+    OrderExecutionHandler(client)
+
+    published_events: list[PositionOpenedEvent] = []
+
+    from tradedesk.events import get_dispatcher
+
+    async def capture(event: PositionOpenedEvent) -> None:
+        published_events.append(event)
+
+    get_dispatcher().subscribe(PositionOpenedEvent, capture)
+
+    result = await request_order(
+        OrderRequest(
+            instrument="CS.D.EURUSD.TODAY.IP",
+            direction="BUY",
+            size=1.0,
+            force_open=True,
+            strategy="test_strat",
+        )
+    )
+
+    assert result.success is True
+    assert len(published_events) == 1
+    evt = published_events[0]
+    assert evt.instrument == "CS.D.EURUSD.TODAY.IP"
+    assert evt.direction == "BUY"
+    assert evt.size == 1.0
+    assert evt.entry_price == 105.50
+    assert evt.strategy == "test_strat"
+    assert evt.position_id == "DEAL-123"
+
+
+@pytest.mark.asyncio
+async def test_no_position_event_when_client_publishes_own():
+    """No extra PositionOpenedEvent when client already emits them."""
+    client = _make_client(publishes_position_events=True)
+    OrderExecutionHandler(client)
+
+    published_events: list[PositionOpenedEvent] = []
+
+    from tradedesk.events import get_dispatcher
+
+    async def capture(event: PositionOpenedEvent) -> None:
+        published_events.append(event)
+
+    get_dispatcher().subscribe(PositionOpenedEvent, capture)
+
+    result = await request_order(
+        OrderRequest(
+            instrument="TEST",
+            direction="BUY",
+            size=1.0,
+            force_open=True,
+        )
+    )
+
+    assert result.success is True
+    assert len(published_events) == 0
+
+
+@pytest.mark.asyncio
+async def test_no_position_event_when_force_open_false():
+    """No PositionOpenedEvent when force_open is False (position close)."""
+    client = _make_client(publishes_position_events=False)
+    OrderExecutionHandler(client)
+
+    published_events: list[PositionOpenedEvent] = []
+
+    from tradedesk.events import get_dispatcher
+
+    async def capture(event: PositionOpenedEvent) -> None:
+        published_events.append(event)
+
+    get_dispatcher().subscribe(PositionOpenedEvent, capture)
+
+    result = await request_order(
+        OrderRequest(
+            instrument="TEST",
+            direction="SELL",
+            size=1.0,
+            force_open=False,
+        )
+    )
+
+    assert result.success is True
+    assert len(published_events) == 0
