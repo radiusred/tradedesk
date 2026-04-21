@@ -31,9 +31,9 @@ All major subsystems communicate via events:
 
 -   Market data events (ticks, candles)
 -   Strategy events (signals)
--   Execution events (orders, fills)
--   Portfolio events (position updates)
--   Recording events (trade lifecycle)
+-   Execution events (order completions and broker fills)
+-   Portfolio events (position updates and lifecycle transitions)
+-   Recording events (trade lifecycle, equity, and reporting)
 
 As a user, you primarily:
 
@@ -87,6 +87,14 @@ The IG execution module provides:
 Your strategy remains unchanged --- only the execution configuration
 differs.
 
+Orders placed through `request_order(...)` continue to flow through
+`OrderExecutionHandler` in both backtest and live sessions. For clients such as
+IG that do not publish their own position-open callbacks, tradedesk emits a
+`PositionOpenedEvent` immediately after a confirmed opening fill. That keeps
+recording subscribers and custom event consumers aligned across backtest,
+DEMO, and LIVE runs without double-publishing for clients that already emit
+their own lifecycle events.
+
 ### IG Credentials
 
 Live IG runs read credentials from environment variables:
@@ -130,7 +138,7 @@ The recording subsystem:
 
 -   Tracks trades and equity curves
 -   Computes excursions and performance metrics
--   Generates structured reports
+-   Generates structured reports from position lifecycle events and fills
 
 Users can subscribe to recording events for custom reporting pipelines.
 

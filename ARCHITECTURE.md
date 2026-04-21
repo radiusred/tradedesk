@@ -15,7 +15,7 @@ Data Flow (high level)
 - Portfolio layer applies risk budgets and distributes them to active sleeves/instruments.
 - Execution layer applies pre-flight gates (for example spread limits or
   portfolio-level order gates), then places orders and emits
-  fills/position updates.
+  order-completion plus position-lifecycle events.
 - Recording layer captures lifecycle events and metrics for reporting.
 
 Live vs Backtest paths
@@ -26,6 +26,10 @@ Key design decisions
 - Pure event-driven components: strategies react to events, not to direct broker state.
 - Separate concerns: data handling, strategy logic, risk management, and execution are decoupled to simplify testing and maintenance.
 - Deterministic backtesting: same strategy code runs in both backtest and live modes to ensure reproducibility.
+- Live parity for recording: when a client does not publish its own
+  position-open events, the execution layer emits `PositionOpenedEvent` after a
+  confirmed opening fill so recording and downstream observers see the same
+  lifecycle boundary in backtest and IG-backed sessions.
 
 See also: `README.md`, `docs/backtesting_guide.md`, and `docs/strategy_guide.md`.
 
