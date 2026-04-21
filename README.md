@@ -87,6 +87,29 @@ The IG execution module provides:
 Your strategy remains unchanged --- only the execution configuration
 differs.
 
+### IG Credentials
+
+Live IG runs read credentials from environment variables:
+
+-   `IG_API_KEY` (required)
+-   `IG_USERNAME` (required)
+-   `IG_PASSWORD` (required)
+-   `IG_ENVIRONMENT` (optional, defaults to `DEMO`, valid values are `DEMO` and `LIVE`)
+
+Example:
+
+```bash
+IG_API_KEY=... \
+IG_USERNAME=... \
+IG_PASSWORD=... \
+IG_ENVIRONMENT=DEMO \
+python your_live_runner.py
+```
+
+`tradedesk` authenticates with IG and captures the short-lived session headers
+(`CST` and `X-SECURITY-TOKEN`) from the login response automatically. You do not
+configure those session tokens yourself.
+
 
 ## Portfolio & Risk
 

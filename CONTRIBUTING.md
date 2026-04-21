@@ -66,6 +66,35 @@ pytest
 - Include tests for new functionality or bug fixes.
 - Code coverage must not decrease.
 
+## Credentials and Release Automation
+
+Local development, CI, and backtests do not require repository secrets.
+
+Live IG execution uses environment variables read by
+`tradedesk.execution.ig.settings.Settings`:
+
+- `IG_API_KEY` (required)
+- `IG_USERNAME` (required)
+- `IG_PASSWORD` (required)
+- `IG_ENVIRONMENT` (optional, defaults to `DEMO`; must be `DEMO` or `LIVE`)
+
+Do not commit real IG values in examples, shell history snippets, or tests. The
+library negotiates the short-lived IG session headers (`CST` and
+`X-SECURITY-TOKEN`) during authentication, so contributors should not try to
+store or configure those manually.
+
+Maintainers triggering `.github/workflows/prepare-release.yml` must configure
+these repository secrets:
+
+- `RELEASE_APP_ID`
+- `RELEASE_APP_PRIVATE_KEY`
+
+The shared reusable release workflow uses those values to mint a GitHub App
+token for checkout, version bumping, pushing the release commit, and creating
+the GitHub release. `.github/workflows/publish.yml` uses PyPI trusted
+publishing via GitHub OIDC (`id-token: write`), so no PyPI API token secret is
+expected in this repository.
+
 ## Pull Requests
 
 - Keep changes small, well-scoped, and documented in PR descriptions.
