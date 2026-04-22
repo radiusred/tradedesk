@@ -163,6 +163,16 @@ async def warmup_from_provider(self):
     self.warmup_from_history({(epic, timeframe): candles})
 ```
 
+If you override this hook, preserve the default fail-closed behavior:
+
+- treat missing history as "skip warmup", not "place trades anyway"
+- handle provider-specific quota failures explicitly if they matter to your runtime
+
+For IG-backed runs, exhausting the account's historical-candle allowance raises
+`HistoricalDataAllowanceError` instead of looking like a generic auth retry. A
+custom warmup hook can catch that exception, log or alert on it, and continue
+without priming that chart.
+
 ### Critical rule
 
 Warmup must **never place trades**.

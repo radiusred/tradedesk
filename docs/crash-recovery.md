@@ -40,6 +40,11 @@ the portfolio session lifecycle:
 That last step matters because a recovered position may already satisfy exit
 conditions once fresh indicators are primed.
 
+If that post-warmup price lookup fails, the framework logs the exception and
+keeps running. That includes IG-specific history-quota failures such as
+historical-data allowance exhaustion: the recovered position stays open until a
+later check can evaluate it with fresh data.
+
 ---
 
 ## Discrepancy types
