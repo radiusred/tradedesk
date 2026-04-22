@@ -328,6 +328,13 @@ position-open event, tradedesk emits `PositionOpenedEvent` after the confirmed
 opening fill so recording subscribers and custom observers continue to receive
 entry lifecycle events.
 
+Live sessions may also fetch IG historical candles during strategy warmup or
+post-reconciliation exit checks. If IG reports that the account has exhausted
+its historical-data allowance, tradedesk treats that as a distinct quota failure
+rather than retrying it as a generic 403/auth issue. The default warmup and
+reconciliation paths log the failure and continue the session without priming
+that history fetch.
+
 ---
 
 ## License

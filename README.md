@@ -118,6 +118,12 @@ python your_live_runner.py
 (`CST` and `X-SECURITY-TOKEN`) from the login response automatically. You do not
 configure those session tokens yourself.
 
+When live sessions ask IG for historical candles, IG enforces a separate
+account-level historical-data allowance. `tradedesk` treats that 403 response as
+a distinct failure mode instead of retrying it as an authentication problem, so
+embedding runtimes can back off or warn explicitly when warmup/history fetches
+run out of quota.
+
 
 ## Portfolio & Risk
 
