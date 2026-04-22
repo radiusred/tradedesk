@@ -10,6 +10,7 @@ from .broker import (
     AccountBalance,
     BrokerPosition,
     DealRejectedException,
+    HistoricalDataAllowanceError,
 )
 from .client import Client
 from .events import OrderCompletedEvent, OrderRequestEvent
@@ -23,6 +24,7 @@ __all__ = [
     "BrokerPosition",
     "Client",
     "DealRejectedException",
+    "HistoricalDataAllowanceError",
     "OrderCompletedEvent",
     "OrderExecutionHandler",
     "OrderRequestEvent",
