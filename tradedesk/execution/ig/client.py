@@ -9,7 +9,11 @@ from typing import Any
 
 import aiohttp
 
-from tradedesk.execution.broker import AccountBalance, BrokerPosition
+from tradedesk.execution.broker import (
+    AccountBalance,
+    BrokerPosition,
+    HistoricalDataAllowanceError,
+)
 from tradedesk.execution.client import Client
 from tradedesk.types import Candle
 
@@ -208,12 +212,18 @@ class IGClient(Client):
         """Attempt re-authentication on 401/403; raise immediately on rate limit."""
         try:
             body = await resp.json()
-            if isinstance(body, dict) and body.get("errorCode") == (
-                "error.public-api.exceeded-api-key-allowance"
-            ):
-                raise RuntimeError("IG API rate limit exceeded.")
+            if isinstance(body, dict):
+                error_code = body.get("errorCode", "")
+                if error_code == "error.public-api.exceeded-api-key-allowance":
+                    raise RuntimeError("IG API rate limit exceeded.")
+                if error_code == "error.public-api.exceeded-account-historical-data-allowance":
+                    raise HistoricalDataAllowanceError(
+                        "IG historical data allowance exceeded for this account."
+                    )
         except (ValueError, KeyError):
             pass
+        except (RuntimeError, HistoricalDataAllowanceError):
+            raise
 
         log.warning("Auth failed (HTTP %s) – attempting re-authentication", resp.status)
         await self._authenticate()

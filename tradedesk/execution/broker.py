@@ -9,7 +9,12 @@ we encapsulate streaming and implement backtesting.
 from dataclasses import dataclass
 
 # Re-export Direction for backward compatibility
-__all__ = ["AccountBalance", "BrokerPosition", "DealRejectedException"]
+__all__ = [
+    "AccountBalance",
+    "BrokerPosition",
+    "DealRejectedException",
+    "HistoricalDataAllowanceError",
+]
 
 
 @dataclass(frozen=True)
@@ -38,5 +43,11 @@ class AccountBalance:
 
 class DealRejectedException(Exception):
     """Raised when a deal is not accepted after placing a market order."""
+
+    pass
+
+
+class HistoricalDataAllowanceError(RuntimeError):
+    """Raised when IG returns HTTP 403 with exceeded-account-historical-data-allowance."""
 
     pass
