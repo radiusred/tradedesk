@@ -1,5 +1,5 @@
 import asyncio
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock
 
@@ -46,51 +46,93 @@ class Strategy(BaseStrategy):
         pass
 
 
-@pytest.mark.asyncio
-async def test_lightstreamer_emits_marketdata_and_candleclose_and_disconnects() -> None:
-    # Patch Subscription class used by streamer
-    ig_streamer.Subscription = FakeSubscription  # type: ignore[attr-defined]
+# ---------------------------------------------------------------------------
+# Fixtures
+# ---------------------------------------------------------------------------
 
-    # Build a fake LS client instance
-    ls_client = MagicMock()
-    ls_client.connectionDetails = MagicMock()
 
-    # Capture subscriptions passed to subscribe()
-    subscribed = []
+@pytest.fixture(autouse=True)
+def _patch_subscription(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(ig_streamer, "Subscription", FakeSubscription)
 
-    def subscribe(sub: Any) -> None:
-        subscribed.append(sub)
 
-    ls_client.subscribe.side_effect = subscribe
-
-    ig_streamer.LightstreamerClient = lambda *a, **k: ls_client  # type: ignore[attr-defined]
-
-    # Strategy + client stub
+@pytest.fixture()
+def ig_client() -> MagicMock:
     client = MagicMock()
     client.ls_url = "https://example"
     client.ls_cst = "CST"
     client.ls_xst = "XST"
     client.client_id = "CID"
     client.account_id = "AID"
+    return client
 
-    strat = Strategy(client)
-    strat._handle_event = AsyncMock()  # type: ignore[attr-defined]
 
-    streamer = ig_streamer.Lightstreamer(client)
+@pytest.fixture()
+def ls_client() -> MagicMock:
+    client = MagicMock()
+    client.connectionDetails = MagicMock()
+    return client
 
+
+@pytest.fixture()
+def patch_ls(
+    monkeypatch: pytest.MonkeyPatch,
+    ls_client: MagicMock,
+) -> MagicMock:
+    monkeypatch.setattr(
+        ig_streamer,
+        "LightstreamerClient",
+        lambda *a, **k: ls_client,
+    )
+    return ls_client
+
+
+@pytest.fixture()
+def subscribed(ls_client: MagicMock) -> list[Any]:
+    captured: list[Any] = []
+    ls_client.subscribe.side_effect = lambda sub: captured.append(sub)
+    return captured
+
+
+@pytest.fixture()
+def make_strategy(
+    ig_client: MagicMock,
+    monkeypatch: pytest.MonkeyPatch,
+) -> Callable[..., tuple[BaseStrategy, AsyncMock]]:
+    def _factory(
+        strategy_cls: type[BaseStrategy] = Strategy,
+    ) -> tuple[BaseStrategy, AsyncMock]:
+        strat = strategy_cls(ig_client)
+        handle_event = AsyncMock()
+        strat._handle_event = handle_event  # type: ignore[attr-defined]
+        return strat, handle_event
+
+    return _factory
+
+
+# ---------------------------------------------------------------------------
+# Tests
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_lightstreamer_emits_marketdata_and_candleclose_and_disconnects(
+    ig_client: MagicMock,
+    ls_client: MagicMock,
+    patch_ls: MagicMock,
+    subscribed: list[Any],
+    make_strategy: Callable[..., tuple[BaseStrategy, AsyncMock]],
+) -> None:
+    strat, handle_event = make_strategy()
+    streamer = ig_streamer.Lightstreamer(ig_client)
     task = asyncio.create_task(streamer.run(strat))
-
-    # Allow the streamer to connect + subscribe
     await asyncio.sleep(0.05)
 
-    # We expect 1 market subscription and 1 chart subscription to have been created and subscribed
     assert len(subscribed) == 2
     market_sub = next(s for s in subscribed if s.items[0].startswith("MARKET:"))
     chart_sub = next(s for s in subscribed if s.items[0].startswith("CHART:"))
 
-    # Emit a market tick
-    market_listener = market_sub._listener
-    market_listener.onItemUpdate(
+    market_sub._listener.onItemUpdate(
         FakeUpdate(
             item_name="MARKET:CS.D.EURUSD.CFD.IP",
             values={
@@ -102,17 +144,14 @@ async def test_lightstreamer_emits_marketdata_and_candleclose_and_disconnects() 
         )
     )
 
-    # Emit an incomplete candle (ignored)
-    chart_listener = chart_sub._listener
-    chart_listener.onItemUpdate(
+    chart_sub._listener.onItemUpdate(
         FakeUpdate(
             item_name="CHART:CS.D.EURUSD.CFD.IP:5MINUTE",
             values={"CONS_END": "0"},
         )
     )
 
-    # Emit a completed candle
-    chart_listener.onItemUpdate(
+    chart_sub._listener.onItemUpdate(
         FakeUpdate(
             item_name="CHART:CS.D.EURUSD.CFD.IP:5MINUTE",
             values={
@@ -132,51 +171,35 @@ async def test_lightstreamer_emits_marketdata_and_candleclose_and_disconnects() 
         )
     )
 
-    # Give consumers time to process
     await asyncio.sleep(0.05)
 
-    # Verify _handle_event got called for market and candle
-    assert strat._handle_event.await_count >= 2  # type: ignore[attr-defined]
-    events = [c.args[0] for c in strat._handle_event.await_args_list]  # type: ignore[attr-defined]
+    assert handle_event.await_count >= 2
+    events = [c.args[0] for c in handle_event.await_args_list]
     assert any(isinstance(e, MarketData) for e in events)
     assert any(isinstance(e, CandleClosedEvent) for e in events)
 
-    # Cancel and ensure disconnect called
     task.cancel()
-    await task  # run() may swallow CancelledError and exit cleanly
+    await task
 
     ls_client.disconnect.assert_called()
     assert task.done()
 
 
 @pytest.mark.asyncio
-async def test_candle_ohlc_mid_price_values() -> None:
+async def test_candle_ohlc_mid_price_values(
+    ig_client: MagicMock,
+    patch_ls: MagicMock,
+    subscribed: list[Any],
+    make_strategy: Callable[..., tuple[BaseStrategy, AsyncMock]],
+) -> None:
     """Candle OHLC values are the mean of offer and bid prices."""
-    ig_streamer.Subscription = FakeSubscription  # type: ignore[attr-defined]
-    ls_client = MagicMock()
-    ls_client.connectionDetails = MagicMock()
-    ig_streamer.LightstreamerClient = lambda *a, **k: ls_client  # type: ignore[attr-defined]
-
-    client = MagicMock()
-    client.ls_url = "https://example"
-    client.ls_cst = "CST"
-    client.ls_xst = "XST"
-    client.client_id = "CID"
-    client.account_id = "AID"
-
-    strat = Strategy(client)
-    strat._handle_event = AsyncMock()  # type: ignore[attr-defined]
-
-    subscribed = []
-    ls_client.subscribe.side_effect = lambda sub: subscribed.append(sub)
-
-    streamer = ig_streamer.Lightstreamer(client)
+    strat, handle_event = make_strategy()
+    streamer = ig_streamer.Lightstreamer(ig_client)
     task = asyncio.create_task(streamer.run(strat))
     await asyncio.sleep(0.05)
 
     chart_sub = next(s for s in subscribed if s.items[0].startswith("CHART:"))
-    chart_listener = chart_sub._listener
-    chart_listener.onItemUpdate(
+    chart_sub._listener.onItemUpdate(
         FakeUpdate(
             item_name="CHART:CS.D.EURUSD.CFD.IP:5MINUTE",
             values={
@@ -198,7 +221,7 @@ async def test_candle_ohlc_mid_price_values() -> None:
 
     await asyncio.sleep(0.05)
 
-    events = [c.args[0] for c in strat._handle_event.await_args_list]  # type: ignore[attr-defined]
+    events = [c.args[0] for c in handle_event.await_args_list]
     candle_events = [e for e in events if isinstance(e, CandleClosedEvent)]
     assert len(candle_events) == 1
     c = candle_events[0].candle
@@ -214,34 +237,20 @@ async def test_candle_ohlc_mid_price_values() -> None:
 
 
 @pytest.mark.asyncio
-async def test_malformed_chart_update_missing_close_skipped() -> None:
+async def test_malformed_chart_update_missing_close_skipped(
+    ig_client: MagicMock,
+    patch_ls: MagicMock,
+    subscribed: list[Any],
+    make_strategy: Callable[..., tuple[BaseStrategy, AsyncMock]],
+) -> None:
     """Chart update with missing OFR_CLOSE or BID_CLOSE emits no event."""
-    ig_streamer.Subscription = FakeSubscription  # type: ignore[attr-defined]
-    ls_client = MagicMock()
-    ls_client.connectionDetails = MagicMock()
-    ig_streamer.LightstreamerClient = lambda *a, **k: ls_client  # type: ignore[attr-defined]
-
-    client = MagicMock()
-    client.ls_url = "https://example"
-    client.ls_cst = "CST"
-    client.ls_xst = "XST"
-    client.client_id = "CID"
-    client.account_id = "AID"
-
-    strat = Strategy(client)
-    strat._handle_event = AsyncMock()  # type: ignore[attr-defined]
-
-    subscribed = []
-    ls_client.subscribe.side_effect = lambda sub: subscribed.append(sub)
-
-    streamer = ig_streamer.Lightstreamer(client)
+    strat, handle_event = make_strategy()
+    streamer = ig_streamer.Lightstreamer(ig_client)
     task = asyncio.create_task(streamer.run(strat))
     await asyncio.sleep(0.05)
 
     chart_sub = next(s for s in subscribed if s.items[0].startswith("CHART:"))
-    chart_listener = chart_sub._listener
-    # Missing OFR_CLOSE and BID_CLOSE
-    chart_listener.onItemUpdate(
+    chart_sub._listener.onItemUpdate(
         FakeUpdate(
             item_name="CHART:CS.D.EURUSD.CFD.IP:5MINUTE",
             values={"CONS_END": "1", "OFR_CLOSE": None, "BID_CLOSE": None},
@@ -250,49 +259,34 @@ async def test_malformed_chart_update_missing_close_skipped() -> None:
 
     await asyncio.sleep(0.05)
 
-    assert strat._handle_event.await_count == 0  # type: ignore[attr-defined]
+    assert handle_event.await_count == 0
 
     task.cancel()
     await task
 
 
 @pytest.mark.asyncio
-async def test_market_update_missing_bid_or_offer_skipped() -> None:
+async def test_market_update_missing_bid_or_offer_skipped(
+    ig_client: MagicMock,
+    patch_ls: MagicMock,
+    subscribed: list[Any],
+    make_strategy: Callable[..., tuple[BaseStrategy, AsyncMock]],
+) -> None:
     """Market update with missing BID or OFFER emits no MarketData event."""
-    ig_streamer.Subscription = FakeSubscription  # type: ignore[attr-defined]
-    ls_client = MagicMock()
-    ls_client.connectionDetails = MagicMock()
-    ig_streamer.LightstreamerClient = lambda *a, **k: ls_client  # type: ignore[attr-defined]
-
-    client = MagicMock()
-    client.ls_url = "https://example"
-    client.ls_cst = "CST"
-    client.ls_xst = "XST"
-    client.client_id = "CID"
-    client.account_id = "AID"
-
-    strat = Strategy(client)
-    strat._handle_event = AsyncMock()  # type: ignore[attr-defined]
-
-    subscribed = []
-    ls_client.subscribe.side_effect = lambda sub: subscribed.append(sub)
-
-    streamer = ig_streamer.Lightstreamer(client)
+    strat, handle_event = make_strategy()
+    streamer = ig_streamer.Lightstreamer(ig_client)
     task = asyncio.create_task(streamer.run(strat))
     await asyncio.sleep(0.05)
 
     market_sub = next(s for s in subscribed if s.items[0].startswith("MARKET:"))
-    market_listener = market_sub._listener
 
-    # BID present, OFFER missing
-    market_listener.onItemUpdate(
+    market_sub._listener.onItemUpdate(
         FakeUpdate(
             item_name="MARKET:CS.D.EURUSD.CFD.IP",
             values={"BID": "1.0", "OFFER": None, "UPDATE_TIME": "x", "MARKET_STATE": "TRADEABLE"},
         )
     )
-    # Both missing
-    market_listener.onItemUpdate(
+    market_sub._listener.onItemUpdate(
         FakeUpdate(
             item_name="MARKET:CS.D.EURUSD.CFD.IP",
             values={"BID": None, "OFFER": None, "UPDATE_TIME": "x", "MARKET_STATE": "TRADEABLE"},
@@ -301,26 +295,20 @@ async def test_market_update_missing_bid_or_offer_skipped() -> None:
 
     await asyncio.sleep(0.05)
 
-    assert strat._handle_event.await_count == 0  # type: ignore[attr-defined]
+    assert handle_event.await_count == 0
 
     task.cancel()
     await task
 
 
 @pytest.mark.asyncio
-async def test_multiple_chart_subscriptions_route_independently() -> None:
+async def test_multiple_chart_subscriptions_route_independently(
+    ig_client: MagicMock,
+    patch_ls: MagicMock,
+    subscribed: list[Any],
+    make_strategy: Callable[..., tuple[BaseStrategy, AsyncMock]],
+) -> None:
     """Two chart subscriptions (different instruments) each emit their own CandleClosedEvent."""
-    ig_streamer.Subscription = FakeSubscription  # type: ignore[attr-defined]
-    ls_client = MagicMock()
-    ls_client.connectionDetails = MagicMock()
-    ig_streamer.LightstreamerClient = lambda *a, **k: ls_client  # type: ignore[attr-defined]
-
-    client = MagicMock()
-    client.ls_url = "https://example"
-    client.ls_cst = "CST"
-    client.ls_xst = "XST"
-    client.client_id = "CID"
-    client.account_id = "AID"
 
     class TwoChartStrategy(BaseStrategy):
         SUBSCRIPTIONS = [
@@ -331,13 +319,8 @@ async def test_multiple_chart_subscriptions_route_independently() -> None:
         async def on_price_update(self, market_data: MarketData) -> None:
             pass
 
-    strat = TwoChartStrategy(client)
-    strat._handle_event = AsyncMock()  # type: ignore[attr-defined]
-
-    subscribed = []
-    ls_client.subscribe.side_effect = lambda sub: subscribed.append(sub)
-
-    streamer = ig_streamer.Lightstreamer(client)
+    strat, handle_event = make_strategy(TwoChartStrategy)
+    streamer = ig_streamer.Lightstreamer(ig_client)
     task = asyncio.create_task(streamer.run(strat))
     await asyncio.sleep(0.05)
 
@@ -360,13 +343,11 @@ async def test_multiple_chart_subscriptions_route_independently() -> None:
     }
 
     for sub in chart_subs:
-        instrument = sub.items[0].split(":")[1]
         sub._listener.onItemUpdate(FakeUpdate(item_name=sub.items[0], values=candle_values))
-        _ = instrument  # used for clarity
 
     await asyncio.sleep(0.05)
 
-    events = [c.args[0] for c in strat._handle_event.await_args_list]  # type: ignore[attr-defined]
+    events = [c.args[0] for c in handle_event.await_args_list]
     candle_events = [e for e in events if isinstance(e, CandleClosedEvent)]
     assert len(candle_events) == 2
     instruments = {e.instrument for e in candle_events}
@@ -378,24 +359,15 @@ async def test_multiple_chart_subscriptions_route_independently() -> None:
 
 
 @pytest.mark.asyncio
-async def test_connection_status_changes_do_not_crash() -> None:
+async def test_connection_status_changes_do_not_crash(
+    ig_client: MagicMock,
+    ls_client: MagicMock,
+    patch_ls: MagicMock,
+    make_strategy: Callable[..., tuple[BaseStrategy, AsyncMock]],
+) -> None:
     """ConnectionListener handles status changes and server errors without raising."""
-    ig_streamer.Subscription = FakeSubscription  # type: ignore[attr-defined]
-    ls_client = MagicMock()
-    ls_client.connectionDetails = MagicMock()
-    ig_streamer.LightstreamerClient = lambda *a, **k: ls_client  # type: ignore[attr-defined]
-
-    client = MagicMock()
-    client.ls_url = "https://example"
-    client.ls_cst = "CST"
-    client.ls_xst = "XST"
-    client.client_id = "CID"
-    client.account_id = "AID"
-
-    strat = Strategy(client)
-    strat._handle_event = AsyncMock()  # type: ignore[attr-defined]
-
-    streamer = ig_streamer.Lightstreamer(client)
+    strat, _ = make_strategy()
+    streamer = ig_streamer.Lightstreamer(ig_client)
     task = asyncio.create_task(streamer.run(strat))
     await asyncio.sleep(0.05)
 
@@ -410,27 +382,15 @@ async def test_connection_status_changes_do_not_crash() -> None:
 
 
 @pytest.mark.asyncio
-async def test_subscription_errors_do_not_crash() -> None:
+async def test_subscription_errors_do_not_crash(
+    ig_client: MagicMock,
+    patch_ls: MagicMock,
+    subscribed: list[Any],
+    make_strategy: Callable[..., tuple[BaseStrategy, AsyncMock]],
+) -> None:
     """Subscription error callbacks are handled without raising."""
-    ig_streamer.Subscription = FakeSubscription  # type: ignore[attr-defined]
-    ls_client = MagicMock()
-    ls_client.connectionDetails = MagicMock()
-    ig_streamer.LightstreamerClient = lambda *a, **k: ls_client  # type: ignore[attr-defined]
-
-    client = MagicMock()
-    client.ls_url = "https://example"
-    client.ls_cst = "CST"
-    client.ls_xst = "XST"
-    client.client_id = "CID"
-    client.account_id = "AID"
-
-    strat = Strategy(client)
-    strat._handle_event = AsyncMock()  # type: ignore[attr-defined]
-
-    subscribed = []
-    ls_client.subscribe.side_effect = lambda sub: subscribed.append(sub)
-
-    streamer = ig_streamer.Lightstreamer(client)
+    strat, _ = make_strategy()
+    streamer = ig_streamer.Lightstreamer(ig_client)
     task = asyncio.create_task(streamer.run(strat))
     await asyncio.sleep(0.05)
 
@@ -450,34 +410,21 @@ async def test_subscription_errors_do_not_crash() -> None:
 
 @pytest.mark.asyncio
 async def test_heartbeat_monitor_warns_on_stale_connection(
+    ig_client: MagicMock,
+    patch_ls: MagicMock,
+    make_strategy: Callable[..., tuple[BaseStrategy, AsyncMock]],
     caplog: pytest.LogCaptureFixture,
 ) -> None:
     """Heartbeat monitor emits a warning when no updates arrive within the threshold."""
     import logging
     from datetime import datetime, timedelta, timezone
 
-    ig_streamer.Subscription = FakeSubscription  # type: ignore[attr-defined]
-    ls_client = MagicMock()
-    ls_client.connectionDetails = MagicMock()
-    ig_streamer.LightstreamerClient = lambda *a, **k: ls_client  # type: ignore[attr-defined]
-
-    client = MagicMock()
-    client.ls_url = "https://example"
-    client.ls_cst = "CST"
-    client.ls_xst = "XST"
-    client.client_id = "CID"
-    client.account_id = "AID"
-
-    strat = Strategy(client)
-    strat._handle_event = AsyncMock()  # type: ignore[attr-defined]
-    # Backdate last_update just past the watchdog threshold but under the
-    # silence suppression threshold (300s), so the normal warning fires.
+    strat, _ = make_strategy()
     strat.last_update = datetime.now(timezone.utc) - timedelta(seconds=120)
     strat.watchdog_threshold = 60.0
 
-    # Disable reconnect so the warning fires without triggering reconnection
-    streamer = ig_streamer.Lightstreamer(client, max_stale_seconds=0)
-    streamer.heartbeat_sleep = 0  # fast loop for test
+    streamer = ig_streamer.Lightstreamer(ig_client, max_stale_seconds=0)
+    streamer.heartbeat_sleep = 0
 
     with caplog.at_level(logging.WARNING, logger="tradedesk.execution.ig.price_streamer"):
         task = asyncio.create_task(streamer.run(strat))
@@ -490,32 +437,21 @@ async def test_heartbeat_monitor_warns_on_stale_connection(
 
 @pytest.mark.asyncio
 async def test_heartbeat_suppresses_after_prolonged_silence(
+    ig_client: MagicMock,
+    patch_ls: MagicMock,
+    make_strategy: Callable[..., tuple[BaseStrategy, AsyncMock]],
     caplog: pytest.LogCaptureFixture,
 ) -> None:
     """After prolonged silence (>5 min), heartbeat suppresses repeated warnings."""
     import logging
     from datetime import datetime, timezone
 
-    ig_streamer.Subscription = FakeSubscription  # type: ignore[attr-defined]
-    ls_client = MagicMock()
-    ls_client.connectionDetails = MagicMock()
-    ig_streamer.LightstreamerClient = lambda *a, **k: ls_client  # type: ignore[attr-defined]
-
-    client = MagicMock()
-    client.ls_url = "https://example"
-    client.ls_cst = "CST"
-    client.ls_xst = "XST"
-    client.client_id = "CID"
-    client.account_id = "AID"
-
-    strat = Strategy(client)
-    strat._handle_event = AsyncMock()  # type: ignore[attr-defined]
-    # Backdate far enough to exceed the 300s silence threshold.
+    strat, _ = make_strategy()
     strat.last_update = datetime(2020, 1, 1, tzinfo=timezone.utc)
     strat.watchdog_threshold = 60.0
 
-    streamer = ig_streamer.Lightstreamer(client, max_stale_seconds=0)
-    streamer.heartbeat_sleep = 0  # fast loop for test
+    streamer = ig_streamer.Lightstreamer(ig_client, max_stale_seconds=0)
+    streamer.heartbeat_sleep = 0
 
     with caplog.at_level(logging.WARNING, logger="tradedesk.execution.ig.price_streamer"):
         task = asyncio.create_task(streamer.run(strat))
@@ -524,30 +460,15 @@ async def test_heartbeat_suppresses_after_prolonged_silence(
         await task
 
     assert any("Stream silent" in r.message for r in caplog.records)
-    # Should NOT emit repeated "Heartbeat Alert" messages.
     assert not any("Heartbeat Alert" in r.message for r in caplog.records)
 
 
 @pytest.mark.asyncio
-async def test_heartbeat_threshold_tuned_for_chart_only() -> None:
-    # Patch Subscription class used by streamer
-    ig_streamer.Subscription = FakeSubscription  # type: ignore[attr-defined]
-
-    ls_client = MagicMock()
-    ls_client.connectionDetails = MagicMock()
-
-    subscribed = []
-    ls_client.subscribe.side_effect = lambda sub: subscribed.append(sub)
-
-    ig_streamer.LightstreamerClient = lambda *a, **k: ls_client  # type: ignore[attr-defined]
-
-    client = MagicMock()
-    client.ls_url = "https://example"
-    client.ls_cst = "CST"
-    client.ls_xst = "XST"
-    client.client_id = "CID"
-    client.account_id = "AID"
-
+async def test_heartbeat_threshold_tuned_for_chart_only(
+    ig_client: MagicMock,
+    patch_ls: MagicMock,
+    subscribed: list[Any],
+) -> None:
     class ChartOnlyStrategy(BaseStrategy):
         SUBSCRIPTIONS = [
             ChartSubscription("CS.D.EURUSD.CFD.IP", "5MINUTE"),
@@ -556,15 +477,14 @@ async def test_heartbeat_threshold_tuned_for_chart_only() -> None:
         async def on_price_update(self, market_data: MarketData) -> None:
             pass
 
-    strat = ChartOnlyStrategy(client)
+    strat = ChartOnlyStrategy(ig_client)
+    strat._handle_event = AsyncMock()  # type: ignore[attr-defined]
     assert strat.watchdog_threshold == 60
 
-    streamer = ig_streamer.Lightstreamer(client)
+    streamer = ig_streamer.Lightstreamer(ig_client)
     task = asyncio.create_task(streamer.run(strat))
-
     await asyncio.sleep(0.05)
 
-    # For chart-only streams, threshold should be raised to at least one bar (5 minutes)
     assert strat.watchdog_threshold >= 300
 
     task.cancel()
@@ -572,11 +492,13 @@ async def test_heartbeat_threshold_tuned_for_chart_only() -> None:
 
 
 @pytest.mark.asyncio
-async def test_stale_stream_reconnects_automatically() -> None:
+async def test_stale_stream_reconnects_automatically(
+    ig_client: MagicMock,
+    monkeypatch: pytest.MonkeyPatch,
+    make_strategy: Callable[..., tuple[BaseStrategy, AsyncMock]],
+) -> None:
     """Streamer disconnects and reconnects when staleness exceeds max_stale_seconds."""
     from datetime import datetime, timezone
-
-    ig_streamer.Subscription = FakeSubscription  # type: ignore[attr-defined]
 
     ls_clients: list[MagicMock] = []
 
@@ -586,64 +508,44 @@ async def test_stale_stream_reconnects_automatically() -> None:
         ls_clients.append(c)
         return c
 
-    ig_streamer.LightstreamerClient = make_ls_client  # type: ignore[attr-defined]
+    monkeypatch.setattr(ig_streamer, "LightstreamerClient", make_ls_client)
 
-    client = MagicMock()
-    client.ls_url = "https://example"
-    client.ls_cst = "CST"
-    client.ls_xst = "XST"
-    client.client_id = "CID"
-    client.account_id = "AID"
-
-    strat = Strategy(client)
-    strat._handle_event = AsyncMock()  # type: ignore[attr-defined]
-    # Backdate last_update far beyond max_stale_seconds
+    strat, _ = make_strategy()
     strat.last_update = datetime(2020, 1, 1, tzinfo=timezone.utc)
     strat.watchdog_threshold = 1.0
 
     streamer = ig_streamer.Lightstreamer(
-        client,
+        ig_client,
         max_stale_seconds=2.0,
         max_reconnect_attempts=3,
         reconnect_delay=0,
     )
-    streamer.heartbeat_sleep = 0  # fast loop for test
+    streamer.heartbeat_sleep = 0
 
-    # auto_reconnect is True by default — it should reconnect until max attempts
     with pytest.raises(StaleStreamError):
         await streamer.run(strat)
 
-    # initial session + 2 successful reconnects + final raise on 3rd attempt
     assert len(ls_clients) == 3
-    # Each old client should have been disconnected
     for c in ls_clients:
         c.disconnect.assert_called()
 
 
 @pytest.mark.asyncio
-async def test_stale_stream_raises_when_auto_reconnect_disabled() -> None:
+async def test_stale_stream_raises_when_auto_reconnect_disabled(
+    ig_client: MagicMock,
+    ls_client: MagicMock,
+    patch_ls: MagicMock,
+    make_strategy: Callable[..., tuple[BaseStrategy, AsyncMock]],
+) -> None:
     """StaleStreamError propagates when auto_reconnect is False."""
     from datetime import datetime, timezone
 
-    ig_streamer.Subscription = FakeSubscription  # type: ignore[attr-defined]
-    ls_client = MagicMock()
-    ls_client.connectionDetails = MagicMock()
-    ig_streamer.LightstreamerClient = lambda *a, **k: ls_client  # type: ignore[attr-defined]
-
-    client = MagicMock()
-    client.ls_url = "https://example"
-    client.ls_cst = "CST"
-    client.ls_xst = "XST"
-    client.client_id = "CID"
-    client.account_id = "AID"
-
-    strat = Strategy(client)
-    strat._handle_event = AsyncMock()  # type: ignore[attr-defined]
+    strat, _ = make_strategy()
     strat.last_update = datetime(2020, 1, 1, tzinfo=timezone.utc)
     strat.watchdog_threshold = 1.0
 
     streamer = ig_streamer.Lightstreamer(
-        client, max_stale_seconds=2.0, auto_reconnect=False,
+        ig_client, max_stale_seconds=2.0, auto_reconnect=False,
     )
     streamer.heartbeat_sleep = 0
 
@@ -654,11 +556,13 @@ async def test_stale_stream_raises_when_auto_reconnect_disabled() -> None:
 
 
 @pytest.mark.asyncio
-async def test_stale_stream_reconnects_unlimited_when_max_zero() -> None:
+async def test_stale_stream_reconnects_unlimited_when_max_zero(
+    ig_client: MagicMock,
+    monkeypatch: pytest.MonkeyPatch,
+    make_strategy: Callable[..., tuple[BaseStrategy, AsyncMock]],
+) -> None:
     """max_reconnect_attempts=0 means unlimited retries; streamer keeps reconnecting."""
     from datetime import datetime, timezone
-
-    ig_streamer.Subscription = FakeSubscription  # type: ignore[attr-defined]
 
     connect_count = 0
 
@@ -669,32 +573,22 @@ async def test_stale_stream_reconnects_unlimited_when_max_zero() -> None:
         c.connectionDetails = MagicMock()
         return c
 
-    ig_streamer.LightstreamerClient = make_ls_client  # type: ignore[attr-defined]
+    monkeypatch.setattr(ig_streamer, "LightstreamerClient", make_ls_client)
 
-    client = MagicMock()
-    client.ls_url = "https://example"
-    client.ls_cst = "CST"
-    client.ls_xst = "XST"
-    client.client_id = "CID"
-    client.account_id = "AID"
-
-    strat = Strategy(client)
-    strat._handle_event = AsyncMock()  # type: ignore[attr-defined]
+    strat, _ = make_strategy()
     strat.last_update = datetime(2020, 1, 1, tzinfo=timezone.utc)
     strat.watchdog_threshold = 1.0
 
     streamer = ig_streamer.Lightstreamer(
-        client,
+        ig_client,
         max_stale_seconds=2.0,
-        max_reconnect_attempts=0,  # unlimited
+        max_reconnect_attempts=0,
         reconnect_delay=0,
     )
     streamer.heartbeat_sleep = 0
 
     task = asyncio.create_task(streamer.run(strat))
-    # Let it reconnect several times
     await asyncio.sleep(0.15)
-    # Should have reconnected multiple times without giving up
     assert connect_count >= 3
 
     task.cancel()
@@ -702,11 +596,13 @@ async def test_stale_stream_reconnects_unlimited_when_max_zero() -> None:
 
 
 @pytest.mark.asyncio
-async def test_reconnect_reestablishes_subscriptions() -> None:
+async def test_reconnect_reestablishes_subscriptions(
+    ig_client: MagicMock,
+    monkeypatch: pytest.MonkeyPatch,
+    make_strategy: Callable[..., tuple[BaseStrategy, AsyncMock]],
+) -> None:
     """After reconnect, the streamer creates fresh LS client and subscriptions."""
     from datetime import datetime, timezone
-
-    ig_streamer.Subscription = FakeSubscription  # type: ignore[attr-defined]
 
     connect_calls: list[MagicMock] = []
     subscribe_calls: list[Any] = []
@@ -718,22 +614,14 @@ async def test_reconnect_reestablishes_subscriptions() -> None:
         connect_calls.append(c)
         return c
 
-    ig_streamer.LightstreamerClient = make_ls_client  # type: ignore[attr-defined]
+    monkeypatch.setattr(ig_streamer, "LightstreamerClient", make_ls_client)
 
-    client = MagicMock()
-    client.ls_url = "https://example"
-    client.ls_cst = "CST"
-    client.ls_xst = "XST"
-    client.client_id = "CID"
-    client.account_id = "AID"
-
-    strat = Strategy(client)
-    strat._handle_event = AsyncMock()  # type: ignore[attr-defined]
+    strat, _ = make_strategy()
     strat.last_update = datetime(2020, 1, 1, tzinfo=timezone.utc)
     strat.watchdog_threshold = 1.0
 
     streamer = ig_streamer.Lightstreamer(
-        client,
+        ig_client,
         max_stale_seconds=2.0,
         max_reconnect_attempts=2,
         reconnect_delay=0,
@@ -743,45 +631,30 @@ async def test_reconnect_reestablishes_subscriptions() -> None:
     with pytest.raises(StaleStreamError):
         await streamer.run(strat)
 
-    # 2 sessions: initial + 1 successful reconnect, then 2nd attempt hits limit
     assert len(connect_calls) == 2
-    # Each session creates 2 subscriptions (1 market + 1 chart)
     assert len(subscribe_calls) == 4
-    # First client disconnected before reconnect
     connect_calls[0].disconnect.assert_called()
-    # Each session got connect() called
     for c in connect_calls:
         c.connect.assert_called_once()
 
 
 @pytest.mark.asyncio
-async def test_stale_stream_disabled_when_max_stale_zero() -> None:
+async def test_stale_stream_disabled_when_max_stale_zero(
+    ig_client: MagicMock,
+    patch_ls: MagicMock,
+    make_strategy: Callable[..., tuple[BaseStrategy, AsyncMock]],
+) -> None:
     """Setting max_stale_seconds=0 disables the reconnect watchdog (warns only)."""
     from datetime import datetime, timezone
 
-    ig_streamer.Subscription = FakeSubscription  # type: ignore[attr-defined]
-    ls_client = MagicMock()
-    ls_client.connectionDetails = MagicMock()
-    ig_streamer.LightstreamerClient = lambda *a, **k: ls_client  # type: ignore[attr-defined]
-
-    client = MagicMock()
-    client.ls_url = "https://example"
-    client.ls_cst = "CST"
-    client.ls_xst = "XST"
-    client.client_id = "CID"
-    client.account_id = "AID"
-
-    strat = Strategy(client)
-    strat._handle_event = AsyncMock()  # type: ignore[attr-defined]
+    strat, _ = make_strategy()
     strat.last_update = datetime(2020, 1, 1, tzinfo=timezone.utc)
     strat.watchdog_threshold = 1.0
 
-    # max_stale_seconds=0 disables the reconnect watchdog
-    streamer = ig_streamer.Lightstreamer(client, max_stale_seconds=0)
+    streamer = ig_streamer.Lightstreamer(ig_client, max_stale_seconds=0)
     streamer.heartbeat_sleep = 0
 
     task = asyncio.create_task(streamer.run(strat))
-    # Let it run a few heartbeat cycles — should NOT raise or reconnect
     await asyncio.sleep(0.05)
     assert not task.done()
 
