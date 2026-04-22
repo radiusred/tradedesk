@@ -1,3 +1,5 @@
+"""Domain events emitted by the tradedesk recording subsystem."""
+
 from tradedesk.events import DomainEvent, event
 
 

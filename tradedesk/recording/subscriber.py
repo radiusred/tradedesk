@@ -1,3 +1,5 @@
+"""Session event subscriber that drives recording outputs and reports."""
+
 from __future__ import annotations
 
 import logging

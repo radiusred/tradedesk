@@ -1,3 +1,5 @@
+"""Opportunity tracking helpers for regime and instrument coverage."""
+
 from dataclasses import dataclass, field
 
 

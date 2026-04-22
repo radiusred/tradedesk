@@ -1,3 +1,5 @@
+"""Trade, equity, and summary ledger helpers for recorded sessions."""
+
 import csv
 from dataclasses import dataclass, field
 from datetime import timedelta, timezone

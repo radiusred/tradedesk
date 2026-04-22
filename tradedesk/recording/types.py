@@ -1,3 +1,5 @@
+"""Shared enums and dataclasses used by the recording subsystem."""
+
 from dataclasses import dataclass
 from enum import Enum
 
