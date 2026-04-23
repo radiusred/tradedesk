@@ -17,8 +17,8 @@ import logging
 from collections import deque
 from pathlib import Path
 
-from tradedesk import OrderRequest, SimplePortfolio, run_portfolio
-from tradedesk.execution import request_order
+from tradedesk import OrderRequest, SimplePortfolio, run_portfolio  # noqa: F401
+from tradedesk.execution import request_order  # noqa: F401
 from tradedesk.execution.ig import IGClient
 from tradedesk.marketdata import MarketData, MarketSubscription
 from tradedesk.strategy import BaseStrategy
