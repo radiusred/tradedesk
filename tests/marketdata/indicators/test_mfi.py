@@ -75,8 +75,8 @@ class TestMFI:
             (10, 6, 8),
             (16, 12, 14),
         ]
-        for h, l, c in prices:
-            v = mfi.update(candle(h, l, c))
+        for h, low, c in prices:
+            v = mfi.update(candle(h, low, c))
             if v is not None:
                 assert 0.0 <= v <= 100.0
 
