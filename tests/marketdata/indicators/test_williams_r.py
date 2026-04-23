@@ -73,8 +73,8 @@ class TestWilliamsR:
             (14, 10, 12),
             (10, 6, 8),
         ]
-        for h, l, c in prices:
-            v = wr.update(candle(h, l, c))
+        for h, low, c in prices:
+            v = wr.update(candle(h, low, c))
             if v is not None:
                 assert -100.0 <= v <= 0.0
 
