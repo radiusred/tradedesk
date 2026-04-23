@@ -81,6 +81,49 @@ trips = round_trips_from_fills(fills)
 # Returns 2 round trips: EURUSD LONG and GBPUSD SHORT
 ```
 
+### Recorder Output Schema
+
+`round_trips_from_fills()` only needs the canonical fill fields:
+
+- `instrument`
+- `direction`
+- `timestamp`
+- `price`
+- `size`
+
+`reason` is optional, but you should include it on exit fills when you want exit
+reason analysis in the reconstructed trips and metrics output.
+
+When you use the built-in recording subscriber, generated `trades.csv` rows also
+carry the current cost decomposition fields:
+
+- `raw_price`
+- `spread_cost`
+- `slippage_cost`
+- `commission_cost`
+- `financing_cost`
+- `admin_cost`
+
+Generated `round_trips.csv` then aggregates those costs to the round-trip level
+and adds excursion columns (`mfe_points`, `mae_points`, `mfe_pnl`, `mae_pnl`)
+when the run has the candle index needed to compute them.
+
+### In-Memory Recording Identifiers
+
+Recent recording updates also expose richer identifiers on the in-memory event
+and record objects:
+
+- `PositionOpenedEvent`: `strategy`, `position_id`
+- `PositionClosedEvent`: `strategy`, `position_id`
+- `TradeRecord`: `strategy`, `position_id`, `trade_id`
+
+Those fields are useful for custom subscribers that need to correlate fills with
+portfolio sleeves or a specific open/close lifecycle inside the same session.
+The on-disk CSV artefacts are still the normalized fill and round-trip schema
+described above, so if you need `strategy`, `position_id`, or `trade_id` today,
+consume the events or `TradeRecord` instances directly rather than expecting
+those identifiers in `trades.csv`.
+
 ## Performance Metrics
 
 The `Metrics` dataclass contains comprehensive performance statistics:
