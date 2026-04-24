@@ -107,7 +107,8 @@ class OrderExecutionHandler:
         get_dispatcher().subscribe(OrderRequestEvent, self._on_order_request)
 
     async def _on_order_request(self, event: DomainEvent) -> None:
-        assert isinstance(event, OrderRequestEvent)
+        if not isinstance(event, OrderRequestEvent):
+            return
         result = await self._execute(event.request)
 
         # Resolve the caller's Future
