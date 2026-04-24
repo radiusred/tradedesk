@@ -48,7 +48,7 @@ class BaseStrategy(abc.ABC):
     Example:
         class MyStrategy(BaseStrategy):
             SUBSCRIPTIONS = [
-                MarketSubscription("CS.D.GBPUSD.TODAY.IP"),
+                MarketSubscription("CS.D.GBPUSD.TODAY.IP", account_id="ABC123"),
                 ChartSubscription("CS.D.GBPUSD.TODAY.IP", "5MINUTE"),
             ]
 
