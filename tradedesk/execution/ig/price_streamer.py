@@ -115,7 +115,7 @@ class Lightstreamer(Streamer):
         for chart_sub in chart_subs:
             log.info("  CHART sub: %s", chart_sub.get_item_name())
         for market_sub in market_subs:
-            log.info("  MARKET sub: %s", market_sub.get_item_name())
+            log.info("  PRICE sub: %s", market_sub.get_item_name())
 
         market_queue: asyncio.Queue[dict[str, Any]] = asyncio.Queue()
         chart_queue: asyncio.Queue[dict[str, Any]] = asyncio.Queue()
@@ -147,18 +147,21 @@ class Lightstreamer(Streamer):
                 items=market_items,
                 fields=market_subs[0].get_fields(),
             )
+            market_sub.setDataAdapter("Pricing")
 
             class MarketListener:
                 def onItemUpdate(self, update: Any) -> None:
                     try:
-                        bid_str = update.getValue("BID")
-                        offer_str = update.getValue("OFFER")
+                        bid_str = update.getValue("BIDPRICE1")
+                        offer_str = update.getValue("ASKPRICE1")
 
                         if not bid_str or not offer_str:
                             return
 
                         item_name = update.getItemName()
-                        epic = item_name.split(":", 1)[1] if ":" in item_name else item_name
+                        # PRICE:{account_id}:{epic} — epic is everything after second colon
+                        parts = item_name.split(":", 2)
+                        epic = parts[2] if len(parts) >= 3 else item_name
 
                         data = {
                             "type": "market",
@@ -168,10 +171,10 @@ class Lightstreamer(Streamer):
                             "bid": float(bid_str),
                             "offer": float(offer_str),
                             "raw": {
-                                "BID": bid_str,
-                                "OFFER": offer_str,
-                                "UPDATE_TIME": update.getValue("UPDATE_TIME"),
-                                "MARKET_STATE": update.getValue("MARKET_STATE"),
+                                "BIDPRICE1": bid_str,
+                                "ASKPRICE1": offer_str,
+                                "TIMESTAMP": update.getValue("TIMESTAMP"),
+                                "DLG_FLAG": update.getValue("DLG_FLAG"),
                             },
                         }
 

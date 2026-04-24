@@ -19,9 +19,13 @@ class FakeSubscription:
         self.items = items
         self.fields = fields
         self._listener: Any = None
+        self._data_adapter: str | None = None
 
     def addListener(self, listener: Any) -> None:
         self._listener = listener
+
+    def setDataAdapter(self, adapter: str) -> None:
+        self._data_adapter = adapter
 
 
 class FakeUpdate:
@@ -38,7 +42,7 @@ class FakeUpdate:
 
 class Strategy(BaseStrategy):
     SUBSCRIPTIONS = [
-        MarketSubscription("CS.D.EURUSD.CFD.IP"),
+        MarketSubscription("CS.D.EURUSD.CFD.IP", account_id="AID"),
         ChartSubscription("CS.D.EURUSD.CFD.IP", "5MINUTE"),
     ]
 
@@ -129,17 +133,17 @@ async def test_lightstreamer_emits_marketdata_and_candleclose_and_disconnects(
     await asyncio.sleep(0.05)
 
     assert len(subscribed) == 2
-    market_sub = next(s for s in subscribed if s.items[0].startswith("MARKET:"))
+    market_sub = next(s for s in subscribed if s.items[0].startswith("PRICE:"))
     chart_sub = next(s for s in subscribed if s.items[0].startswith("CHART:"))
 
     market_sub._listener.onItemUpdate(
         FakeUpdate(
-            item_name="MARKET:CS.D.EURUSD.CFD.IP",
+            item_name="PRICE:AID:CS.D.EURUSD.CFD.IP",
             values={
-                "BID": "1.0",
-                "OFFER": "1.1",
-                "UPDATE_TIME": "x",
-                "MARKET_STATE": "TRADEABLE",
+                "BIDPRICE1": "1.0",
+                "ASKPRICE1": "1.1",
+                "TIMESTAMP": "1714000000000",
+                "DLG_FLAG": "DEAL",
             },
         )
     )
@@ -278,18 +282,18 @@ async def test_market_update_missing_bid_or_offer_skipped(
     task = asyncio.create_task(streamer.run(strat))
     await asyncio.sleep(0.05)
 
-    market_sub = next(s for s in subscribed if s.items[0].startswith("MARKET:"))
+    market_sub = next(s for s in subscribed if s.items[0].startswith("PRICE:"))
 
     market_sub._listener.onItemUpdate(
         FakeUpdate(
-            item_name="MARKET:CS.D.EURUSD.CFD.IP",
-            values={"BID": "1.0", "OFFER": None, "UPDATE_TIME": "x", "MARKET_STATE": "TRADEABLE"},
+            item_name="PRICE:AID:CS.D.EURUSD.CFD.IP",
+            values={"BIDPRICE1": "1.0", "ASKPRICE1": None, "TIMESTAMP": "x", "DLG_FLAG": "DEAL"},
         )
     )
     market_sub._listener.onItemUpdate(
         FakeUpdate(
-            item_name="MARKET:CS.D.EURUSD.CFD.IP",
-            values={"BID": None, "OFFER": None, "UPDATE_TIME": "x", "MARKET_STATE": "TRADEABLE"},
+            item_name="PRICE:AID:CS.D.EURUSD.CFD.IP",
+            values={"BIDPRICE1": None, "ASKPRICE1": None, "TIMESTAMP": "x", "DLG_FLAG": "DEAL"},
         )
     )
 
@@ -394,7 +398,7 @@ async def test_subscription_errors_do_not_crash(
     task = asyncio.create_task(streamer.run(strat))
     await asyncio.sleep(0.05)
 
-    market_sub = next(s for s in subscribed if s.items[0].startswith("MARKET:"))
+    market_sub = next(s for s in subscribed if s.items[0].startswith("PRICE:"))
     chart_sub = next(s for s in subscribed if s.items[0].startswith("CHART:"))
 
     market_sub._listener.onSubscriptionError(503, "Service unavailable")
