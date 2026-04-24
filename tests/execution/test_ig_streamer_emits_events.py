@@ -422,10 +422,7 @@ async def test_subscription_error_retries_then_resubscribes(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """Subscription errors trigger a delayed resubscribe via threading.Timer."""
-    import threading
-
     timer_calls: list[tuple[float, Any]] = []
-    original_timer = threading.Timer
 
     class FakeTimer:
         def __init__(self, delay: float, fn: Any) -> None:
