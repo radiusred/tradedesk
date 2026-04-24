@@ -1,11 +1,9 @@
-from dataclasses import dataclass
-
-from tradedesk.events import DomainEvent
+from tradedesk.events import DomainEvent, event
 
 from .base import Signal
 
 
-@dataclass(frozen=True)
+@event
 class SignalGeneratedEvent(DomainEvent):
     strategy_id: str
     instrument: str
