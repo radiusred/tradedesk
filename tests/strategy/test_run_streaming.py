@@ -27,9 +27,13 @@ class FakeSubscription:
         self.items = items
         self.fields = fields
         self._listeners = []
+        self._data_adapter: str | None = None
 
     def addListener(self, listener):
         self._listeners.append(listener)
+
+    def setDataAdapter(self, adapter: str) -> None:
+        self._data_adapter = adapter
 
     @property
     def listeners(self):
@@ -83,7 +87,7 @@ class TestRunStreaming:
         monkeypatch.setattr(price_streamer, "LightstreamerClient", ls_factory)
         monkeypatch.setattr(price_streamer, "Subscription", FakeSubscription)
 
-        market_sub = MarketSubscription("EPIC.MKT")
+        market_sub = MarketSubscription("EPIC.MKT", account_id="AID")
         chart_sub = ChartSubscription("EPIC.CHT", "1MINUTE")
 
         Strat = DummyStrategy([market_sub, chart_sub])
@@ -135,7 +139,7 @@ class TestRunStreaming:
 
             # Identify which is market vs chart by fields
             market_ls_sub = next(
-                s for s in ls_client.subscribed if "BID" in s.fields and "OFFER" in s.fields
+                s for s in ls_client.subscribed if "BIDPRICE1" in s.fields and "ASKPRICE1" in s.fields
             )
             chart_ls_sub = next(s for s in ls_client.subscribed if "CONS_END" in s.fields)
 
@@ -143,10 +147,10 @@ class TestRunStreaming:
             mu = FakeUpdate(
                 item_name=market_ls_sub.items[0],
                 values={
-                    "BID": "1.25",
-                    "OFFER": "1.26",
-                    "UPDATE_TIME": "12:00:00",
-                    "MARKET_STATE": "TRADEABLE",
+                    "BIDPRICE1": "1.25",
+                    "ASKPRICE1": "1.26",
+                    "TIMESTAMP": "1714000000000",
+                    "DLG_FLAG": "DEAL",
                 },
             )
             market_ls_sub.listeners[0].onItemUpdate(mu)

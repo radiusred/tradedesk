@@ -23,19 +23,24 @@ class MarketSubscription(Subscription):
     Used for real-time bid/offer monitoring without candle aggregation.
     Triggers strategy's on_price_update() callback.
 
+    Uses the IG PRICE subscription which requires an account identifier
+    in the item name.
+
     Example:
         SUBSCRIPTIONS = [
-            MarketSubscription("CS.D.GBPUSD.TODAY.IP"),
+            MarketSubscription("CS.D.GBPUSD.TODAY.IP", account_id="ABC123"),
         ]
     """
 
+    account_id: str = ""
+
     def get_item_name(self) -> str:
         """Returns Lightstreamer item name format."""
-        return f"MARKET:{self.instrument}"
+        return f"PRICE:{self.account_id}:{self.instrument}"
 
     def get_fields(self) -> list[str]:
         """Returns Lightstreamer fields to subscribe to."""
-        return ["UPDATE_TIME", "BID", "OFFER", "MARKET_STATE"]
+        return ["TIMESTAMP", "BIDPRICE1", "ASKPRICE1", "DLG_FLAG"]
 
 
 @dataclass
