@@ -413,6 +413,143 @@ async def test_subscription_errors_do_not_crash(
 
 
 @pytest.mark.asyncio
+async def test_subscription_error_retries_then_resubscribes(
+    ig_client: MagicMock,
+    ls_client: MagicMock,
+    patch_ls: MagicMock,
+    subscribed: list[Any],
+    make_strategy: Callable[..., tuple[BaseStrategy, AsyncMock]],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Subscription errors trigger a delayed resubscribe via threading.Timer."""
+    import threading
+
+    timer_calls: list[tuple[float, Any]] = []
+    original_timer = threading.Timer
+
+    class FakeTimer:
+        def __init__(self, delay: float, fn: Any) -> None:
+            timer_calls.append((delay, fn))
+
+        def start(self) -> None:
+            pass
+
+    monkeypatch.setattr(ig_streamer.threading, "Timer", FakeTimer)
+
+    strat, _ = make_strategy()
+    streamer = ig_streamer.Lightstreamer(ig_client)
+    task = asyncio.create_task(streamer.run(strat))
+    await asyncio.sleep(0.05)
+
+    market_sub = next(s for s in subscribed if s.items[0].startswith("PRICE:"))
+    chart_sub = next(s for s in subscribed if s.items[0].startswith("CHART:"))
+
+    market_sub._listener.onSubscriptionError(21, "Invalid group")
+    chart_sub._listener.onSubscriptionError(21, "Invalid group")
+
+    assert len(timer_calls) == 2
+    assert timer_calls[0][0] == ig_streamer._SUB_RETRY_BASE_DELAY
+    assert timer_calls[1][0] == ig_streamer._SUB_RETRY_BASE_DELAY
+
+    # Execute the retry callbacks — they should call ls_client.subscribe()
+    ls_client.subscribe.reset_mock()
+    for _, fn in timer_calls:
+        fn()
+    assert ls_client.subscribe.call_count == 2
+
+    task.cancel()
+    await task
+
+
+@pytest.mark.asyncio
+async def test_subscription_error_gives_up_after_max_retries(
+    ig_client: MagicMock,
+    patch_ls: MagicMock,
+    subscribed: list[Any],
+    make_strategy: Callable[..., tuple[BaseStrategy, AsyncMock]],
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """After _MAX_SUB_RETRIES failures, errors are logged at ERROR without further retry."""
+    import logging
+
+    timer_calls: list[Any] = []
+
+    class FakeTimer:
+        def __init__(self, delay: float, fn: Any) -> None:
+            timer_calls.append(fn)
+
+        def start(self) -> None:
+            pass
+
+    monkeypatch.setattr(ig_streamer.threading, "Timer", FakeTimer)
+
+    strat, _ = make_strategy()
+    streamer = ig_streamer.Lightstreamer(ig_client)
+    task = asyncio.create_task(streamer.run(strat))
+    await asyncio.sleep(0.05)
+
+    chart_sub = next(s for s in subscribed if s.items[0].startswith("CHART:"))
+
+    with caplog.at_level(logging.WARNING, logger="tradedesk.execution.ig.price_streamer"):
+        for _ in range(ig_streamer._MAX_SUB_RETRIES):
+            chart_sub._listener.onSubscriptionError(21, "Invalid group")
+
+        assert len(timer_calls) == ig_streamer._MAX_SUB_RETRIES
+
+        timer_calls.clear()
+        chart_sub._listener.onSubscriptionError(21, "Invalid group")
+        assert len(timer_calls) == 0
+
+    assert any("retries exhausted" in r.message for r in caplog.records)
+
+    task.cancel()
+    await task
+
+
+@pytest.mark.asyncio
+async def test_successful_subscription_resets_retry_counter(
+    ig_client: MagicMock,
+    patch_ls: MagicMock,
+    subscribed: list[Any],
+    make_strategy: Callable[..., tuple[BaseStrategy, AsyncMock]],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """onSubscription() resets the retry counter so future errors can retry again."""
+    timer_calls: list[Any] = []
+
+    class FakeTimer:
+        def __init__(self, delay: float, fn: Any) -> None:
+            timer_calls.append(fn)
+
+        def start(self) -> None:
+            pass
+
+    monkeypatch.setattr(ig_streamer.threading, "Timer", FakeTimer)
+
+    strat, _ = make_strategy()
+    streamer = ig_streamer.Lightstreamer(ig_client)
+    task = asyncio.create_task(streamer.run(strat))
+    await asyncio.sleep(0.05)
+
+    chart_sub = next(s for s in subscribed if s.items[0].startswith("CHART:"))
+
+    # Exhaust retries
+    for _ in range(ig_streamer._MAX_SUB_RETRIES):
+        chart_sub._listener.onSubscriptionError(21, "Invalid group")
+
+    # Successful subscription resets counter
+    chart_sub._listener.onSubscription()
+
+    timer_calls.clear()
+    chart_sub._listener.onSubscriptionError(21, "Invalid group")
+    assert len(timer_calls) == 1  # retry is available again
+
+    task.cancel()
+    await task
+
+
+@pytest.mark.asyncio
 async def test_heartbeat_monitor_warns_on_stale_connection(
     ig_client: MagicMock,
     patch_ls: MagicMock,
