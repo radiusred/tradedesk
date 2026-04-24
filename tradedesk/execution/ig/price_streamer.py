@@ -1,5 +1,6 @@
 import asyncio
 import logging
+import threading
 from datetime import datetime, timezone
 from typing import Any
 
@@ -13,6 +14,9 @@ from tradedesk.marketdata import (
 from tradedesk.types import Candle
 
 log = logging.getLogger(__name__)
+
+_MAX_SUB_RETRIES = 3
+_SUB_RETRY_BASE_DELAY = 2.0
 
 # Optional import
 try:
@@ -149,6 +153,8 @@ class Lightstreamer(Streamer):
             )
             market_sub.setDataAdapter("Pricing")
 
+            _market_retries = 0
+
             class MarketListener:
                 def onItemUpdate(self, update: Any) -> None:
                     try:
@@ -183,14 +189,35 @@ class Lightstreamer(Streamer):
                         log.exception("Error processing market update: %s", e)
 
                 def onSubscriptionError(self, code: Any, message: Any) -> None:
-                    log.error(
-                        "Market subscription error (items=%s): %s - %s",
-                        market_items,
-                        code,
-                        message,
-                    )
+                    nonlocal _market_retries
+                    _market_retries += 1
+                    if _market_retries <= _MAX_SUB_RETRIES:
+                        delay = _market_retries * _SUB_RETRY_BASE_DELAY
+                        log.warning(
+                            "Market subscription error (items=%s): %s - %s "
+                            "— retrying in %.0fs (%d/%d)",
+                            market_items,
+                            code,
+                            message,
+                            delay,
+                            _market_retries,
+                            _MAX_SUB_RETRIES,
+                        )
+                        threading.Timer(
+                            delay, lambda: ls_client.subscribe(market_sub)
+                        ).start()
+                    else:
+                        log.error(
+                            "Market subscription error (items=%s): %s - %s "
+                            "— retries exhausted",
+                            market_items,
+                            code,
+                            message,
+                        )
 
                 def onSubscription(self) -> None:
+                    nonlocal _market_retries
+                    _market_retries = 0
                     log.info("Market subscription active (items=%s)", market_items)
 
                 def onUnsubscription(self) -> None:
@@ -208,7 +235,11 @@ class Lightstreamer(Streamer):
                     fields=chart_sub.get_fields(),
                 )
 
-                def make_chart_listener(sub: ChartSubscription) -> Any:
+                def make_chart_listener(
+                    sub: ChartSubscription, ls_subscription: Any
+                ) -> Any:
+                    _retries = 0
+
                     class ChartListener:
                         def onItemUpdate(self, update: Any) -> None:
                             try:
@@ -267,15 +298,38 @@ class Lightstreamer(Streamer):
                                 log.exception("Error processing chart update: %s", e)
 
                         def onSubscriptionError(self, code: Any, message: Any) -> None:
-                            log.error(
-                                "Chart subscription error for %s (item=%s): %s - %s",
-                                sub.instrument,
-                                sub.get_item_name(),
-                                code,
-                                message,
-                            )
+                            nonlocal _retries
+                            _retries += 1
+                            if _retries <= _MAX_SUB_RETRIES:
+                                delay = _retries * _SUB_RETRY_BASE_DELAY
+                                log.warning(
+                                    "Chart subscription error for %s (item=%s): "
+                                    "%s - %s — retrying in %.0fs (%d/%d)",
+                                    sub.instrument,
+                                    sub.get_item_name(),
+                                    code,
+                                    message,
+                                    delay,
+                                    _retries,
+                                    _MAX_SUB_RETRIES,
+                                )
+                                threading.Timer(
+                                    delay,
+                                    lambda: ls_client.subscribe(ls_subscription),
+                                ).start()
+                            else:
+                                log.error(
+                                    "Chart subscription error for %s (item=%s): "
+                                    "%s - %s — retries exhausted",
+                                    sub.instrument,
+                                    sub.get_item_name(),
+                                    code,
+                                    message,
+                                )
 
                         def onSubscription(self) -> None:
+                            nonlocal _retries
+                            _retries = 0
                             log.info(
                                 "Chart subscription active for %s %s",
                                 sub.instrument,
@@ -291,7 +345,7 @@ class Lightstreamer(Streamer):
 
                     return ChartListener()
 
-                ls_sub.addListener(make_chart_listener(chart_sub))
+                ls_sub.addListener(make_chart_listener(chart_sub, ls_sub))
                 subscriptions.append(ls_sub)
 
         class ConnectionListener:
