@@ -139,7 +139,8 @@ class TestRunStreaming:
 
             # Identify which is market vs chart by fields
             market_ls_sub = next(
-                s for s in ls_client.subscribed if "BIDPRICE1" in s.fields and "ASKPRICE1" in s.fields
+                s for s in ls_client.subscribed
+                if "BIDPRICE1" in s.fields and "ASKPRICE1" in s.fields
             )
             chart_ls_sub = next(s for s in ls_client.subscribed if "CONS_END" in s.fields)
 
