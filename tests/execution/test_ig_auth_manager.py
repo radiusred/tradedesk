@@ -4,6 +4,7 @@ from __future__ import annotations
 import time
 from unittest.mock import AsyncMock, MagicMock, patch
 
+import aiohttp
 import pytest
 
 from tradedesk.execution.ig.auth import IGAuthManager
@@ -195,3 +196,257 @@ class TestRateLimit:
         elapsed = time.monotonic() - start
 
         assert elapsed < 0.01  # effectively immediate
+
+    async def test_updates_last_auth_attempt(self) -> None:
+        client = _make_client()
+        auth = IGAuthManager(client, _make_settings())
+        auth.last_auth_attempt = 0
+
+        before = time.time()
+        await auth._enforce_rate_limit()
+
+        assert auth.last_auth_attempt >= before
+
+
+class TestAuthenticate:
+    async def test_dispatches_v2_auth(self) -> None:
+        client = _make_client("2")
+        auth = IGAuthManager(client, _make_settings())
+        auth.last_auth_attempt = 0
+
+        auth._perform_auth_request = AsyncMock(
+            return_value=(
+                {"CST": "c", "X-SECURITY-TOKEN": "x"},
+                {"currentAccountId": "A1", "clientId": "C1"},
+            )
+        )
+
+        await auth.authenticate()
+
+        assert auth.ls_cst == "c"
+        assert auth.ls_xst == "x"
+        assert auth.account_id == "A1"
+        assert auth.uses_oauth is False
+
+    async def test_dispatches_v3_auth(self) -> None:
+        client = _make_client("3")
+        auth = IGAuthManager(client, _make_settings())
+        auth.last_auth_attempt = 0
+
+        auth._perform_auth_request = AsyncMock(
+            return_value=(
+                {},
+                {
+                    "oauthToken": {
+                        "access_token": "tok",
+                        "refresh_token": "ref",
+                        "expires_in": "120",
+                    },
+                    "accountId": "A1",
+                    "clientId": "C1",
+                },
+            )
+        )
+
+        await auth.authenticate()
+
+        assert auth.oauth_access_token == "tok"
+        assert auth.uses_oauth is True
+        assert auth.account_id == "A1"
+
+    async def test_rate_limits_before_auth(self) -> None:
+        client = _make_client("2")
+        auth = IGAuthManager(client, _make_settings())
+        auth.last_auth_attempt = time.time()
+        auth.min_auth_interval = 0.05
+
+        auth._perform_auth_request = AsyncMock(
+            return_value=(
+                {"CST": "c", "X-SECURITY-TOKEN": "x"},
+                {"currentAccountId": "A1"},
+            )
+        )
+
+        start = time.monotonic()
+        await auth.authenticate()
+        elapsed = time.monotonic() - start
+
+        assert elapsed >= 0.04
+
+
+class TestPerformAuthRequest:
+    async def test_raises_on_network_error(self) -> None:
+        client = _make_client()
+        settings = _make_settings()
+        auth = IGAuthManager(client, settings)
+
+        mock_session = MagicMock()
+        mock_session.post = MagicMock(
+            side_effect=aiohttp.ClientError("connection refused")
+        )
+        client._session = mock_session
+
+        with pytest.raises(RuntimeError, match="Network error"):
+            await auth._perform_auth_request()
+
+    async def test_delegates_non_200_to_error_handler(self) -> None:
+        client = _make_client()
+        settings = _make_settings()
+        auth = IGAuthManager(client, settings)
+
+        mock_resp = AsyncMock()
+        mock_resp.status = 401
+        mock_resp.json = AsyncMock(return_value={"errorCode": "invalid-creds"})
+        mock_resp.headers = {"Content-Type": "application/json"}
+
+        ctx = AsyncMock()
+        ctx.__aenter__ = AsyncMock(return_value=mock_resp)
+        ctx.__aexit__ = AsyncMock(return_value=False)
+
+        mock_session = MagicMock()
+        mock_session.post = MagicMock(return_value=ctx)
+        client._session = mock_session
+
+        with pytest.raises(RuntimeError, match="HTTP 401"):
+            await auth._perform_auth_request()
+
+    async def test_creates_session_if_none(self) -> None:
+        client = _make_client()
+        settings = _make_settings()
+        auth = IGAuthManager(client, settings)
+        client._session = None
+
+        mock_resp = AsyncMock()
+        mock_resp.status = 200
+        mock_resp.json = AsyncMock(return_value={"currentAccountId": "A1"})
+        mock_resp.headers = {"CST": "c", "X-SECURITY-TOKEN": "x"}
+
+        ctx = AsyncMock()
+        ctx.__aenter__ = AsyncMock(return_value=mock_resp)
+        ctx.__aexit__ = AsyncMock(return_value=False)
+
+        with patch("aiohttp.ClientSession") as mock_cls:
+            mock_session = MagicMock()
+            mock_session.post = MagicMock(return_value=ctx)
+            mock_cls.return_value = mock_session
+
+            headers, body = await auth._perform_auth_request()
+
+            mock_cls.assert_called_once_with(headers=client.headers)
+            assert body == {"currentAccountId": "A1"}
+
+    async def test_handles_json_parse_failure(self) -> None:
+        client = _make_client()
+        settings = _make_settings()
+        auth = IGAuthManager(client, settings)
+
+        mock_resp = AsyncMock()
+        mock_resp.status = 200
+        mock_resp.json = AsyncMock(side_effect=ValueError("bad json"))
+        mock_resp.headers = {"CST": "c"}
+
+        ctx = AsyncMock()
+        ctx.__aenter__ = AsyncMock(return_value=mock_resp)
+        ctx.__aexit__ = AsyncMock(return_value=False)
+
+        mock_session = MagicMock()
+        mock_session.post = MagicMock(return_value=ctx)
+        client._session = mock_session
+
+        headers, body = await auth._perform_auth_request()
+
+        assert body == {}
+
+
+class TestHandleAuthErrorExtended:
+    async def test_falls_back_to_text_body(self) -> None:
+        client = _make_client()
+        auth = IGAuthManager(client, _make_settings())
+
+        resp = MagicMock()
+        resp.status = 500
+        resp.json = AsyncMock(side_effect=ValueError("not json"))
+        resp.text = AsyncMock(return_value="Internal Server Error")
+
+        with pytest.raises(RuntimeError, match="HTTP 500"):
+            await auth._handle_auth_error(resp)
+
+    async def test_403_non_rate_limit_error(self) -> None:
+        client = _make_client()
+        auth = IGAuthManager(client, _make_settings())
+
+        resp = MagicMock()
+        resp.status = 403
+        resp.json = AsyncMock(return_value={"errorCode": "error.other-forbidden"})
+
+        with pytest.raises(RuntimeError, match="HTTP 403"):
+            await auth._handle_auth_error(resp)
+
+
+class TestHandleV2AuthExtended:
+    def test_falls_back_to_account_id_key(self) -> None:
+        client = _make_client()
+        auth = IGAuthManager(client, _make_settings())
+
+        headers = {"CST": "c", "X-SECURITY-TOKEN": "x"}
+        body = {"accountId": "FALLBACK_ACC"}
+
+        auth._handle_v2_auth(headers, body)
+        assert auth.account_id == "FALLBACK_ACC"
+
+
+class TestStoreOauthToken:
+    async def test_calculates_expires_at_with_buffer(self) -> None:
+        client = _make_client("3")
+        auth = IGAuthManager(client, _make_settings())
+
+        before = time.time()
+        await auth._store_oauth_token(
+            {"access_token": "tok", "expires_in": "60"},
+            "A1",
+            "C1",
+        )
+
+        assert auth.oauth_expires_at >= before + 55 - 1
+        assert auth.oauth_expires_at <= before + 55 + 1
+
+    async def test_applies_bearer_header(self) -> None:
+        client = _make_client("3")
+        auth = IGAuthManager(client, _make_settings())
+
+        await auth._store_oauth_token(
+            {"access_token": "my_token", "expires_in": "30"},
+            "A1",
+            "C1",
+        )
+
+        client._apply_session_headers.assert_called_once_with(
+            {"Authorization": "Bearer my_token", "IG-ACCOUNT-ID": "A1"}
+        )
+
+    async def test_defaults_expires_in_to_30(self) -> None:
+        client = _make_client("3")
+        auth = IGAuthManager(client, _make_settings())
+
+        before = time.time()
+        await auth._store_oauth_token(
+            {"access_token": "tok"},
+            "A1",
+            "C1",
+        )
+
+        assert auth.oauth_expires_at >= before + 25 - 1
+        assert auth.oauth_expires_at <= before + 25 + 1
+
+    async def test_stores_refresh_token(self) -> None:
+        client = _make_client("3")
+        auth = IGAuthManager(client, _make_settings())
+
+        await auth._store_oauth_token(
+            {"access_token": "a", "refresh_token": "r", "expires_in": "60"},
+            "A1",
+            "C1",
+        )
+
+        assert auth.oauth_refresh_token == "r"
+        assert auth.client_id == "C1"

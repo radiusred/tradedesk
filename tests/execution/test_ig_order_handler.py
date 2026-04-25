@@ -164,3 +164,130 @@ class TestPlaceMarketOrderConfirmed:
 
         with pytest.raises(DealRejectedException):
             await handler.place_market_order_confirmed("EPIC", "BUY", 1.0)
+
+    async def test_passes_confirm_timeout_and_poll(self) -> None:
+        client = _make_client()
+        client._request = AsyncMock(
+            side_effect=[
+                {"dealReference": "REF1"},
+                {"dealStatus": "ACCEPTED"},
+            ]
+        )
+        handler = IGOrderHandler(client)
+        handler.confirm_deal = AsyncMock(return_value={"dealStatus": "ACCEPTED"})
+
+        await handler.place_market_order_confirmed(
+            "EPIC", "BUY", 1.0, confirm_timeout_s=30.0, confirm_poll_s=0.5
+        )
+
+        handler.confirm_deal.assert_awaited_once_with(
+            "REF1", timeout_s=30.0, poll_s=0.5
+        )
+
+
+class TestPlaceMarketOrderExtended:
+    async def test_direction_uppercased(self) -> None:
+        client = _make_client()
+        client._request = AsyncMock(return_value={"dealReference": "REF1"})
+        handler = IGOrderHandler(client)
+
+        await handler.place_market_order("EPIC", "sell", 2.0)
+
+        body = client._request.call_args.kwargs["json"]
+        assert body["direction"] == "SELL"
+
+    async def test_force_open_and_guaranteed_stop(self) -> None:
+        client = _make_client()
+        client._request = AsyncMock(return_value={"dealReference": "REF1"})
+        handler = IGOrderHandler(client)
+
+        await handler.place_market_order(
+            "EPIC", "BUY", 1.0, force_open=True, guaranteed_stop=True
+        )
+
+        body = client._request.call_args.kwargs["json"]
+        assert body["forceOpen"] is True
+        assert body["guaranteedStop"] is True
+
+    async def test_spreadbet_empty_string_expiry_becomes_dfb(self) -> None:
+        client = _make_client("SPREADBET")
+        client._request = AsyncMock(return_value={"dealReference": "REF1"})
+        handler = IGOrderHandler(client)
+
+        await handler.place_market_order("EPIC", "BUY", 1.0, expiry="")
+
+        body = client._request.call_args.kwargs["json"]
+        assert body["expiry"] == "DFB"
+
+    async def test_uses_api_version_1(self) -> None:
+        client = _make_client()
+        client._request = AsyncMock(return_value={"dealReference": "REF1"})
+        handler = IGOrderHandler(client)
+
+        await handler.place_market_order("EPIC", "BUY", 1.0)
+
+        args, kwargs = client._request.call_args
+        assert args == ("POST", "/positions/otc")
+        assert kwargs["api_version"] == "1"
+
+    async def test_custom_currency_and_time_in_force(self) -> None:
+        client = _make_client()
+        client._request = AsyncMock(return_value={"dealReference": "REF1"})
+        handler = IGOrderHandler(client)
+
+        await handler.place_market_order(
+            "EPIC", "BUY", 1.0, currency="USD", time_in_force="EXECUTE_AND_ELIMINATE"
+        )
+
+        body = client._request.call_args.kwargs["json"]
+        assert body["currencyCode"] == "USD"
+        assert body["timeInForce"] == "EXECUTE_AND_ELIMINATE"
+
+
+class TestConfirmDealExtended:
+    async def test_retries_500_transient_error(self) -> None:
+        client = _make_client()
+        client._request = AsyncMock(
+            side_effect=[
+                RuntimeError("IG request failed: HTTP 500: server error"),
+                {"dealStatus": "ACCEPTED"},
+            ]
+        )
+        handler = IGOrderHandler(client)
+
+        result = await handler.confirm_deal("REF1", timeout_s=1.0, poll_s=0.0)
+        assert result["dealStatus"] == "ACCEPTED"
+        assert client._request.await_count == 2
+
+    async def test_timeout_includes_last_error(self) -> None:
+        client = _make_client()
+        client._request = AsyncMock(
+            side_effect=RuntimeError(
+                "IG request failed: HTTP 500: server error"
+            )
+        )
+        handler = IGOrderHandler(client)
+
+        with pytest.raises(TimeoutError, match="last error"):
+            await handler.confirm_deal("REF1", timeout_s=0.01, poll_s=0.0)
+
+    async def test_immediate_accepted_no_polling(self) -> None:
+        client = _make_client()
+        client._request = AsyncMock(
+            return_value={"dealStatus": "ACCEPTED", "dealId": "D1"}
+        )
+        handler = IGOrderHandler(client)
+
+        result = await handler.confirm_deal("REF1", timeout_s=1.0, poll_s=0.0)
+        assert result["dealId"] == "D1"
+        assert client._request.await_count == 1
+
+    async def test_returns_rejected_status(self) -> None:
+        client = _make_client()
+        client._request = AsyncMock(
+            return_value={"dealStatus": "REJECTED", "reason": "MARKET_CLOSED"}
+        )
+        handler = IGOrderHandler(client)
+
+        result = await handler.confirm_deal("REF1", timeout_s=1.0, poll_s=0.0)
+        assert result["dealStatus"] == "REJECTED"
