@@ -11,6 +11,7 @@ from tradedesk.marketdata import (
     MarketData,
     MarketSubscription,
 )
+from tradedesk.marketdata.aggregation import period_to_seconds
 from tradedesk.types import Candle
 
 log = logging.getLogger(__name__)
@@ -20,7 +21,7 @@ _SUB_RETRY_BASE_DELAY = 2.0
 
 # Optional import
 try:
-    from lightstreamer.client import (  # type: ignore[import-untyped]
+    from lightstreamer.client import (
         LightstreamerClient,
         Subscription,
     )
@@ -363,22 +364,11 @@ class Lightstreamer(Streamer):
 
         log.info("Lightstreamer subscriptions active")
 
-        def _period_seconds(period: str) -> int:
-            p = period.strip().upper()
-            if p == "SECOND":
-                return 1
-            if p == "HOUR":
-                return 60 * 60
-            if p.endswith("MINUTE"):
-                n = int(p[:-6])  # strip "MINUTE"
-                return n * 60
-            raise ValueError(f"Unsupported period for heartbeat: {period!r}")
-
         # Heartbeat tuning: candle subscriptions can legitimately be silent for up to one bar.
         # If we are chart-only (no tick/market updates), raise the watchdog threshold based
         # on the smallest subscribed bar to avoid false positives.
         if chart_subs and not market_subs:
-            min_bar_s = min(_period_seconds(s.period) for s in chart_subs)
+            min_bar_s = min(period_to_seconds(s.period) for s in chart_subs)
             tuned = max(float(consumer.watchdog_threshold), float(min_bar_s) * 1.2)
             if tuned != consumer.watchdog_threshold:
                 consumer.watchdog_threshold = tuned
