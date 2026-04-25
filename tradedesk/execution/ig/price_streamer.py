@@ -21,7 +21,7 @@ _SUB_RETRY_BASE_DELAY = 2.0
 
 # Optional import
 try:
-    from lightstreamer.client import (  # type: ignore[import-untyped]
+    from lightstreamer.client import (
         LightstreamerClient,
         Subscription,
     )
