@@ -38,6 +38,221 @@ class StaleStreamError(RuntimeError):
     """
 
 
+
+class _ConnectionListener:
+    def onStatusChange(self, status: Any) -> None:
+        log.info("Lightstreamer connection status: %s", status)
+
+    def onServerError(self, code: Any, message: Any) -> None:
+        log.error("Lightstreamer server error: %s - %s", code, message)
+
+
+class _MarketListener:
+    def __init__(
+        self,
+        loop: asyncio.AbstractEventLoop,
+        queue: "asyncio.Queue[dict[str, Any]]",
+        items: list[str],
+        ls_client: Any,
+        ls_subscription: Any,
+    ) -> None:
+        self._loop = loop
+        self._queue = queue
+        self._items = items
+        self._ls_client = ls_client
+        self._ls_subscription = ls_subscription
+        self._retries = 0
+
+    def onItemUpdate(self, update: Any) -> None:
+        try:
+            bid_str = update.getValue("BIDPRICE1")
+            offer_str = update.getValue("ASKPRICE1")
+
+            if not bid_str or not offer_str:
+                return
+
+            item_name = update.getItemName()
+            parts = item_name.split(":", 2)
+            epic = parts[2] if len(parts) >= 3 else item_name
+
+            data = {
+                "type": "market",
+                "timestamp": datetime.now(timezone.utc).isoformat(
+                    timespec="seconds"
+                )
+                + "Z",
+                "instrument": epic,
+                "bid": float(bid_str),
+                "offer": float(offer_str),
+                "raw": {
+                    "BIDPRICE1": bid_str,
+                    "ASKPRICE1": offer_str,
+                    "TIMESTAMP": update.getValue("TIMESTAMP"),
+                    "DLG_FLAG": update.getValue("DLG_FLAG"),
+                },
+            }
+
+            self._loop.call_soon_threadsafe(self._queue.put_nowait, data)
+        except Exception as e:
+            log.exception("Error processing market update: %s", e)
+
+    def onSubscriptionError(self, code: Any, message: Any) -> None:
+        self._retries += 1
+        if self._retries <= _MAX_SUB_RETRIES:
+            delay = self._retries * _SUB_RETRY_BASE_DELAY
+            log.warning(
+                "Market subscription error (items=%s): %s - %s "
+                "— retrying in %.0fs (%d/%d)",
+                self._items,
+                code,
+                message,
+                delay,
+                self._retries,
+                _MAX_SUB_RETRIES,
+            )
+            threading.Timer(
+                delay,
+                lambda: self._ls_client.subscribe(self._ls_subscription),
+            ).start()
+        else:
+            log.error(
+                "Market subscription error (items=%s): %s - %s "
+                "— retries exhausted",
+                self._items,
+                code,
+                message,
+            )
+
+    def onSubscription(self) -> None:
+        self._retries = 0
+        log.info("Market subscription active (items=%s)", self._items)
+
+    def onUnsubscription(self) -> None:
+        log.info("Market unsubscribed")
+
+
+class _ChartListener:
+    def __init__(
+        self,
+        loop: asyncio.AbstractEventLoop,
+        queue: "asyncio.Queue[dict[str, Any]]",
+        sub: ChartSubscription,
+        ls_client: Any,
+        ls_subscription: Any,
+    ) -> None:
+        self._loop = loop
+        self._queue = queue
+        self._sub = sub
+        self._ls_client = ls_client
+        self._ls_subscription = ls_subscription
+        self._retries = 0
+
+    def onItemUpdate(self, update: Any) -> None:
+        try:
+            cons_end = update.getValue("CONS_END")
+            if cons_end != "1":
+                return
+
+            ofr_open = update.getValue("OFR_OPEN")
+            ofr_high = update.getValue("OFR_HIGH")
+            ofr_low = update.getValue("OFR_LOW")
+            ofr_close = update.getValue("OFR_CLOSE")
+
+            bid_open = update.getValue("BID_OPEN")
+            bid_high = update.getValue("BID_HIGH")
+            bid_low = update.getValue("BID_LOW")
+            bid_close = update.getValue("BID_CLOSE")
+
+            if not all([ofr_close, bid_close]):
+                return
+
+            open_price = (
+                float(ofr_open or ofr_close)
+                + float(bid_open or bid_close)
+            ) / 2
+            high_price = (
+                float(ofr_high or ofr_close)
+                + float(bid_high or bid_close)
+            ) / 2
+            low_price = (
+                float(ofr_low or ofr_close)
+                + float(bid_low or bid_close)
+            ) / 2
+            close_price = (float(ofr_close) + float(bid_close)) / 2
+
+            ltv = update.getValue("LTV")
+            tick_count = update.getValue("CONS_TICK_COUNT")
+
+            volume = float(ltv) if ltv else 0.0
+            ticks = int(tick_count) if tick_count else 0
+
+            data = {
+                "type": "chart",
+                "instrument": self._sub.instrument,
+                "timeframe": self._sub.period,
+                "candle": {
+                    "timestamp": update.getValue("UTM")
+                    or datetime.now(timezone.utc).isoformat(),
+                    "open": open_price,
+                    "high": high_price,
+                    "low": low_price,
+                    "close": close_price,
+                    "volume": volume,
+                    "tick_count": ticks,
+                },
+            }
+
+            self._loop.call_soon_threadsafe(self._queue.put_nowait, data)
+        except Exception as e:
+            log.exception("Error processing chart update: %s", e)
+
+    def onSubscriptionError(self, code: Any, message: Any) -> None:
+        self._retries += 1
+        if self._retries <= _MAX_SUB_RETRIES:
+            delay = self._retries * _SUB_RETRY_BASE_DELAY
+            log.warning(
+                "Chart subscription error for %s (item=%s): "
+                "%s - %s — retrying in %.0fs (%d/%d)",
+                self._sub.instrument,
+                self._sub.get_item_name(),
+                code,
+                message,
+                delay,
+                self._retries,
+                _MAX_SUB_RETRIES,
+            )
+            threading.Timer(
+                delay,
+                lambda: self._ls_client.subscribe(
+                    self._ls_subscription
+                ),
+            ).start()
+        else:
+            log.error(
+                "Chart subscription error for %s (item=%s): "
+                "%s - %s — retries exhausted",
+                self._sub.instrument,
+                self._sub.get_item_name(),
+                code,
+                message,
+            )
+
+    def onSubscription(self) -> None:
+        self._retries = 0
+        log.info(
+            "Chart subscription active for %s %s",
+            self._sub.instrument,
+            self._sub.period,
+        )
+
+    def onUnsubscription(self) -> None:
+        log.info(
+            "Chart unsubscribed for %s %s",
+            self._sub.instrument,
+            self._sub.period,
+        )
+
+
 class Lightstreamer(Streamer):
     """
     IG Lightstreamer implementation of the provider-neutral Streamer interface.
@@ -86,12 +301,15 @@ class Lightstreamer(Streamer):
         while True:
             try:
                 await self._run_session(consumer)
-                return  # clean exit (e.g. cancellation)
+                return
             except StaleStreamError:
                 attempts += 1
                 if not self.auto_reconnect:
                     raise
-                if self.max_reconnect_attempts > 0 and attempts >= self.max_reconnect_attempts:
+                if (
+                    self.max_reconnect_attempts > 0
+                    and attempts >= self.max_reconnect_attempts
+                ):
                     log.error(
                         "Reconnect limit reached (%d attempts). Giving up.",
                         attempts,
@@ -105,27 +323,7 @@ class Lightstreamer(Streamer):
                 )
                 await asyncio.sleep(self.reconnect_delay)
 
-    async def _run_session(self, consumer: Any) -> None:
-        """Run a single Lightstreamer session until cancellation or stale-stream detection."""
-        assert Subscription is not None  # for type narrowing; guarded by run()
-
-        market_subs = [s for s in consumer.subscriptions if isinstance(s, MarketSubscription)]
-        chart_subs = [s for s in consumer.subscriptions if isinstance(s, ChartSubscription)]
-
-        log.info(
-            "Starting Lightstreamer streaming: %d chart + %d market subscriptions",
-            len(chart_subs),
-            len(market_subs),
-        )
-        for chart_sub in chart_subs:
-            log.info("  CHART sub: %s", chart_sub.get_item_name())
-        for market_sub in market_subs:
-            log.info("  PRICE sub: %s", market_sub.get_item_name())
-
-        market_queue: asyncio.Queue[dict[str, Any]] = asyncio.Queue()
-        chart_queue: asyncio.Queue[dict[str, Any]] = asyncio.Queue()
-        loop = asyncio.get_running_loop()
-
+    def _create_ls_client(self) -> Any:
         ls_client = LightstreamerClient(self.client.ls_url, "DEFAULT")
         self._ls_client = ls_client
 
@@ -143,7 +341,21 @@ class Lightstreamer(Streamer):
             self.client.client_id,
         )
 
-        subscriptions = []
+        ls_client.addListener(_ConnectionListener())
+        return ls_client
+
+    @staticmethod
+    def _setup_subscriptions(
+        market_subs: list[MarketSubscription],
+        chart_subs: list[ChartSubscription],
+        ls_client: Any,
+        market_queue: "asyncio.Queue[dict[str, Any]]",
+        chart_queue: "asyncio.Queue[dict[str, Any]]",
+        loop: asyncio.AbstractEventLoop,
+    ) -> list[Any]:
+        assert Subscription is not None
+
+        subscriptions: list[Any] = []
 
         if market_subs:
             market_items = [sub.get_item_name() for sub in market_subs]
@@ -153,210 +365,191 @@ class Lightstreamer(Streamer):
                 fields=market_subs[0].get_fields(),
             )
             market_sub.setDataAdapter("Pricing")
-
-            _market_retries = 0
-
-            class MarketListener:
-                def onItemUpdate(self, update: Any) -> None:
-                    try:
-                        bid_str = update.getValue("BIDPRICE1")
-                        offer_str = update.getValue("ASKPRICE1")
-
-                        if not bid_str or not offer_str:
-                            return
-
-                        item_name = update.getItemName()
-                        # PRICE:{account_id}:{epic} — epic is everything after second colon
-                        parts = item_name.split(":", 2)
-                        epic = parts[2] if len(parts) >= 3 else item_name
-
-                        data = {
-                            "type": "market",
-                            "timestamp": datetime.now(timezone.utc).isoformat(timespec="seconds")
-                            + "Z",
-                            "instrument": epic,
-                            "bid": float(bid_str),
-                            "offer": float(offer_str),
-                            "raw": {
-                                "BIDPRICE1": bid_str,
-                                "ASKPRICE1": offer_str,
-                                "TIMESTAMP": update.getValue("TIMESTAMP"),
-                                "DLG_FLAG": update.getValue("DLG_FLAG"),
-                            },
-                        }
-
-                        loop.call_soon_threadsafe(market_queue.put_nowait, data)
-                    except Exception as e:
-                        log.exception("Error processing market update: %s", e)
-
-                def onSubscriptionError(self, code: Any, message: Any) -> None:
-                    nonlocal _market_retries
-                    _market_retries += 1
-                    if _market_retries <= _MAX_SUB_RETRIES:
-                        delay = _market_retries * _SUB_RETRY_BASE_DELAY
-                        log.warning(
-                            "Market subscription error (items=%s): %s - %s "
-                            "— retrying in %.0fs (%d/%d)",
-                            market_items,
-                            code,
-                            message,
-                            delay,
-                            _market_retries,
-                            _MAX_SUB_RETRIES,
-                        )
-                        threading.Timer(
-                            delay, lambda: ls_client.subscribe(market_sub)
-                        ).start()
-                    else:
-                        log.error(
-                            "Market subscription error (items=%s): %s - %s "
-                            "— retries exhausted",
-                            market_items,
-                            code,
-                            message,
-                        )
-
-                def onSubscription(self) -> None:
-                    nonlocal _market_retries
-                    _market_retries = 0
-                    log.info("Market subscription active (items=%s)", market_items)
-
-                def onUnsubscription(self) -> None:
-                    log.info("Market unsubscribed")
-
-            market_sub.addListener(MarketListener())
+            market_sub.addListener(
+                _MarketListener(
+                    loop, market_queue, market_items,
+                    ls_client, market_sub,
+                )
+            )
             subscriptions.append(market_sub)
 
         if chart_subs:
-            for chart_sub in chart_subs:
-                item_name = chart_sub.get_item_name()
+            for cs in chart_subs:
                 ls_sub = Subscription(
                     mode="MERGE",
-                    items=[item_name],
-                    fields=chart_sub.get_fields(),
+                    items=[cs.get_item_name()],
+                    fields=cs.get_fields(),
                 )
-
-                def make_chart_listener(
-                    sub: ChartSubscription, ls_subscription: Any
-                ) -> Any:
-                    _retries = 0
-
-                    class ChartListener:
-                        def onItemUpdate(self, update: Any) -> None:
-                            try:
-                                cons_end = update.getValue("CONS_END")
-                                if cons_end != "1":
-                                    return
-
-                                ofr_open = update.getValue("OFR_OPEN")
-                                ofr_high = update.getValue("OFR_HIGH")
-                                ofr_low = update.getValue("OFR_LOW")
-                                ofr_close = update.getValue("OFR_CLOSE")
-
-                                bid_open = update.getValue("BID_OPEN")
-                                bid_high = update.getValue("BID_HIGH")
-                                bid_low = update.getValue("BID_LOW")
-                                bid_close = update.getValue("BID_CLOSE")
-
-                                if not all([ofr_close, bid_close]):
-                                    return
-
-                                open_price = (
-                                    float(ofr_open or ofr_close) + float(bid_open or bid_close)
-                                ) / 2
-                                high_price = (
-                                    float(ofr_high or ofr_close) + float(bid_high or bid_close)
-                                ) / 2
-                                low_price = (
-                                    float(ofr_low or ofr_close) + float(bid_low or bid_close)
-                                ) / 2
-                                close_price = (float(ofr_close) + float(bid_close)) / 2
-
-                                ltv = update.getValue("LTV")
-                                tick_count = update.getValue("CONS_TICK_COUNT")
-
-                                volume = float(ltv) if ltv else 0.0
-                                ticks = int(tick_count) if tick_count else 0
-
-                                data = {
-                                    "type": "chart",
-                                    "instrument": sub.instrument,
-                                    "timeframe": sub.period,
-                                    "candle": {
-                                        "timestamp": update.getValue("UTM")
-                                        or datetime.now(timezone.utc).isoformat(),
-                                        "open": open_price,
-                                        "high": high_price,
-                                        "low": low_price,
-                                        "close": close_price,
-                                        "volume": volume,
-                                        "tick_count": ticks,
-                                    },
-                                }
-
-                                loop.call_soon_threadsafe(chart_queue.put_nowait, data)
-                            except Exception as e:
-                                log.exception("Error processing chart update: %s", e)
-
-                        def onSubscriptionError(self, code: Any, message: Any) -> None:
-                            nonlocal _retries
-                            _retries += 1
-                            if _retries <= _MAX_SUB_RETRIES:
-                                delay = _retries * _SUB_RETRY_BASE_DELAY
-                                log.warning(
-                                    "Chart subscription error for %s (item=%s): "
-                                    "%s - %s — retrying in %.0fs (%d/%d)",
-                                    sub.instrument,
-                                    sub.get_item_name(),
-                                    code,
-                                    message,
-                                    delay,
-                                    _retries,
-                                    _MAX_SUB_RETRIES,
-                                )
-                                threading.Timer(
-                                    delay,
-                                    lambda: ls_client.subscribe(ls_subscription),
-                                ).start()
-                            else:
-                                log.error(
-                                    "Chart subscription error for %s (item=%s): "
-                                    "%s - %s — retries exhausted",
-                                    sub.instrument,
-                                    sub.get_item_name(),
-                                    code,
-                                    message,
-                                )
-
-                        def onSubscription(self) -> None:
-                            nonlocal _retries
-                            _retries = 0
-                            log.info(
-                                "Chart subscription active for %s %s",
-                                sub.instrument,
-                                sub.period,
-                            )
-
-                        def onUnsubscription(self) -> None:
-                            log.info(
-                                "Chart unsubscribed for %s %s",
-                                sub.instrument,
-                                sub.period,
-                            )
-
-                    return ChartListener()
-
-                ls_sub.addListener(make_chart_listener(chart_sub, ls_sub))
+                ls_sub.addListener(
+                    _ChartListener(
+                        loop, chart_queue, cs, ls_client, ls_sub,
+                    )
+                )
                 subscriptions.append(ls_sub)
 
-        class ConnectionListener:
-            def onStatusChange(self, status: Any) -> None:
-                log.info("Lightstreamer connection status: %s", status)
+        return subscriptions
 
-            def onServerError(self, code: Any, message: Any) -> None:
-                log.error("Lightstreamer server error: %s - %s", code, message)
+    @staticmethod
+    def _tune_watchdog(
+        consumer: Any,
+        chart_subs: list[ChartSubscription],
+        market_subs: list[MarketSubscription],
+    ) -> None:
+        # Candle subscriptions can legitimately be silent for up to one bar.
+        # For chart-only streams, raise the watchdog threshold based on the
+        # smallest subscribed bar to avoid false positives.
+        if chart_subs and not market_subs:
+            min_bar_s = min(
+                period_to_seconds(s.period) for s in chart_subs
+            )
+            tuned = max(
+                float(consumer.watchdog_threshold),
+                float(min_bar_s) * 1.2,
+            )
+            if tuned != consumer.watchdog_threshold:
+                consumer.watchdog_threshold = tuned
+                log.info(
+                    "Heartbeat tuned for chart-only stream: "
+                    "threshold=%.1fs (min_bar=%ds)",
+                    consumer.watchdog_threshold,
+                    min_bar_s,
+                )
 
-        ls_client.addListener(ConnectionListener())
+    async def _heartbeat_monitor(self, consumer: Any) -> None:
+        silence_threshold = 300.0
+        suppressed = False
+        while True:
+            sleep = 60 if suppressed else self.heartbeat_sleep
+            await asyncio.sleep(sleep)
+            delta = (
+                datetime.now(timezone.utc) - consumer.last_update
+            ).total_seconds()
+            if delta > consumer.watchdog_threshold:
+                if (
+                    self.max_stale_seconds > 0
+                    and delta > self.max_stale_seconds
+                ):
+                    log.warning(
+                        "❤  Stream stale for %.1fs (limit %.1fs). "
+                        "Initiating reconnection.",
+                        delta,
+                        self.max_stale_seconds,
+                    )
+                    raise StaleStreamError(
+                        f"No updates for {delta:.0f}s "
+                        f"(max_stale_seconds="
+                        f"{self.max_stale_seconds:.0f})"
+                    )
+                if not suppressed and delta >= silence_threshold:
+                    log.warning(
+                        "❤  Stream silent for %s (%.0fs). "
+                        "Suppressing heartbeat warnings "
+                        "until data resumes.",
+                        consumer.__class__.__name__,
+                        delta,
+                    )
+                    suppressed = True
+                elif not suppressed:
+                    log.warning(
+                        "❤  Heartbeat Alert: no updates for %s "
+                        "in %.1fs. Connection may be stale.",
+                        consumer.__class__.__name__,
+                        delta,
+                    )
+            else:
+                if suppressed:
+                    log.info(
+                        "❤  Stream resumed for %s after silence. "
+                        "Last update %.1fs ago.",
+                        consumer.__class__.__name__,
+                        delta,
+                    )
+                    suppressed = False
+                elif delta < self.heartbeat_sleep:
+                    log.debug(
+                        "❤  OK: Last update %.1fs ago", delta
+                    )
+
+    @staticmethod
+    async def _consume_market_queue(
+        consumer: Any,
+        queue: "asyncio.Queue[dict[str, Any]]",
+    ) -> None:
+        while True:
+            payload = await queue.get()
+            try:
+                event = MarketData(
+                    instrument=payload["instrument"],
+                    bid=payload["bid"],
+                    offer=payload["offer"],
+                    timestamp=payload["timestamp"],
+                    raw=payload["raw"],
+                )
+                await consumer._handle_event(event)
+            except Exception:
+                log.exception(
+                    "Unhandled exception in market_consumer for %s",
+                    payload.get("instrument"),
+                )
+
+    @staticmethod
+    async def _consume_chart_queue(
+        consumer: Any,
+        queue: "asyncio.Queue[dict[str, Any]]",
+    ) -> None:
+        while True:
+            payload = await queue.get()
+            try:
+                candle_data = payload["candle"]
+                candle = Candle(**candle_data)
+                event = CandleClosedEvent(
+                    instrument=payload["instrument"],
+                    timeframe=payload["timeframe"],
+                    candle=candle,
+                )
+                await consumer._handle_event(event)
+            except Exception:
+                log.exception(
+                    "Unhandled exception in chart_consumer "
+                    "for epic=%s period=%s payload=%r",
+                    payload.get("epic"),
+                    payload.get("period"),
+                    payload,
+                )
+
+    async def _run_session(self, consumer: Any) -> None:
+        """Run a single Lightstreamer session."""
+        market_subs = [
+            s
+            for s in consumer.subscriptions
+            if isinstance(s, MarketSubscription)
+        ]
+        chart_subs = [
+            s
+            for s in consumer.subscriptions
+            if isinstance(s, ChartSubscription)
+        ]
+
+        log.info(
+            "Starting Lightstreamer streaming: "
+            "%d chart + %d market subscriptions",
+            len(chart_subs),
+            len(market_subs),
+        )
+        for cs in chart_subs:
+            log.info("  CHART sub: %s", cs.get_item_name())
+        for ms in market_subs:
+            log.info("  PRICE sub: %s", ms.get_item_name())
+
+        market_queue: asyncio.Queue[dict[str, Any]] = asyncio.Queue()
+        chart_queue: asyncio.Queue[dict[str, Any]] = asyncio.Queue()
+        loop = asyncio.get_running_loop()
+
+        ls_client = self._create_ls_client()
+        subscriptions = self._setup_subscriptions(
+            market_subs, chart_subs, ls_client,
+            market_queue, chart_queue, loop,
+        )
 
         ls_client.connect()
         for sub in subscriptions:
@@ -364,118 +557,35 @@ class Lightstreamer(Streamer):
 
         log.info("Lightstreamer subscriptions active")
 
-        # Heartbeat tuning: candle subscriptions can legitimately be silent for up to one bar.
-        # If we are chart-only (no tick/market updates), raise the watchdog threshold based
-        # on the smallest subscribed bar to avoid false positives.
-        if chart_subs and not market_subs:
-            min_bar_s = min(period_to_seconds(s.period) for s in chart_subs)
-            tuned = max(float(consumer.watchdog_threshold), float(min_bar_s) * 1.2)
-            if tuned != consumer.watchdog_threshold:
-                consumer.watchdog_threshold = tuned
-                log.info(
-                    "Heartbeat tuned for chart-only stream: threshold=%.1fs (min_bar=%ds)",
-                    consumer.watchdog_threshold,
-                    min_bar_s,
-                )
+        self._tune_watchdog(consumer, chart_subs, market_subs)
 
-        async def _heartbeat_monitor() -> None:
-            silence_threshold = 300.0  # 5 min of no data → suppress warnings
-            suppressed = False
-            while True:
-                sleep = 60 if suppressed else self.heartbeat_sleep
-                await asyncio.sleep(sleep)
-                delta = (datetime.now(timezone.utc) - consumer.last_update).total_seconds()
-                if delta > consumer.watchdog_threshold:
-                    if self.max_stale_seconds > 0 and delta > self.max_stale_seconds:
-                        log.warning(
-                            "❤  Stream stale for %.1fs (limit %.1fs). "
-                            "Initiating reconnection.",
-                            delta,
-                            self.max_stale_seconds,
-                        )
-                        raise StaleStreamError(
-                            f"No updates for {delta:.0f}s "
-                            f"(max_stale_seconds={self.max_stale_seconds:.0f})"
-                        )
-                    if not suppressed and delta >= silence_threshold:
-                        log.warning(
-                            "❤  Stream silent for %s (%.0fs). "
-                            "Suppressing heartbeat warnings until data resumes.",
-                            consumer.__class__.__name__,
-                            delta,
-                        )
-                        suppressed = True
-                    elif not suppressed:
-                        log.warning(
-                            "❤  Heartbeat Alert: no updates for %s in %.1fs."
-                            " Connection may be stale.",
-                            consumer.__class__.__name__,
-                            delta,
-                        )
-                else:
-                    if suppressed:
-                        log.info(
-                            "❤  Stream resumed for %s after silence. Last update %.1fs ago.",
-                            consumer.__class__.__name__,
-                            delta,
-                        )
-                        suppressed = False
-                    elif delta < self.heartbeat_sleep:
-                        log.debug("❤  OK: Last update %.1fs ago", delta)
-
-        async def market_consumer() -> None:
-            while True:
-                payload = await market_queue.get()
-                try:
-                    event = MarketData(
-                        instrument=payload["instrument"],
-                        bid=payload["bid"],
-                        offer=payload["offer"],
-                        timestamp=payload["timestamp"],
-                        raw=payload["raw"],
-                    )
-                    await consumer._handle_event(event)
-                except Exception:
-                    log.exception(
-                        "Unhandled exception in market_consumer for %s",
-                        payload.get("instrument"),
-                    )
-
-        async def chart_consumer() -> None:
-            while True:
-                payload = await chart_queue.get()
-                try:
-                    candle_data = payload["candle"]
-                    candle = Candle(**candle_data)
-                    event = CandleClosedEvent(
-                        instrument=payload["instrument"],
-                        timeframe=payload["timeframe"],
-                        candle=candle,
-                    )
-                    await consumer._handle_event(event)
-                except Exception:
-                    log.exception(
-                        "Unhandled exception in chart_consumer for epic=%s period=%s payload=%r",
-                        payload.get("epic"),
-                        payload.get("period"),
-                        payload,
-                    )
-
-        tasks = [asyncio.create_task(_heartbeat_monitor())]
-
+        tasks = [asyncio.create_task(self._heartbeat_monitor(consumer))]
         if market_subs:
-            tasks.append(asyncio.create_task(market_consumer()))
+            tasks.append(
+                asyncio.create_task(
+                    self._consume_market_queue(consumer, market_queue)
+                )
+            )
         if chart_subs:
-            tasks.append(asyncio.create_task(chart_consumer()))
+            tasks.append(
+                asyncio.create_task(
+                    self._consume_chart_queue(consumer, chart_queue)
+                )
+            )
 
         try:
-            done, _pending = await asyncio.wait(tasks, return_when=asyncio.FIRST_EXCEPTION)
+            done, _pending = await asyncio.wait(
+                tasks, return_when=asyncio.FIRST_EXCEPTION
+            )
             for task in done:
                 exc = task.exception()
                 if exc is not None:
                     raise exc
         except asyncio.CancelledError:
-            log.info("%s cancelled – cleaning up Lightstreamer", consumer.__class__.__name__)
+            log.info(
+                "%s cancelled – cleaning up Lightstreamer",
+                consumer.__class__.__name__,
+            )
         finally:
             for task in tasks:
                 task.cancel()
