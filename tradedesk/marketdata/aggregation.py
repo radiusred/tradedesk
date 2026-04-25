@@ -6,7 +6,7 @@ from typing import Optional
 from ..types import Candle
 
 
-def _period_to_seconds(period: str) -> int:
+def period_to_seconds(period: str) -> int:
     """Convert period string to seconds."""
     p = period.strip().upper()
 
@@ -46,7 +46,7 @@ def choose_base_period(target_period: str, *, supported_periods: list[str] | Non
     if tp == "HOUR" and "HOUR" in supported_periods:
         return "HOUR"
 
-    target_s = _period_to_seconds(tp)
+    target_s = period_to_seconds(tp)
 
     # Try 5MINUTE first if supported
     if "5MINUTE" in supported_periods:
@@ -123,8 +123,8 @@ class CandleAggregator:
             .upper()
         )
 
-        self.target_s = _period_to_seconds(self.target_period)
-        self.base_s = _period_to_seconds(self.base_period)
+        self.target_s = period_to_seconds(self.target_period)
+        self.base_s = period_to_seconds(self.base_period)
 
         if self.target_s % self.base_s != 0:
             raise ValueError(
