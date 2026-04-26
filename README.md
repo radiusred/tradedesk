@@ -103,6 +103,7 @@ Live IG runs read credentials from environment variables:
 -   `IG_USERNAME` (required)
 -   `IG_PASSWORD` (required)
 -   `IG_ENVIRONMENT` (optional, defaults to `DEMO`, valid values are `DEMO` and `LIVE`)
+-   `IG_ACCOUNT_ID` (required for strategies that construct tick-level `MarketSubscription` items)
 
 Example:
 
@@ -111,12 +112,19 @@ IG_API_KEY=... \
 IG_USERNAME=... \
 IG_PASSWORD=... \
 IG_ENVIRONMENT=DEMO \
+IG_ACCOUNT_ID=... \
 python your_live_runner.py
 ```
 
 `tradedesk` authenticates with IG and captures the short-lived session headers
 (`CST` and `X-SECURITY-TOKEN`) from the login response automatically. You do not
 configure those session tokens yourself.
+
+Strategies that subscribe to tick-level `MarketSubscription` updates on IG also
+need to include the IG account identifier in each subscription item name. In
+practice that usually means reading an `IG_ACCOUNT_ID` environment variable in
+your strategy code and passing it as `account_id=...` when you construct each
+`MarketSubscription`.
 
 When live sessions ask IG for historical candles, IG enforces a separate
 account-level historical-data allowance. `tradedesk` treats that 403 response as
