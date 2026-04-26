@@ -10,6 +10,7 @@ This demonstrates:
 
 Usage (live):
   IG_API_KEY=... IG_USERNAME=... IG_PASSWORD=... IG_ENVIRONMENT=DEMO \
+  IG_ACCOUNT_ID=... \
     python ./log_price_strategy.py
 
 Usage (backtest):
@@ -17,6 +18,7 @@ Usage (backtest):
 """
 
 import logging
+import os
 
 from tradedesk import SimplePortfolio, run_portfolio
 from tradedesk.execution.ig.client import IGClient
@@ -42,7 +44,12 @@ class LogPriceStrategy(BaseStrategy):
     """
 
     # Declare which EPICs this strategy wants to monitor
-    SUBSCRIPTIONS = [MarketSubscription("CS.D.GBPUSD.TODAY.IP")]
+    SUBSCRIPTIONS = [
+        MarketSubscription(
+            "CS.D.GBPUSD.TODAY.IP",
+            account_id=os.getenv("IG_ACCOUNT_ID", ""),
+        )
+    ]
 
     def __init__(self, client):
         super().__init__(client)

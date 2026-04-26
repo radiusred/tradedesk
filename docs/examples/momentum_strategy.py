@@ -7,6 +7,7 @@ Order execution is commented out — uncomment to place real trades.
 
 Usage (live):
   IG_API_KEY=... IG_USERNAME=... IG_PASSWORD=... IG_ENVIRONMENT=DEMO \
+  IG_ACCOUNT_ID=... \
     python ./momentum_strategy.py
 
 Usage (backtest from CSV):
@@ -14,6 +15,7 @@ Usage (backtest from CSV):
 """
 
 import logging
+import os
 from collections import deque
 from pathlib import Path
 
@@ -38,8 +40,14 @@ class MomentumStrategy(BaseStrategy):
     """
 
     SUBSCRIPTIONS = [
-        MarketSubscription("CS.D.GBPUSD.TODAY.IP"),
-        MarketSubscription("CS.D.EURUSD.TODAY.IP"),
+        MarketSubscription(
+            "CS.D.GBPUSD.TODAY.IP",
+            account_id=os.getenv("IG_ACCOUNT_ID", ""),
+        ),
+        MarketSubscription(
+            "CS.D.EURUSD.TODAY.IP",
+            account_id=os.getenv("IG_ACCOUNT_ID", ""),
+        ),
     ]
 
     def __init__(self, client, lookback: int = 10):
@@ -69,7 +77,9 @@ class MomentumStrategy(BaseStrategy):
 
         if momentum > 0.001:
             log.info("UP signal: %s momentum=%.5f", instrument, momentum)
-            # await request_order(OrderRequest(instrument=instrument, direction="BUY", size=1.0))
+            # await request_order(
+            #     OrderRequest(instrument=instrument, direction="BUY", size=1.0)
+            # )
         elif momentum < -0.001:
             log.info("DOWN signal: %s momentum=%.5f", instrument, momentum)
             # await request_order(

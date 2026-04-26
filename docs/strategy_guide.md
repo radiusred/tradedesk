@@ -61,6 +61,9 @@ A common anti-pattern is allowing parameters to change mid-run. Avoid this.
 ### Example: minimal constructor
 
 ```python
+import os
+
+
 class MyStrategy(BaseStrategy):
     def __init__(
         self,
@@ -74,10 +77,11 @@ class MyStrategy(BaseStrategy):
         self.epics = list(epics)
         self.timeframe = timeframe
         self.size = float(size)
+        self.account_id = os.environ.get("IG_ACCOUNT_ID", "")
 
         subs = []
         for epic in self.epics:
-            subs.append(MarketSubscription(epic))
+            subs.append(MarketSubscription(epic, account_id=self.account_id))
             subs.append(ChartSubscription(epic, self.timeframe))
 
         super().__init__(client, subscriptions=subs)
@@ -88,6 +92,11 @@ class MyStrategy(BaseStrategy):
 At this point:
 - no network calls should occur,
 - no assumptions about market state should be made.
+
+For live IG runs, `MarketSubscription` uses the Lightstreamer `PRICE` item
+shape, so each tick subscription must include the IG account identifier. If
+your strategy is candle-only, you can omit `MarketSubscription` entirely and
+subscribe only to chart data.
 
 ---
 
