@@ -1,18 +1,15 @@
 
-![CI Build](https://github.com/radiusred/tradedesk/actions/workflows/ci.yml/badge.svg)
-[![PyPI Version](https://img.shields.io/pypi/v/tradedesk?label=PyPI)](https://pypi.python.org/pypi/tradedesk)
 
 ![banner](https://i.ibb.co/Kc5C88gp/tradedesk-banner.webp)
 
 # tradedesk
 
-Contributing: [CONTRIBUTING.md](./CONTRIBUTING.md)
+![CI Build](https://github.com/radiusred/tradedesk/actions/workflows/ci.yml/badge.svg)
+[![PyPI Version](https://img.shields.io/pypi/v/tradedesk?label=PyPI)](https://pypi.python.org/pypi/tradedesk)
 
-tradedesk is an event-driven trading framework for building, running,
-and evaluating systematic trading strategies across both backtesting and live
-broker environments.
+**event-driven trading framework for building, running, and evaluating systematic trading strategies across both backtesting and live broker environments.**
 
-It provides:
+Tradedesk provides:
 
 -   Event-based strategy execution
 -   Unified backtest and live broker runtime model
