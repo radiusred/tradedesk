@@ -2,6 +2,8 @@
 ![CI Build](https://github.com/radiusred/tradedesk/actions/workflows/ci.yml/badge.svg)
 [![PyPI Version](https://img.shields.io/pypi/v/tradedesk?label=PyPI)](https://pypi.python.org/pypi/tradedesk)
 
+![banner](https://i.ibb.co/Kc5C88gp/tradedesk-banner.webp)
+
 # tradedesk
 
 Contributing: [CONTRIBUTING.md](./CONTRIBUTING.md)
