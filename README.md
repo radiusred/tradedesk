@@ -131,6 +131,17 @@ a distinct failure mode instead of retrying it as an authentication problem, so
 embedding runtimes can back off or warn explicitly when warmup/history fetches
 run out of quota.
 
+### IG spread gate and scalingFactor
+
+When `OrderExecutionHandler` is configured with a spread limit, it checks the
+current spread from the IG market snapshot before submitting each order. IG
+returns bid and offer in broker-scaled units (for example, EURUSD bid≈11715.5
+instead of 1.17155), so `tradedesk` divides by the `instrument.scalingFactor`
+from the snapshot before computing the spread. Non-FX instruments (indices,
+gold) use `scalingFactor=1`, leaving their prices unchanged. If you configure
+`max_spread` thresholds, set them in the decimal price units your strategy uses
+— the normalization is transparent.
+
 
 ## Portfolio & Risk
 
