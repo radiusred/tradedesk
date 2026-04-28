@@ -96,20 +96,25 @@ async def test_request_order_uses_fallback_price_field():
 # ---------------------------------------------------------------------------
 
 
-def _snapshot(bid: float, offer: float) -> dict:
-    return {"snapshot": {"bid": bid, "offer": offer}}
+def _snapshot(bid: float, offer: float, scaling_factor: float = 1) -> dict:
+    return {
+        "snapshot": {"bid": bid, "offer": offer},
+        "instrument": {"scalingFactor": scaling_factor},
+    }
 
 
 @pytest.mark.asyncio
-async def test_spread_gate_blocks_when_spread_exceeds_limit():
-    """Order is blocked when current spread exceeds configured limit."""
+async def test_spread_gate_blocks_eurusd_wide_spread():
+    """EURUSD blocked when IG-scaled spread exceeds pip limit (realistic fixture)."""
     client = AsyncMock()
-    client.get_market_snapshot.return_value = _snapshot(bid=1.1000, offer=1.1010)
+    # IG returns EURUSD ×10000: bid=11710.0, offer=11725.0 → 15 pip spread
+    client.get_market_snapshot.return_value = _snapshot(
+        bid=11710.0, offer=11725.0, scaling_factor=10000
+    )
     client.quantise_size = AsyncMock(side_effect=lambda inst, size: size)
-    client.place_market_order_confirmed.return_value = {"level": 1.1005}
 
-    # Max raw spread of 0.0005 (5 pips); current spread is 0.0010 (10 pips)
-    OrderExecutionHandler(client, spread_limits={"CS.D.EURUSD.TODAY.IP": 0.0005})
+    # 2.0 pips × 0.0001 pip_divisor = 0.0002 decimal threshold
+    OrderExecutionHandler(client, spread_limits={"CS.D.EURUSD.TODAY.IP": 0.0002})
 
     result = await request_order(
         OrderRequest(instrument="CS.D.EURUSD.TODAY.IP", direction="BUY", size=1.0)
@@ -122,15 +127,18 @@ async def test_spread_gate_blocks_when_spread_exceeds_limit():
 
 
 @pytest.mark.asyncio
-async def test_spread_gate_allows_when_within_limit():
-    """Order proceeds when spread is within the configured limit."""
+async def test_spread_gate_allows_eurusd_normal_spread():
+    """EURUSD passes when IG-scaled spread is below pip limit (realistic fixture)."""
     client = AsyncMock()
-    client.get_market_snapshot.return_value = _snapshot(bid=1.1000, offer=1.1002)
+    # IG returns EURUSD ×10000: bid=11715.5, offer=11716.4 → 0.9 pip spread
+    client.get_market_snapshot.return_value = _snapshot(
+        bid=11715.5, offer=11716.4, scaling_factor=10000
+    )
     client.quantise_size = AsyncMock(side_effect=lambda inst, size: size)
-    client.place_market_order_confirmed.return_value = {"level": 1.1002}
+    client.place_market_order_confirmed.return_value = {"level": 11716.0}
 
-    # Max raw spread of 0.0005; current spread is 0.0002 — within limit
-    OrderExecutionHandler(client, spread_limits={"CS.D.EURUSD.TODAY.IP": 0.0005})
+    # 2.0 pips × 0.0001 pip_divisor = 0.0002 decimal threshold
+    OrderExecutionHandler(client, spread_limits={"CS.D.EURUSD.TODAY.IP": 0.0002})
 
     result = await request_order(
         OrderRequest(instrument="CS.D.EURUSD.TODAY.IP", direction="BUY", size=1.0)
@@ -209,14 +217,102 @@ async def test_spread_gate_disabled_when_no_limits():
 
 
 @pytest.mark.asyncio
-async def test_spread_gate_blocks_index_instrument():
-    """Spread gate works for index instruments with point-based thresholds."""
+async def test_spread_gate_blocks_gbpusd_wide_spread():
+    """GBPUSD blocked with IG-scaled wide spread."""
     client = AsyncMock()
-    # DAX: bid 18000, offer 18006 -> spread = 6 points
-    client.get_market_snapshot.return_value = _snapshot(bid=18000.0, offer=18006.0)
+    # IG returns GBPUSD ×10000: bid=12600.0, offer=12610.0 → 10 pip spread
+    client.get_market_snapshot.return_value = _snapshot(
+        bid=12600.0, offer=12610.0, scaling_factor=10000
+    )
     client.quantise_size = AsyncMock(side_effect=lambda inst, size: size)
 
-    # Max 4 points; current is 6 points -> block
+    # 3.0 pips × 0.0001 pip_divisor = 0.0003 decimal threshold
+    OrderExecutionHandler(client, spread_limits={"CS.D.GBPUSD.TODAY.IP": 0.0003})
+
+    result = await request_order(
+        OrderRequest(instrument="CS.D.GBPUSD.TODAY.IP", direction="BUY", size=1.0)
+    )
+
+    assert result.success is False
+    assert "Spread gate blocked" in result.error
+    client.place_market_order_confirmed.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_spread_gate_allows_gbpusd_normal_spread():
+    """GBPUSD passes with IG-scaled normal spread."""
+    client = AsyncMock()
+    # IG returns GBPUSD ×10000: bid=12605.0, offer=12606.2 → 1.2 pip spread
+    client.get_market_snapshot.return_value = _snapshot(
+        bid=12605.0, offer=12606.2, scaling_factor=10000
+    )
+    client.quantise_size = AsyncMock(side_effect=lambda inst, size: size)
+    client.place_market_order_confirmed.return_value = {"level": 12606.0}
+
+    OrderExecutionHandler(client, spread_limits={"CS.D.GBPUSD.TODAY.IP": 0.0003})
+
+    result = await request_order(
+        OrderRequest(instrument="CS.D.GBPUSD.TODAY.IP", direction="BUY", size=1.0)
+    )
+
+    assert result.success is True
+    client.place_market_order_confirmed.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_spread_gate_blocks_usdjpy_wide_spread():
+    """USDJPY blocked with IG-scaled wide spread (×100)."""
+    client = AsyncMock()
+    # IG returns USDJPY ×100: bid=15580.0, offer=15590.0 → 10 pip spread
+    client.get_market_snapshot.return_value = _snapshot(
+        bid=15580.0, offer=15590.0, scaling_factor=100
+    )
+    client.quantise_size = AsyncMock(side_effect=lambda inst, size: size)
+
+    # 2.5 pips × 0.01 pip_divisor = 0.025 decimal threshold
+    OrderExecutionHandler(client, spread_limits={"CS.D.USDJPY.TODAY.IP": 0.025})
+
+    result = await request_order(
+        OrderRequest(instrument="CS.D.USDJPY.TODAY.IP", direction="BUY", size=1.0)
+    )
+
+    assert result.success is False
+    assert "Spread gate blocked" in result.error
+    client.place_market_order_confirmed.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_spread_gate_allows_usdjpy_normal_spread():
+    """USDJPY passes with IG-scaled normal spread (×100)."""
+    client = AsyncMock()
+    # IG returns USDJPY ×100: bid=15582.5, offer=15583.2 → 0.7 pip spread
+    client.get_market_snapshot.return_value = _snapshot(
+        bid=15582.5, offer=15583.2, scaling_factor=100
+    )
+    client.quantise_size = AsyncMock(side_effect=lambda inst, size: size)
+    client.place_market_order_confirmed.return_value = {"level": 15583.0}
+
+    OrderExecutionHandler(client, spread_limits={"CS.D.USDJPY.TODAY.IP": 0.025})
+
+    result = await request_order(
+        OrderRequest(instrument="CS.D.USDJPY.TODAY.IP", direction="BUY", size=1.0)
+    )
+
+    assert result.success is True
+    client.place_market_order_confirmed.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_spread_gate_blocks_dax_wide_spread():
+    """DAX blocked with unscaled wide spread (scalingFactor=1)."""
+    client = AsyncMock()
+    # DAX: unscaled, bid=24120.0, offer=24126.0 → 6 point spread
+    client.get_market_snapshot.return_value = _snapshot(
+        bid=24120.0, offer=24126.0, scaling_factor=1
+    )
+    client.quantise_size = AsyncMock(side_effect=lambda inst, size: size)
+
+    # 4.0 points × 1.0 pip_divisor = 4.0 decimal threshold
     OrderExecutionHandler(client, spread_limits={"IX.D.DAX.DAILY.IP": 4.0})
 
     result = await request_order(
@@ -226,6 +322,69 @@ async def test_spread_gate_blocks_index_instrument():
     assert result.success is False
     assert "Spread gate blocked" in result.error
     client.place_market_order_confirmed.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_spread_gate_allows_dax_normal_spread():
+    """DAX passes with unscaled normal spread (regression check)."""
+    client = AsyncMock()
+    # DAX: unscaled, bid=24120.0, offer=24121.5 → 1.5 point spread
+    client.get_market_snapshot.return_value = _snapshot(
+        bid=24120.0, offer=24121.5, scaling_factor=1
+    )
+    client.quantise_size = AsyncMock(side_effect=lambda inst, size: size)
+    client.place_market_order_confirmed.return_value = {"level": 24121.0}
+
+    OrderExecutionHandler(client, spread_limits={"IX.D.DAX.DAILY.IP": 4.0})
+
+    result = await request_order(
+        OrderRequest(instrument="IX.D.DAX.DAILY.IP", direction="BUY", size=1.0)
+    )
+
+    assert result.success is True
+    client.place_market_order_confirmed.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_spread_gate_allows_xauusd_normal_spread():
+    """XAUUSD (gold) passes with unscaled normal spread (regression check)."""
+    client = AsyncMock()
+    # Gold: unscaled, bid=2362.45, offer=2362.95 → 0.50 raw spread
+    client.get_market_snapshot.return_value = _snapshot(
+        bid=2362.45, offer=2362.95, scaling_factor=1
+    )
+    client.quantise_size = AsyncMock(side_effect=lambda inst, size: size)
+    client.place_market_order_confirmed.return_value = {"level": 2362.70}
+
+    # 100 pips × 0.01 pip_divisor = 1.0 decimal threshold
+    OrderExecutionHandler(client, spread_limits={"CS.D.USCGC.TODAY.IP": 1.0})
+
+    result = await request_order(
+        OrderRequest(instrument="CS.D.USCGC.TODAY.IP", direction="BUY", size=1.0)
+    )
+
+    assert result.success is True
+    client.place_market_order_confirmed.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_spread_gate_missing_scaling_factor_defaults_to_one():
+    """When instrument metadata lacks scalingFactor, default to 1 (no scaling)."""
+    client = AsyncMock()
+    # Snapshot without instrument metadata at all
+    client.get_market_snapshot.return_value = {
+        "snapshot": {"bid": 24120.0, "offer": 24126.0},
+    }
+    client.quantise_size = AsyncMock(side_effect=lambda inst, size: size)
+
+    OrderExecutionHandler(client, spread_limits={"IX.D.DAX.DAILY.IP": 4.0})
+
+    result = await request_order(
+        OrderRequest(instrument="IX.D.DAX.DAILY.IP", direction="BUY", size=1.0)
+    )
+
+    assert result.success is False
+    assert "Spread gate blocked" in result.error
 
 
 # ---------------------------------------------------------------------------

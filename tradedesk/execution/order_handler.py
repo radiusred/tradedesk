@@ -153,13 +153,23 @@ class OrderExecutionHandler:
 
         bid = float(bid_raw)
         offer = float(offer_raw)
-        spread = offer - bid
+
+        instrument_data = snapshot.get("instrument") or {}
+        scaling_factor = float(instrument_data.get("scalingFactor", 1))
+        if scaling_factor > 0:
+            bid_normalised = bid / scaling_factor
+            offer_normalised = offer / scaling_factor
+        else:
+            bid_normalised = bid
+            offer_normalised = offer
+
+        spread = offer_normalised - bid_normalised
 
         if spread > max_spread:
             return (
                 f"Spread gate blocked order: {instrument} "
                 f"spread {spread:.6f} exceeds limit {max_spread:.6f} "
-                f"(bid={bid}, offer={offer})"
+                f"(bid={bid}, offer={offer}, scalingFactor={scaling_factor})"
             )
         return None
 
