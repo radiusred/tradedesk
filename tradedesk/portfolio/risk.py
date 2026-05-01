@@ -14,24 +14,41 @@ def atr_normalised_size(
     atr_risk_mult: float,
     min_size: float,
     max_size: float,
+    point_value: float = 1.0,
 ) -> float:
     """
     Calculate position size normalized by ATR.
 
-    Position size is calculated as: risk_per_trade / (atr * atr_risk_mult)
+    Position size is calculated as:
+        risk_per_trade / (atr * atr_risk_mult * point_value)
+
     Result is clamped between min_size and max_size.
 
+    ``point_value`` is the £/account-currency PnL produced by a 1.0-unit
+    move in the price feed's native scale.  It exists to make sizing
+    unit-independent across feeds that store the same underlying
+    instrument at different decimal scales — e.g. IG lightstreamer reports
+    spot gold in dollars (point_value ≈ 1.0) while the Dukascopy cache
+    stores it in cent units (point_value ≈ 0.01).  Both pipes collapse to
+    the same contract count because ``atr * point_value`` is the same
+    £/contract/ATR quantity in either scale.
+
+    Default ``point_value=1.0`` preserves legacy behaviour for instruments
+    where LIVE and BACKTEST feeds share a price scale.
+
     Args:
-        risk_per_trade: Amount of capital to risk per trade
-        atr: Current ATR value
-        atr_risk_mult: ATR multiplier for stop distance
-        min_size: Minimum position size
-        max_size: Maximum position size
+        risk_per_trade: Amount of capital to risk per trade.
+        atr: Current ATR value (in the feed's native price units).
+        atr_risk_mult: ATR multiplier for stop distance.
+        min_size: Minimum position size.
+        max_size: Maximum position size.
+        point_value: £/account-currency PnL per 1.0-unit move in the feed's
+            native price scale.  Defaults to 1.0.
 
     Returns:
-        Position size clamped to [min_size, max_size]
+        Position size clamped to [min_size, max_size].
     """
-    denom = float(atr) * float(atr_risk_mult)
+    denom = float(atr) * float(atr_risk_mult) * float(point_value)
     if denom <= 0.0:
         return float(min_size)
     raw = float(risk_per_trade) / denom
