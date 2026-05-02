@@ -27,6 +27,7 @@ from typing import Any
 
 from tradedesk.execution import Client, OrderCompletedEvent, OrderRequestEvent
 from tradedesk.recording.events import PositionOpenedEvent
+from tradedesk.settings import ORDER_REQUEST_TIMEOUT_S
 
 from ..events import DomainEvent, get_dispatcher
 from ..types import OrderRequest, OrderResult
@@ -40,7 +41,9 @@ log = logging.getLogger(__name__)
 _pending_orders: dict[str, "asyncio.Future[OrderResult]"] = {}
 
 
-async def request_order(request: OrderRequest, *, timeout: float = 30.0) -> OrderResult:
+async def request_order(
+    request: OrderRequest, *, timeout: float = ORDER_REQUEST_TIMEOUT_S
+) -> OrderResult:
     """Publish an ``OrderRequestEvent`` and await the execution result.
 
     This is the public API for strategies to place orders without depending
