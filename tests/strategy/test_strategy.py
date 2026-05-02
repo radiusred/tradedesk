@@ -31,9 +31,24 @@ class TestBaseStrategy:
 
         strategy = TestStrategy(mock_client)
 
-        assert strategy.client == mock_client
+        assert strategy._data_provider is mock_client
         assert strategy.watchdog_threshold == 60
         assert isinstance(strategy.last_update, datetime)
+
+    def test_client_alias_emits_deprecation_warning(self):
+        """`self.client` still resolves to the data provider but emits DeprecationWarning."""
+        mock_client = MagicMock()
+
+        class TestStrategy(BaseStrategy):
+            SUBSCRIPTIONS = [MarketSubscription("CS.D.EURUSD.CFD.IP")]
+
+            async def on_price_update(self, market_data):
+                pass
+
+        strategy = TestStrategy(mock_client)
+
+        with pytest.warns(DeprecationWarning, match="self._data_provider"):
+            assert strategy.client is mock_client
 
 
 class TestConcreteStrategy:

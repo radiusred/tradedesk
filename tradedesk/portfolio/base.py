@@ -51,6 +51,18 @@ class BasePortfolio(ABC):
         spread_limits: dict[str, float] | None = None,
         order_gate: Callable[[], str | None] | None = None,
     ) -> None:
+        """Initialise the portfolio with a broker client and execution gates.
+
+        Args:
+            client: Broker client used by the embedded ``OrderExecutionHandler``
+                for order placement and market snapshots.
+            spread_limits: Optional mapping of instrument (epic) → maximum
+                permitted raw spread. Orders for instruments with a configured
+                limit are rejected when the live spread exceeds it.
+            order_gate: Optional callable evaluated before every order. Return
+                ``None`` to allow the order, or an error string to reject it.
+                Used for pause/kill switches that must not interrupt streaming.
+        """
         self._client = client
         self._spread_limits = spread_limits
         self._order_gate = order_gate
@@ -60,12 +72,25 @@ class BasePortfolio(ABC):
 
     @abstractmethod
     async def on_candle_close(self, event: CandleClosedEvent) -> None:
-        """Process a completed candle. Subclasses delegate to PortfolioRunner or
-        individual strategy on_candle_close as appropriate."""
+        """Process a completed candle for one of the portfolio's chart subscriptions.
+
+        Subclasses typically delegate to a ``PortfolioRunner`` or to the relevant
+        strategy's ``on_candle_close`` to evaluate signals and request orders.
+
+        Args:
+            event: The closed candle and its instrument/timeframe metadata.
+        """
         ...
 
     async def on_price_update(self, data: MarketData) -> None:
-        """Handle a tick-level price update. Subclasses may override."""
+        """Handle a tick-level price update for one of the portfolio's market subscriptions.
+
+        Default implementation is a no-op. Subclasses should override to drive
+        tick-level logic (e.g. trailing stops, intra-bar signals).
+
+        Args:
+            data: The latest bid/offer snapshot for a subscribed instrument.
+        """
         pass
 
     async def _handle_event(self, event: object) -> None:
