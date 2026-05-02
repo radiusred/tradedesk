@@ -11,6 +11,15 @@ from tradedesk.marketdata import (
     MarketSubscription,
 )
 from tradedesk.marketdata.aggregation import period_to_seconds
+from tradedesk.settings import (
+    STREAM_HEARTBEAT_SLEEP_S,
+    STREAM_HEARTBEAT_SUPPRESSED_SLEEP_S,
+    STREAM_MAX_STALE_DEFAULT_S,
+    STREAM_RECONNECT_DELAY_DEFAULT_S,
+    STREAM_SILENCE_SUPPRESS_THRESHOLD_S,
+    STREAM_SUB_MAX_RETRIES,
+    STREAM_SUB_RETRY_BASE_DELAY_S,
+)
 from tradedesk.types import Candle
 
 from .metrics import (
@@ -20,10 +29,6 @@ from .metrics import (
 )
 
 log = logging.getLogger(__name__)
-
-_MAX_SUB_RETRIES = 3
-_SUB_RETRY_BASE_DELAY = 2.0
-
 
 class RetryScheduler:
     """Schedule subscription retries on the asyncio loop and track pending tasks.
@@ -168,8 +173,8 @@ class _MarketListener:
 
     def onSubscriptionError(self, code: Any, message: Any) -> None:
         self._retries += 1
-        if self._retries <= _MAX_SUB_RETRIES:
-            delay = self._retries * _SUB_RETRY_BASE_DELAY
+        if self._retries <= STREAM_SUB_MAX_RETRIES:
+            delay = self._retries * STREAM_SUB_RETRY_BASE_DELAY_S
             log.warning(
                 "Market subscription error (items=%s): %s - %s "
                 "— retrying in %.0fs (%d/%d)",
@@ -178,7 +183,7 @@ class _MarketListener:
                 message,
                 delay,
                 self._retries,
-                _MAX_SUB_RETRIES,
+                STREAM_SUB_MAX_RETRIES,
             )
             self._scheduler.schedule(
                 delay,
@@ -281,8 +286,8 @@ class _ChartListener:
 
     def onSubscriptionError(self, code: Any, message: Any) -> None:
         self._retries += 1
-        if self._retries <= _MAX_SUB_RETRIES:
-            delay = self._retries * _SUB_RETRY_BASE_DELAY
+        if self._retries <= STREAM_SUB_MAX_RETRIES:
+            delay = self._retries * STREAM_SUB_RETRY_BASE_DELAY_S
             log.warning(
                 "Chart subscription error for %s (item=%s): "
                 "%s - %s — retrying in %.0fs (%d/%d)",
@@ -292,7 +297,7 @@ class _ChartListener:
                 message,
                 delay,
                 self._retries,
-                _MAX_SUB_RETRIES,
+                STREAM_SUB_MAX_RETRIES,
             )
             self._scheduler.schedule(
                 delay,
@@ -341,14 +346,14 @@ class Lightstreamer(Streamer):
         self,
         client: Any,
         *,
-        max_stale_seconds: float = 300.0,
+        max_stale_seconds: float = STREAM_MAX_STALE_DEFAULT_S,
         auto_reconnect: bool = True,
         max_reconnect_attempts: int = 0,
-        reconnect_delay: float = 5.0,
+        reconnect_delay: float = STREAM_RECONNECT_DELAY_DEFAULT_S,
     ):
         self.client = client
         self._ls_client: Any = None
-        self.heartbeat_sleep = 10
+        self.heartbeat_sleep = STREAM_HEARTBEAT_SLEEP_S
         self.max_stale_seconds = max_stale_seconds
         self.auto_reconnect = auto_reconnect
         self.max_reconnect_attempts = max_reconnect_attempts
@@ -496,10 +501,14 @@ class Lightstreamer(Streamer):
                 )
 
     async def _heartbeat_monitor(self, consumer: Any) -> None:
-        silence_threshold = 300.0
+        silence_threshold = STREAM_SILENCE_SUPPRESS_THRESHOLD_S
         suppressed = False
         while True:
-            sleep = 60 if suppressed else self.heartbeat_sleep
+            sleep = (
+                STREAM_HEARTBEAT_SUPPRESSED_SLEEP_S
+                if suppressed
+                else self.heartbeat_sleep
+            )
             await asyncio.sleep(sleep)
             delta = (
                 datetime.now(timezone.utc) - consumer.last_update

@@ -8,6 +8,7 @@ import time
 from typing import TYPE_CHECKING, Any
 
 from tradedesk.execution.broker import DealRejectedException
+from tradedesk.settings import IG_DEAL_CONFIRM_POLL_S, IG_DEAL_CONFIRM_TIMEOUT_S
 
 if TYPE_CHECKING:
     from .client import IGClient
@@ -63,8 +64,8 @@ class IGOrderHandler:
         self,
         deal_reference: str,
         *,
-        timeout_s: float = 10.0,
-        poll_s: float = 0.25,
+        timeout_s: float = IG_DEAL_CONFIRM_TIMEOUT_S,
+        poll_s: float = IG_DEAL_CONFIRM_POLL_S,
     ) -> dict[str, Any]:
         """Poll /confirms/{dealReference} until dealStatus is no longer PENDING."""
         deadline = time.monotonic() + timeout_s
@@ -112,8 +113,8 @@ class IGOrderHandler:
         time_in_force: str = "FILL_OR_KILL",
         expiry: str = "-",
         guaranteed_stop: bool = False,
-        confirm_timeout_s: float = 10.0,
-        confirm_poll_s: float = 0.25,
+        confirm_timeout_s: float = IG_DEAL_CONFIRM_TIMEOUT_S,
+        confirm_poll_s: float = IG_DEAL_CONFIRM_POLL_S,
         **kwargs: Any,
     ) -> dict[str, Any]:
         """Place a market order and confirm its execution."""

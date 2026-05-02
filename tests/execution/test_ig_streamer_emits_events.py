@@ -446,8 +446,8 @@ async def test_subscription_error_retries_then_resubscribes(
     chart_sub._listener.onSubscriptionError(21, "Invalid group")
 
     assert len(schedule_calls) == 2
-    assert schedule_calls[0][0] == ig_streamer._SUB_RETRY_BASE_DELAY
-    assert schedule_calls[1][0] == ig_streamer._SUB_RETRY_BASE_DELAY
+    assert schedule_calls[0][0] == ig_streamer.STREAM_SUB_RETRY_BASE_DELAY_S
+    assert schedule_calls[1][0] == ig_streamer.STREAM_SUB_RETRY_BASE_DELAY_S
     assert {c[2] for c in schedule_calls} == {"market", "chart"}
 
     # Execute the retry callbacks — they should call ls_client.subscribe()
@@ -469,7 +469,7 @@ async def test_subscription_error_gives_up_after_max_retries(
     monkeypatch: pytest.MonkeyPatch,
     caplog: pytest.LogCaptureFixture,
 ) -> None:
-    """After _MAX_SUB_RETRIES failures, errors are logged at ERROR without further retry."""
+    """After STREAM_SUB_MAX_RETRIES failures, errors are logged at ERROR without further retry."""
     import logging
 
     schedule_calls: list[Any] = []
@@ -491,10 +491,10 @@ async def test_subscription_error_gives_up_after_max_retries(
     chart_sub = next(s for s in subscribed if s.items[0].startswith("CHART:"))
 
     with caplog.at_level(logging.WARNING, logger="tradedesk.execution.ig.price_streamer"):
-        for _ in range(ig_streamer._MAX_SUB_RETRIES):
+        for _ in range(ig_streamer.STREAM_SUB_MAX_RETRIES):
             chart_sub._listener.onSubscriptionError(21, "Invalid group")
 
-        assert len(schedule_calls) == ig_streamer._MAX_SUB_RETRIES
+        assert len(schedule_calls) == ig_streamer.STREAM_SUB_MAX_RETRIES
 
         schedule_calls.clear()
         chart_sub._listener.onSubscriptionError(21, "Invalid group")
@@ -534,7 +534,7 @@ async def test_successful_subscription_resets_retry_counter(
     chart_sub = next(s for s in subscribed if s.items[0].startswith("CHART:"))
 
     # Exhaust retries
-    for _ in range(ig_streamer._MAX_SUB_RETRIES):
+    for _ in range(ig_streamer.STREAM_SUB_MAX_RETRIES):
         chart_sub._listener.onSubscriptionError(21, "Invalid group")
 
     # Successful subscription resets counter

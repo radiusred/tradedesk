@@ -10,6 +10,8 @@ from typing import TYPE_CHECKING, Any
 
 import aiohttp
 
+from tradedesk.settings import IG_AUTH_MIN_INTERVAL_S
+
 from .metrics import AUTH_REFRESH_INFLIGHT, AUTH_REFRESHES
 
 if TYPE_CHECKING:
@@ -17,12 +19,6 @@ if TYPE_CHECKING:
     from .settings import Settings
 
 log = logging.getLogger(__name__)
-
-
-# Minimum gap between successive ``/session`` calls. IG's API key allowance
-# is roughly 1 auth/sec; the 5s buffer keeps us well clear of rate limits even
-# under retry storms.
-_DEFAULT_MIN_AUTH_INTERVAL_S = 5.0
 
 
 class TokenState(str, Enum):
@@ -48,7 +44,7 @@ class IGAuthManager:
         self._settings = settings
         self._auth_lock: asyncio.Lock = asyncio.Lock()
         self.last_auth_attempt: float = 0
-        self.min_auth_interval: float = _DEFAULT_MIN_AUTH_INTERVAL_S
+        self.min_auth_interval: float = IG_AUTH_MIN_INTERVAL_S
         self.uses_oauth: bool = False
         self.oauth_access_token: str | None = None
         self.oauth_refresh_token: str | None = None
