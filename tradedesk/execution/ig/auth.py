@@ -5,9 +5,12 @@ from __future__ import annotations
 import asyncio
 import logging
 import time
+from enum import Enum
 from typing import TYPE_CHECKING, Any
 
 import aiohttp
+
+from .metrics import AUTH_REFRESH_INFLIGHT, AUTH_REFRESHES
 
 if TYPE_CHECKING:
     from .client import IGClient
@@ -16,15 +19,36 @@ if TYPE_CHECKING:
 log = logging.getLogger(__name__)
 
 
+# Minimum gap between successive ``/session`` calls. IG's API key allowance
+# is roughly 1 auth/sec; the 5s buffer keeps us well clear of rate limits even
+# under retry storms.
+_DEFAULT_MIN_AUTH_INTERVAL_S = 5.0
+
+
+class TokenState(str, Enum):
+    """Explicit lifecycle states for the IG OAuth token."""
+
+    UNAUTHENTICATED = "unauthenticated"
+    REFRESHING = "refreshing"
+    REFRESHED = "refreshed"
+    EXPIRED = "expired"
+
+
 class IGAuthManager:
-    """Manages IG API session authentication and token lifecycle."""
+    """Manages IG API session authentication and token lifecycle.
+
+    Refreshes are single-flight: when an authentication is already in
+    progress, additional callers await the in-flight result rather than
+    issuing a second ``/session`` request. Token state transitions are
+    surfaced via :class:`TokenState` for observability.
+    """
 
     def __init__(self, client: IGClient, settings: Settings) -> None:
         self._client = client
         self._settings = settings
         self._auth_lock: asyncio.Lock = asyncio.Lock()
         self.last_auth_attempt: float = 0
-        self.min_auth_interval: float = 5.0
+        self.min_auth_interval: float = _DEFAULT_MIN_AUTH_INTERVAL_S
         self.uses_oauth: bool = False
         self.oauth_access_token: str | None = None
         self.oauth_refresh_token: str | None = None
@@ -33,6 +57,12 @@ class IGAuthManager:
         self.client_id: str | None = None
         self.ls_cst: str | None = None
         self.ls_xst: str | None = None
+        self._token_state: TokenState = TokenState.UNAUTHENTICATED
+
+    @property
+    def token_state(self) -> TokenState:
+        """Current lifecycle state of the OAuth token."""
+        return self._token_state
 
     def is_token_valid(self) -> bool:
         """Return True if the current session token is still valid."""
@@ -40,15 +70,46 @@ class IGAuthManager:
             return True
         return time.time() < self.oauth_expires_at
 
-    async def authenticate(self) -> None:
-        """Rate-limit, execute auth request, dispatch to version handler."""
+    async def ensure_valid(self) -> None:
+        """Refresh the token if it has expired; share an in-flight refresh.
+
+        Concurrent callers serialize on ``_auth_lock``; the lock holder
+        re-checks validity before issuing a new request so racing callers
+        share a single refresh.
+        """
+        if self.is_token_valid():
+            return
         async with self._auth_lock:
+            if self.is_token_valid():
+                # Another coroutine refreshed while we were waiting.
+                return
+            await self._authenticate_locked()
+
+    async def authenticate(self) -> None:
+        """Force a fresh authentication request (single-flight on the lock)."""
+        async with self._auth_lock:
+            await self._authenticate_locked()
+
+    async def _authenticate_locked(self) -> None:
+        """Perform the actual auth request — caller must hold ``_auth_lock``."""
+        if self.uses_oauth:
+            self._token_state = TokenState.REFRESHING
+        AUTH_REFRESH_INFLIGHT.inc()
+        try:
             await self._enforce_rate_limit()
             resp_headers, resp_body = await self._perform_auth_request()
             if self._client.api_version == "3":
                 await self._handle_v3_auth(resp_body)
             else:
                 self._handle_v2_auth(resp_headers, resp_body)
+            self._token_state = TokenState.REFRESHED
+            AUTH_REFRESHES.labels(outcome="success").inc()
+        except Exception:
+            self._token_state = TokenState.EXPIRED
+            AUTH_REFRESHES.labels(outcome="failure").inc()
+            raise
+        finally:
+            AUTH_REFRESH_INFLIGHT.dec()
 
     async def _enforce_rate_limit(self) -> None:
         now = time.time()

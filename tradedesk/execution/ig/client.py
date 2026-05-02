@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import logging
 import re
-import time
 from typing import Any
 
 import aiohttp
@@ -166,10 +165,7 @@ class IGClient(Client):
             self._session = aiohttp.ClientSession(headers=self.headers)
 
         if self.auth.uses_oauth:
-            elapsed = time.time() - self.auth.last_auth_attempt
-            if elapsed > 25 and not self.auth.is_token_valid():
-                log.debug("OAuth token expired – re-authenticating")
-                await self._authenticate()
+            await self.auth.ensure_valid()
 
         req_headers: dict[str, str] = dict(self._session.headers)
         caller_headers = kwargs.pop("headers", None)

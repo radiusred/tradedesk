@@ -1,8 +1,7 @@
 import asyncio
 import logging
-import threading
 from datetime import datetime, timezone
-from typing import Any
+from typing import Any, Callable
 
 from tradedesk.execution.streamer import Streamer
 from tradedesk.marketdata import (
@@ -14,10 +13,79 @@ from tradedesk.marketdata import (
 from tradedesk.marketdata.aggregation import period_to_seconds
 from tradedesk.types import Candle
 
+from .metrics import (
+    STREAM_RECONNECTS,
+    STREAM_STALE_SECONDS,
+    SUBSCRIPTION_RETRIES,
+)
+
 log = logging.getLogger(__name__)
 
 _MAX_SUB_RETRIES = 3
 _SUB_RETRY_BASE_DELAY = 2.0
+
+
+class RetryScheduler:
+    """Schedule subscription retries on the asyncio loop and track pending tasks.
+
+    Lightstreamer listener callbacks are invoked from background threads, so
+    retries are dispatched onto the owner loop via ``call_soon_threadsafe``.
+    Pending tasks are tracked so the session can cancel all of them cleanly
+    on disconnect — replacing the old ``threading.Timer`` approach which had
+    no cancellation hook.
+    """
+
+    def __init__(self, loop: asyncio.AbstractEventLoop) -> None:
+        self._loop = loop
+        self._tasks: set[asyncio.Task[Any]] = set()
+        self._closed = False
+
+    def schedule(
+        self,
+        delay: float,
+        action: Callable[[], None],
+        *,
+        kind: str = "unknown",
+    ) -> None:
+        """Schedule ``action`` to run after ``delay`` seconds on the loop."""
+        if self._closed:
+            return
+
+        def _spawn() -> None:
+            if self._closed:
+                return
+            task = self._loop.create_task(self._run(delay, action, kind))
+            self._tasks.add(task)
+            task.add_done_callback(self._tasks.discard)
+
+        try:
+            self._loop.call_soon_threadsafe(_spawn)
+        except RuntimeError:
+            # Loop already closed — nothing to do.
+            pass
+
+    async def _run(
+        self, delay: float, action: Callable[[], None], kind: str
+    ) -> None:
+        try:
+            await asyncio.sleep(delay)
+        except asyncio.CancelledError:
+            return
+        try:
+            SUBSCRIPTION_RETRIES.labels(kind=kind).inc()
+            action()
+        except Exception:
+            log.exception("Subscription retry action failed (kind=%s)", kind)
+
+    async def cancel_all(self) -> None:
+        """Cancel any pending retry tasks and wait for them to finish."""
+        self._closed = True
+        pending = list(self._tasks)
+        for task in pending:
+            task.cancel()
+        if pending:
+            await asyncio.gather(*pending, return_exceptions=True)
+        self._tasks.clear()
 
 # Optional import
 try:
@@ -55,12 +123,14 @@ class _MarketListener:
         items: list[str],
         ls_client: Any,
         ls_subscription: Any,
+        scheduler: RetryScheduler,
     ) -> None:
         self._loop = loop
         self._queue = queue
         self._items = items
         self._ls_client = ls_client
         self._ls_subscription = ls_subscription
+        self._scheduler = scheduler
         self._retries = 0
 
     def onItemUpdate(self, update: Any) -> None:
@@ -110,10 +180,11 @@ class _MarketListener:
                 self._retries,
                 _MAX_SUB_RETRIES,
             )
-            threading.Timer(
+            self._scheduler.schedule(
                 delay,
                 lambda: self._ls_client.subscribe(self._ls_subscription),
-            ).start()
+                kind="market",
+            )
         else:
             log.error(
                 "Market subscription error (items=%s): %s - %s "
@@ -139,12 +210,14 @@ class _ChartListener:
         sub: ChartSubscription,
         ls_client: Any,
         ls_subscription: Any,
+        scheduler: RetryScheduler,
     ) -> None:
         self._loop = loop
         self._queue = queue
         self._sub = sub
         self._ls_client = ls_client
         self._ls_subscription = ls_subscription
+        self._scheduler = scheduler
         self._retries = 0
 
     def onItemUpdate(self, update: Any) -> None:
@@ -221,12 +294,11 @@ class _ChartListener:
                 self._retries,
                 _MAX_SUB_RETRIES,
             )
-            threading.Timer(
+            self._scheduler.schedule(
                 delay,
-                lambda: self._ls_client.subscribe(
-                    self._ls_subscription
-                ),
-            ).start()
+                lambda: self._ls_client.subscribe(self._ls_subscription),
+                kind="chart",
+            )
         else:
             log.error(
                 "Chart subscription error for %s (item=%s): "
@@ -281,12 +353,16 @@ class Lightstreamer(Streamer):
         self.auto_reconnect = auto_reconnect
         self.max_reconnect_attempts = max_reconnect_attempts
         self.reconnect_delay = reconnect_delay
+        self._scheduler: RetryScheduler | None = None
 
     async def connect(self) -> None:
         # Connection is established inside run() to preserve the existing flow.
         return
 
     async def disconnect(self) -> None:
+        if self._scheduler is not None:
+            await self._scheduler.cancel_all()
+            self._scheduler = None
         if self._ls_client is not None:
             try:
                 self._ls_client.disconnect()
@@ -305,16 +381,19 @@ class Lightstreamer(Streamer):
             except StaleStreamError:
                 attempts += 1
                 if not self.auto_reconnect:
+                    STREAM_RECONNECTS.labels(reason="stale_no_retry").inc()
                     raise
                 if (
                     self.max_reconnect_attempts > 0
                     and attempts >= self.max_reconnect_attempts
                 ):
+                    STREAM_RECONNECTS.labels(reason="exhausted").inc()
                     log.error(
                         "Reconnect limit reached (%d attempts). Giving up.",
                         attempts,
                     )
                     raise
+                STREAM_RECONNECTS.labels(reason="stale").inc()
                 log.info(
                     "Reconnecting after stale stream (attempt %d). "
                     "Waiting %.1fs before reconnect.",
@@ -352,6 +431,7 @@ class Lightstreamer(Streamer):
         market_queue: "asyncio.Queue[dict[str, Any]]",
         chart_queue: "asyncio.Queue[dict[str, Any]]",
         loop: asyncio.AbstractEventLoop,
+        scheduler: RetryScheduler,
     ) -> list[Any]:
         assert Subscription is not None
 
@@ -368,7 +448,7 @@ class Lightstreamer(Streamer):
             market_sub.addListener(
                 _MarketListener(
                     loop, market_queue, market_items,
-                    ls_client, market_sub,
+                    ls_client, market_sub, scheduler,
                 )
             )
             subscriptions.append(market_sub)
@@ -382,7 +462,7 @@ class Lightstreamer(Streamer):
                 )
                 ls_sub.addListener(
                     _ChartListener(
-                        loop, chart_queue, cs, ls_client, ls_sub,
+                        loop, chart_queue, cs, ls_client, ls_sub, scheduler,
                     )
                 )
                 subscriptions.append(ls_sub)
@@ -429,6 +509,7 @@ class Lightstreamer(Streamer):
                     self.max_stale_seconds > 0
                     and delta > self.max_stale_seconds
                 ):
+                    STREAM_STALE_SECONDS.observe(delta)
                     log.warning(
                         "❤  Stream stale for %.1fs (limit %.1fs). "
                         "Initiating reconnection.",
@@ -545,10 +626,13 @@ class Lightstreamer(Streamer):
         chart_queue: asyncio.Queue[dict[str, Any]] = asyncio.Queue()
         loop = asyncio.get_running_loop()
 
+        scheduler = RetryScheduler(loop)
+        self._scheduler = scheduler
+
         ls_client = self._create_ls_client()
         subscriptions = self._setup_subscriptions(
             market_subs, chart_subs, ls_client,
-            market_queue, chart_queue, loop,
+            market_queue, chart_queue, loop, scheduler,
         )
 
         ls_client.connect()
