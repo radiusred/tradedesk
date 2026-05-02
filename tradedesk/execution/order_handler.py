@@ -107,6 +107,12 @@ class OrderExecutionHandler:
         get_dispatcher().subscribe(OrderRequestEvent, self._on_order_request)
 
     async def _on_order_request(self, event: DomainEvent) -> None:
+        """Dispatcher subscriber: execute an ``OrderRequestEvent`` and publish completion.
+
+        Resolves the caller's pending Future with the ``OrderResult`` so that
+        ``request_order()`` unblocks, then publishes an ``OrderCompletedEvent``
+        for audit/logging observers. Non-``OrderRequestEvent`` events are ignored.
+        """
         if not isinstance(event, OrderRequestEvent):
             return
         result = await self._execute(event.request)
@@ -174,6 +180,16 @@ class OrderExecutionHandler:
         return None
 
     async def _execute(self, request: OrderRequest) -> OrderResult:
+        """Run the gates and place a market order via the broker client.
+
+        Applies the order gate (pause/kill switch) and spread gate, quantises
+        the size, places the order, and returns an ``OrderResult`` with the fill
+        price/size populated from the broker response. When the request opens a
+        position and the client does not publish position events itself, a
+        ``PositionOpenedEvent`` is published for downstream recording.
+
+        Errors from any stage are caught and returned as ``OrderResult(success=False)``.
+        """
         try:
             # Order gate: external pre-flight check (e.g. pause switch)
             if self._order_gate is not None:

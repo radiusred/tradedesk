@@ -8,6 +8,7 @@ overriding on_price_update() and/or on_candle_close().
 
 import abc
 import logging
+import warnings
 from datetime import datetime, timezone
 from enum import Enum
 
@@ -81,8 +82,6 @@ class BaseStrategy(abc.ABC):
                 If omitted, defaults to the class-level SUBSCRIPTIONS.
         """
         self._data_provider = data_provider
-        # Backwards compatibility - deprecated
-        self.client = data_provider
         self.subscriptions = (
             list(subscriptions) if subscriptions is not None else list(self.SUBSCRIPTIONS)
         )
@@ -110,6 +109,21 @@ class BaseStrategy(abc.ABC):
             )
 
         get_dispatcher().subscribe(SessionStartedEvent, self._on_session_started)
+
+    @property
+    def client(self) -> DataProvider | None:
+        """Deprecated alias for the strategy's data provider.
+
+        Use ``self._data_provider`` (or pass ``data_provider`` explicitly) instead.
+        Scheduled for removal in tradedesk v2.0.
+        """
+        warnings.warn(
+            "BaseStrategy.client is deprecated and will be removed in tradedesk v2.0; "
+            "use self._data_provider instead.",
+            DeprecationWarning,
+            stacklevel=2,
+        )
+        return self._data_provider
 
     def _chart_key(self, sub: ChartSubscription) -> tuple[str, str]:
         return (sub.instrument, sub.period)
