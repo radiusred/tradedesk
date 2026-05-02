@@ -204,6 +204,8 @@ See the `docs/` directory for:
 -   Aggregation guide
 -   Risk management guide
 -   Metrics guide
+-   Settings and operational tunables
+-   Operational resilience and monitoring
 
 Public package entry points are grouped under:
 

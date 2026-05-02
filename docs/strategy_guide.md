@@ -15,6 +15,12 @@ The goal is to teach **correct strategy construction**, not trading theory or pr
 
 ---
 
+## API Deprecations
+
+**BaseStrategy.client**: As of v1.1.0, use `self._data_provider` instead of `self.client`. The `client` property will be removed in v2.0. Both refer to the same data provider object; `_data_provider` is the public interface.
+
+---
+
 ## Mental model: what a strategy actually is
 
 In `tradedesk`, a strategy is a **pure event-driven component**.
@@ -168,7 +174,7 @@ Override `warmup_from_provider()` if you manage indicators yourself:
 
 ```python
 async def warmup_from_provider(self):
-    candles = await self.client.get_historical_candles(epic, timeframe, n)
+    candles = await self._data_provider.get_historical_candles(epic, timeframe, n)
     self.warmup_from_history({(epic, timeframe): candles})
 ```
 
@@ -488,7 +494,7 @@ class EmaAtrStrategy(BaseStrategy):
         return True
 
     async def warmup_from_provider(self) -> None:
-        get_hist = getattr(self.client, "get_historical_candles", None)
+        get_hist = getattr(self._data_provider, "get_historical_candles", None)
         if not callable(get_hist):
             return
 
