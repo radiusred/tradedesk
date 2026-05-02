@@ -91,6 +91,10 @@ explicit_package_bases = true
 module = ["tests.*", "docs.*"]
 ignore_errors = true
 
+[[tool.mypy.overrides]]
+module = ["prometheus_client"]
+ignore_missing_imports = true
+
 [tool.ruff]
 target-version = "py311"
 line-length = 100
