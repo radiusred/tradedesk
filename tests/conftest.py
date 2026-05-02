@@ -4,14 +4,17 @@ import os
 import sys
 from unittest.mock import AsyncMock, MagicMock, patch
 
+# Prepend the project root before importing `tradedesk` so tests always exercise
+# the working tree's source — not whatever a system-wide editable install
+# happens to point at. Must happen before any `from tradedesk.*` import below.
+sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
+
 import pytest
 
 from tradedesk.events import reset_dispatcher
 from tradedesk.marketdata.subscriptions import ChartSubscription
 from tradedesk.strategy.base import BaseStrategy
 from tradedesk.types import Candle
-
-sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
 
 
 @pytest.fixture(autouse=True)
