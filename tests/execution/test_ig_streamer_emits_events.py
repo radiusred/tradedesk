@@ -421,17 +421,17 @@ async def test_subscription_error_retries_then_resubscribes(
     make_strategy: Callable[..., tuple[BaseStrategy, AsyncMock]],
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """Subscription errors trigger a delayed resubscribe via threading.Timer."""
-    timer_calls: list[tuple[float, Any]] = []
+    """Subscription errors schedule a delayed resubscribe via the RetryScheduler."""
+    schedule_calls: list[tuple[float, Any, str]] = []
 
-    class FakeTimer:
-        def __init__(self, delay: float, fn: Any) -> None:
-            timer_calls.append((delay, fn))
+    def fake_schedule(
+        self: Any, delay: float, action: Any, *, kind: str = "unknown"
+    ) -> None:
+        schedule_calls.append((delay, action, kind))
 
-        def start(self) -> None:
-            pass
-
-    monkeypatch.setattr(ig_streamer.threading, "Timer", FakeTimer)
+    monkeypatch.setattr(
+        ig_streamer.RetryScheduler, "schedule", fake_schedule
+    )
 
     strat, _ = make_strategy()
     streamer = ig_streamer.Lightstreamer(ig_client)
@@ -444,13 +444,14 @@ async def test_subscription_error_retries_then_resubscribes(
     market_sub._listener.onSubscriptionError(21, "Invalid group")
     chart_sub._listener.onSubscriptionError(21, "Invalid group")
 
-    assert len(timer_calls) == 2
-    assert timer_calls[0][0] == ig_streamer._SUB_RETRY_BASE_DELAY
-    assert timer_calls[1][0] == ig_streamer._SUB_RETRY_BASE_DELAY
+    assert len(schedule_calls) == 2
+    assert schedule_calls[0][0] == ig_streamer._SUB_RETRY_BASE_DELAY
+    assert schedule_calls[1][0] == ig_streamer._SUB_RETRY_BASE_DELAY
+    assert {c[2] for c in schedule_calls} == {"market", "chart"}
 
     # Execute the retry callbacks — they should call ls_client.subscribe()
     ls_client.subscribe.reset_mock()
-    for _, fn in timer_calls:
+    for _, fn, _kind in schedule_calls:
         fn()
     assert ls_client.subscribe.call_count == 2
 
@@ -470,16 +471,16 @@ async def test_subscription_error_gives_up_after_max_retries(
     """After _MAX_SUB_RETRIES failures, errors are logged at ERROR without further retry."""
     import logging
 
-    timer_calls: list[Any] = []
+    schedule_calls: list[Any] = []
 
-    class FakeTimer:
-        def __init__(self, delay: float, fn: Any) -> None:
-            timer_calls.append(fn)
+    def fake_schedule(
+        self: Any, delay: float, action: Any, *, kind: str = "unknown"
+    ) -> None:
+        schedule_calls.append(action)
 
-        def start(self) -> None:
-            pass
-
-    monkeypatch.setattr(ig_streamer.threading, "Timer", FakeTimer)
+    monkeypatch.setattr(
+        ig_streamer.RetryScheduler, "schedule", fake_schedule
+    )
 
     strat, _ = make_strategy()
     streamer = ig_streamer.Lightstreamer(ig_client)
@@ -492,11 +493,11 @@ async def test_subscription_error_gives_up_after_max_retries(
         for _ in range(ig_streamer._MAX_SUB_RETRIES):
             chart_sub._listener.onSubscriptionError(21, "Invalid group")
 
-        assert len(timer_calls) == ig_streamer._MAX_SUB_RETRIES
+        assert len(schedule_calls) == ig_streamer._MAX_SUB_RETRIES
 
-        timer_calls.clear()
+        schedule_calls.clear()
         chart_sub._listener.onSubscriptionError(21, "Invalid group")
-        assert len(timer_calls) == 0
+        assert len(schedule_calls) == 0
 
     assert any("retries exhausted" in r.message for r in caplog.records)
 
@@ -513,16 +514,16 @@ async def test_successful_subscription_resets_retry_counter(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """onSubscription() resets the retry counter so future errors can retry again."""
-    timer_calls: list[Any] = []
+    schedule_calls: list[Any] = []
 
-    class FakeTimer:
-        def __init__(self, delay: float, fn: Any) -> None:
-            timer_calls.append(fn)
+    def fake_schedule(
+        self: Any, delay: float, action: Any, *, kind: str = "unknown"
+    ) -> None:
+        schedule_calls.append(action)
 
-        def start(self) -> None:
-            pass
-
-    monkeypatch.setattr(ig_streamer.threading, "Timer", FakeTimer)
+    monkeypatch.setattr(
+        ig_streamer.RetryScheduler, "schedule", fake_schedule
+    )
 
     strat, _ = make_strategy()
     streamer = ig_streamer.Lightstreamer(ig_client)
@@ -538,9 +539,9 @@ async def test_successful_subscription_resets_retry_counter(
     # Successful subscription resets counter
     chart_sub._listener.onSubscription()
 
-    timer_calls.clear()
+    schedule_calls.clear()
     chart_sub._listener.onSubscriptionError(21, "Invalid group")
-    assert len(timer_calls) == 1  # retry is available again
+    assert len(schedule_calls) == 1  # retry is available again
 
     task.cancel()
     await task

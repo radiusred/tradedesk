@@ -4,6 +4,7 @@ Portfolio orchestration and execution.
 
 import asyncio
 import logging
+import signal
 import sys
 from collections.abc import Callable
 
@@ -11,6 +12,57 @@ from tradedesk.execution import Client
 from tradedesk.portfolio.base import BasePortfolio
 
 log = logging.getLogger(__name__)
+
+
+# Signals that should trigger an ordered shutdown. SIGINT is delivered to the
+# default asyncio handler (which raises KeyboardInterrupt); SIGTERM/SIGHUP are
+# the production-deploy signals (k8s, systemd, container stop).
+_SHUTDOWN_SIGNALS: tuple[signal.Signals, ...] = (
+    signal.SIGTERM,
+    signal.SIGHUP,
+)
+
+
+def _install_shutdown_handlers(
+    loop: asyncio.AbstractEventLoop,
+    shutdown_event: asyncio.Event,
+) -> list[signal.Signals]:
+    """Install SIGTERM/SIGHUP handlers that set ``shutdown_event``.
+
+    Returns the list of signals successfully registered, so callers can
+    remove them on exit. Falls back silently on platforms (e.g. Windows)
+    that lack ``loop.add_signal_handler``.
+    """
+    installed: list[signal.Signals] = []
+    for sig in _SHUTDOWN_SIGNALS:
+        try:
+            loop.add_signal_handler(
+                sig,
+                lambda s=sig: _request_shutdown(s, shutdown_event),  # type: ignore[misc]
+            )
+            installed.append(sig)
+        except (NotImplementedError, RuntimeError):
+            # Windows / non-main-thread loops cannot register signal handlers.
+            log.debug("Signal handler not supported for %s", sig.name)
+    return installed
+
+
+def _request_shutdown(
+    sig: signal.Signals, shutdown_event: asyncio.Event
+) -> None:
+    if not shutdown_event.is_set():
+        log.info("Received %s — initiating ordered shutdown.", sig.name)
+        shutdown_event.set()
+
+
+def _remove_shutdown_handlers(
+    loop: asyncio.AbstractEventLoop, signals: list[signal.Signals]
+) -> None:
+    for sig in signals:
+        try:
+            loop.remove_signal_handler(sig)
+        except (NotImplementedError, RuntimeError):
+            pass
 
 
 def configure_logging(level: str = "INFO", force: bool = False) -> None:
@@ -57,13 +109,40 @@ async def _async_run_portfolio(
     log.info("Tradedesk Portfolio Runner")
     log.info("=" * 70)
 
+    loop = asyncio.get_running_loop()
+    shutdown_event = asyncio.Event()
+    installed_signals = _install_shutdown_handlers(loop, shutdown_event)
+
     client = client_factory()
     await client.start()
     try:
         portfolio = portfolio_factory(client)
-        await portfolio.run()
+        portfolio_task = asyncio.create_task(portfolio.run())
+        shutdown_task = asyncio.create_task(shutdown_event.wait())
+
+        done, _pending = await asyncio.wait(
+            {portfolio_task, shutdown_task},
+            return_when=asyncio.FIRST_COMPLETED,
+        )
+
+        if shutdown_task in done and not portfolio_task.done():
+            log.info("Shutdown signal received — cancelling portfolio.")
+            portfolio_task.cancel()
+            try:
+                await portfolio_task
+            except asyncio.CancelledError:
+                pass
+            except Exception:
+                log.exception(
+                    "Portfolio raised during signal-triggered shutdown"
+                )
+        else:
+            shutdown_task.cancel()
+            # Surface portfolio exceptions to the outer handler.
+            await portfolio_task
     finally:
         await client.close()
+        _remove_shutdown_handlers(loop, installed_signals)
         log.info("=" * 70)
         log.info("Tradedesk shut down complete")
         log.info("=" * 70)
