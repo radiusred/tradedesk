@@ -1,4 +1,5 @@
 import asyncio
+import contextlib
 from collections.abc import Callable, Mapping
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock
@@ -731,7 +732,8 @@ async def test_stale_stream_reconnects_unlimited_when_max_zero(
     assert connect_count >= 3
 
     task.cancel()
-    await task
+    with contextlib.suppress(asyncio.CancelledError):
+        await task
 
 
 @pytest.mark.asyncio
