@@ -1,10 +1,15 @@
 """Tests for the event-driven order execution pipeline."""
 
+import asyncio
 from unittest.mock import AsyncMock
 
 import pytest
 
-from tradedesk.execution.order_handler import OrderExecutionHandler, request_order
+from tradedesk.execution.order_handler import (
+    OrderExecutionHandler,
+    _pending_orders,
+    request_order,
+)
 from tradedesk.recording.events import PositionOpenedEvent
 from tradedesk.types import OrderRequest
 
@@ -157,9 +162,7 @@ async def test_spread_gate_skips_unconfigured_instruments():
 
     OrderExecutionHandler(client, spread_limits={"CS.D.EURUSD.TODAY.IP": 0.0005})
 
-    result = await request_order(
-        OrderRequest(instrument="UNTRACKED", direction="BUY", size=1.0)
-    )
+    result = await request_order(OrderRequest(instrument="UNTRACKED", direction="BUY", size=1.0))
 
     assert result.success is True
     client.get_market_snapshot.assert_not_awaited()
@@ -401,9 +404,7 @@ async def test_order_gate_blocks_when_returning_error():
 
     OrderExecutionHandler(client, order_gate=lambda: "paused")
 
-    result = await request_order(
-        OrderRequest(instrument="TEST", direction="BUY", size=1.0)
-    )
+    result = await request_order(OrderRequest(instrument="TEST", direction="BUY", size=1.0))
 
     assert result.success is False
     assert "paused" in result.error
@@ -419,9 +420,7 @@ async def test_order_gate_allows_when_returning_none():
 
     OrderExecutionHandler(client, order_gate=lambda: None)
 
-    result = await request_order(
-        OrderRequest(instrument="TEST", direction="BUY", size=1.0)
-    )
+    result = await request_order(OrderRequest(instrument="TEST", direction="BUY", size=1.0))
 
     assert result.success is True
 
@@ -438,9 +437,7 @@ async def test_order_gate_checked_before_spread_gate():
         order_gate=lambda: "blocked by gate",
     )
 
-    result = await request_order(
-        OrderRequest(instrument="TEST", direction="BUY", size=1.0)
-    )
+    result = await request_order(OrderRequest(instrument="TEST", direction="BUY", size=1.0))
 
     assert result.success is False
     assert "blocked by gate" in result.error
@@ -556,3 +553,135 @@ async def test_no_position_event_when_force_open_false():
 
     assert result.success is True
     assert len(published_events) == 0
+
+
+# ---------------------------------------------------------------------------
+# Concurrency tests — multiple in-flight orders
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_concurrent_orders_resolve_to_correct_futures():
+    """Five concurrent in-flight orders each receive their own broker fill.
+
+    Uses a slow per-instrument fill to force genuine in-flight overlap rather
+    than serialised resolution. Each request_id must be paired with the fill
+    response for its own instrument — no cross-contamination across futures.
+    """
+    fills = {
+        "EURUSD": {"level": 1.1000, "size": 1.0, "dealId": "D-EURUSD"},
+        "USDJPY": {"level": 155.50, "size": 2.0, "dealId": "D-USDJPY"},
+        "GBPUSD": {"level": 1.2600, "size": 0.5, "dealId": "D-GBPUSD"},
+        "DAX": {"level": 18000.0, "size": 1.5, "dealId": "D-DAX"},
+        "GOLD": {"level": 2360.0, "size": 0.25, "dealId": "D-GOLD"},
+    }
+
+    async def slow_fill(*, instrument: str, **_: object) -> dict:
+        await asyncio.sleep(0.02)
+        return fills[instrument]
+
+    client = AsyncMock()
+    client.place_market_order_confirmed.side_effect = slow_fill
+    client.quantise_size = AsyncMock(side_effect=lambda inst, size: size)
+    OrderExecutionHandler(client)
+
+    results = await asyncio.gather(
+        *[
+            request_order(OrderRequest(instrument=inst, direction="BUY", size=fills[inst]["size"]))
+            for inst in fills
+        ]
+    )
+
+    assert all(r.success for r in results)
+    for inst, result in zip(fills, results):
+        assert result.fill_price == fills[inst]["level"]
+        assert result.fill_size == fills[inst]["size"]
+        assert result.raw["dealId"] == fills[inst]["dealId"]
+
+
+@pytest.mark.asyncio
+async def test_concurrent_failures_isolated_from_successes():
+    """In-flight failures resolve only their own future; concurrent successes still complete."""
+
+    async def maybe_fail(*, instrument: str, **_: object) -> dict:
+        await asyncio.sleep(0.01)
+        if instrument == "FAIL":
+            raise RuntimeError(f"broker rejected {instrument}")
+        return {"level": 100.0, "size": 1.0}
+
+    client = AsyncMock()
+    client.place_market_order_confirmed.side_effect = maybe_fail
+    client.quantise_size = AsyncMock(side_effect=lambda inst, size: size)
+    OrderExecutionHandler(client)
+
+    results = await asyncio.gather(
+        request_order(OrderRequest(instrument="OK1", direction="BUY", size=1.0)),
+        request_order(OrderRequest(instrument="FAIL", direction="BUY", size=1.0)),
+        request_order(OrderRequest(instrument="OK2", direction="BUY", size=1.0)),
+    )
+
+    assert results[0].success is True
+    assert results[1].success is False
+    assert "FAIL" in results[1].error
+    assert results[2].success is True
+
+
+@pytest.mark.asyncio
+async def test_pending_orders_registry_cleared_after_concurrent_resolution():
+    """In-flight registry must not leak Future entries after concurrent completion."""
+    client = AsyncMock()
+
+    async def slow_fill(**_: object) -> dict:
+        await asyncio.sleep(0.01)
+        return {"level": 1.0, "size": 1.0}
+
+    client.place_market_order_confirmed.side_effect = slow_fill
+    client.quantise_size = AsyncMock(side_effect=lambda inst, size: size)
+    OrderExecutionHandler(client)
+
+    before = len(_pending_orders)
+    await asyncio.gather(
+        *[
+            request_order(OrderRequest(instrument=f"INST{i}", direction="BUY", size=1.0))
+            for i in range(8)
+        ]
+    )
+
+    assert len(_pending_orders) == before
+
+
+@pytest.mark.asyncio
+async def test_concurrent_orders_share_gate_independently():
+    """Order gate is evaluated independently per concurrent request.
+
+    A pause-style gate that flips after the first order is in-flight must let
+    the in-flight order complete while blocking subsequent orders.
+    """
+    blocked = {"value": False}
+
+    def gate() -> str | None:
+        return "paused" if blocked["value"] else None
+
+    async def fill(**_: object) -> dict:
+        await asyncio.sleep(0.02)
+        return {"level": 1.0, "size": 1.0}
+
+    client = AsyncMock()
+    client.place_market_order_confirmed.side_effect = fill
+    client.quantise_size = AsyncMock(side_effect=lambda inst, size: size)
+    OrderExecutionHandler(client, order_gate=gate)
+
+    first = asyncio.create_task(
+        request_order(OrderRequest(instrument="A", direction="BUY", size=1.0))
+    )
+    # Yield once so the first request publishes and the handler begins the
+    # broker call before the gate flips.
+    await asyncio.sleep(0)
+    blocked["value"] = True
+    second = await request_order(OrderRequest(instrument="B", direction="BUY", size=1.0))
+
+    first_result = await first
+
+    assert first_result.success is True
+    assert second.success is False
+    assert "paused" in second.error
