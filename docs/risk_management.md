@@ -28,15 +28,49 @@ size = atr_normalised_size(
 ### Formula
 
 ```
-raw_size = risk_per_trade / (atr * atr_risk_mult)
+raw_size = risk_per_trade / (atr * atr_risk_mult * point_value)
 final_size = clamp(raw_size, min_size, max_size)
 ```
 
 - **risk_per_trade**: The amount of capital you're willing to risk on this trade
 - **atr**: Current ATR value (measure of volatility)
 - **atr_risk_mult**: How many ATRs away your stop loss is
+- **point_value**: Unit-independent scale factor (default: 1.0)
 - **min_size**: Minimum position size (broker/risk limits)
 - **max_size**: Maximum position size (risk limits)
+
+### Unit-Independent Sizing with point_value
+
+The `point_value` parameter allows the same `risk_per_trade` to produce the same contract count across price feeds at different decimal scales.
+
+**Example**: Spot gold may be reported as dollars on IG (1234.56) but as cents in Dukascopy cache (123456). To maintain consistent position sizing:
+
+```python
+# IG live (price in dollars): gold at 1234.56
+size_live = atr_normalised_size(
+    risk_per_trade=100.0,
+    atr=5.0,
+    atr_risk_mult=2.0,
+    point_value=1.0,  # IG reports in dollars
+    min_size=0.1,
+    max_size=50.0,
+)
+
+# Backtest with Dukascopy cache (price in cents): gold at 123456
+size_backtest = atr_normalised_size(
+    risk_per_trade=100.0,
+    atr=500.0,           # 500 cents = 5.00 dollars
+    atr_risk_mult=2.0,
+    point_value=0.01,    # Dukascopy reports in cents
+    min_size=0.1,
+    max_size=50.0,
+)
+
+# Both produce the same contract count despite the 100x price scale difference
+assert size_live == size_backtest
+```
+
+This ensures backtests with Dukascopy cache produce identical position sizes to live IG runs.
 
 ### Example Use Cases
 
