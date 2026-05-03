@@ -55,18 +55,18 @@ tradedesk emits Prometheus metrics for operational visibility. Metrics are **laz
 ### Available Metrics
 
 #### Counter: `tradedesk_ig_auth_refreshes_total`
-Incremented each time a session token is refreshed. Labels: `reason` (why refresh was triggered), `outcome` (success/failure).
+Incremented each time a session token is refreshed. Labels: `outcome` (success/failure).
 
 #### Gauge: `tradedesk_ig_auth_refresh_inflight`
-Number of in-flight authentication refresh requests. Tracks single-flight OAuth mechanism effectiveness. Labels: `kind` (refresh type).
+Number of in-flight authentication refresh requests. Tracks single-flight OAuth mechanism effectiveness. No labels.
 
 #### Counter: `tradedesk_ig_subscription_retries_total`
-Incremented for each subscription retry attempt on the price stream. Tracks unreliable subscription requests. Labels: `reason` (why retry was triggered), `outcome` (success/failure).
+Incremented for each subscription retry attempt on the price stream. Tracks unreliable subscription requests. Labels: `kind` (retry type).
 
 #### Counter: `tradedesk_ig_stream_reconnects_total`
 Incremented each time the price stream reconnects. High counts may indicate network issues. Labels: `reason` (why reconnect was triggered).
 
-#### Histogram: `tradedesk_ig_stream_stale_duration_seconds`
+#### Histogram: `tradedesk_ig_stream_stale_seconds`
 Duration of stream silence before reconnect. Tracks impact of connectivity issues on data delivery.
 
 ### Enabling Prometheus Metrics
