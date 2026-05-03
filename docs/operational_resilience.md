@@ -9,7 +9,7 @@ tradedesk is designed for production use with built-in resilience mechanisms and
 Subscription retries (price stream reconnects) use an asyncio-based `RetryScheduler` that is cancellable when the streamer closes. This replaces earlier threading-based approaches and ensures clean, deterministic shutdown without orphaned threads.
 
 **Behavior**:
-- Exponential backoff: `delay = attempt * STREAM_SUB_RETRY_BASE_DELAY_S`
+- Linear backoff: `delay = attempt * STREAM_SUB_RETRY_BASE_DELAY_S`
 - Maximum retries: `STREAM_SUB_MAX_RETRIES` (default: 3)
 - Automatic cancellation on streamer shutdown
 
@@ -54,17 +54,20 @@ tradedesk emits Prometheus metrics for operational visibility. Metrics are **laz
 
 ### Available Metrics
 
-#### Counter: `ig_auth_refreshes_total`
-Incremented each time a session token is refreshed. Tracks authentication activity.
+#### Counter: `tradedesk_ig_auth_refreshes_total`
+Incremented each time a session token is refreshed. Labels: `reason` (why refresh was triggered), `outcome` (success/failure).
 
-#### Counter: `stream_reconnects_total`
-Incremented each time the price stream reconnects. High counts may indicate network issues.
+#### Gauge: `tradedesk_ig_auth_refresh_inflight`
+Number of in-flight authentication refresh requests. Tracks single-flight OAuth mechanism effectiveness. Labels: `kind` (refresh type).
 
-#### Counter: `stream_retries_total`
-Incremented for each subscription retry attempt. Tracks unreliable subscription requests.
+#### Counter: `tradedesk_ig_subscription_retries_total`
+Incremented for each subscription retry attempt on the price stream. Tracks unreliable subscription requests. Labels: `reason` (why retry was triggered), `outcome` (success/failure).
 
-#### Gauge: `stream_stale_duration_seconds`
-Duration of stream silence before reconnect. Tracks impact of connectivity issues.
+#### Counter: `tradedesk_ig_stream_reconnects_total`
+Incremented each time the price stream reconnects. High counts may indicate network issues. Labels: `reason` (why reconnect was triggered).
+
+#### Histogram: `tradedesk_ig_stream_stale_duration_seconds`
+Duration of stream silence before reconnect. Tracks impact of connectivity issues on data delivery.
 
 ### Enabling Prometheus Metrics
 
