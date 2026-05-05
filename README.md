@@ -260,6 +260,7 @@ See the `docs/` directory for:
 -   Metrics guide
 -   Settings and operational tunables
 -   Operational resilience and monitoring
+-   ML label engineering (`docs/ml_labels_guide.md`)
 
 Public package entry points are grouped under:
 
