@@ -40,18 +40,56 @@ __all__ = [
     "DEFAULT_PERIODS_PER_YEAR",
     "FeatureBuilder",
     "FeatureConfig",
+    "FoldArtifacts",
     "FoldMetrics",
     "FoldSplit",
     "LabelConfig",
+    "LeakageSanityResult",
     "TripleBarrierConfig",
     "WalkForwardConfig",
     "WalkForwardSplitter",
+    "aggregate_feature_importance",
     "aggregate_fold_metrics",
+    "aggregate_metrics_summary",
     "class_balance_report",
+    "concatenated_equity_curve",
     "default_indicator_stack",
+    "feature_importance_gains",
     "fold_metrics_from_predictions",
     "forward_return_labels",
+    "plot_equity_curve",
     "print_class_balance",
+    "render_markdown_report",
+    "run_leakage_sanity",
     "triple_barrier_labels",
+    "walk_forward_collect",
     "walk_forward_evaluate",
 ]
+
+
+def __getattr__(name: str) -> object:
+    """Lazy re-export of :mod:`tradedesk.ml.reporting`.
+
+    Reporting depends on matplotlib + the ``[ml]`` extra (xgboost via
+    :class:`DirectionClassifier`), so we only resolve those imports when the
+    caller actually reaches into the reporting surface — keeping
+    ``import tradedesk.ml`` cheap for callers that only want
+    :mod:`features` / :mod:`labels`.
+    """
+    reporting_exports = {
+        "FoldArtifacts",
+        "LeakageSanityResult",
+        "aggregate_feature_importance",
+        "aggregate_metrics_summary",
+        "concatenated_equity_curve",
+        "feature_importance_gains",
+        "plot_equity_curve",
+        "render_markdown_report",
+        "run_leakage_sanity",
+        "walk_forward_collect",
+    }
+    if name in reporting_exports:
+        from . import reporting
+
+        return getattr(reporting, name)
+    raise AttributeError(f"module 'tradedesk.ml' has no attribute {name!r}")
