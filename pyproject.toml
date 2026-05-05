@@ -48,6 +48,11 @@ dev = [
     "llm-tldr[dev]>=1.5.2",
     "prometheus_client>=0.19",
 ]
+ml = [
+    "xgboost>=2.1",
+    "scikit-learn>=1.5",
+    "joblib>=1.4",
+]
 
 [project.urls]
 Homepage = "https://github.com/radiusred"
