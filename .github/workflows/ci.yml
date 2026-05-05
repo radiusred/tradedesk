@@ -5,6 +5,35 @@ on:
     branches: [ main ]
 
 jobs:
+  lint-commits:
+    name: Lint commit messages
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+
+      - name: Forbid internal ticket references (RAD-nnn)
+        run: |
+          if [ "${{ github.event_name }}" = "pull_request" ]; then
+            msgs=$(git log --format='%s%n%b' "origin/${{ github.base_ref }}..HEAD")
+          else
+            before="${{ github.event.before }}"
+            after="${{ github.sha }}"
+            if [ "$before" = "0000000000000000000000000000000000000000" ]; then
+              msgs=$(git log --format='%s%n%b' -1 "$after")
+            else
+              msgs=$(git log --format='%s%n%b' "${before}..${after}")
+            fi
+          fi
+          bad=$(printf '%s' "$msgs" | grep -E 'RAD-[0-9]+' || true)
+          if [ -n "$bad" ]; then
+            echo "::error::Commit message(s) contain internal ticket reference(s):"
+            printf '%s\n' "$bad"
+            exit 1
+          fi
+          echo "OK – no internal ticket references found."
+
   typecheck:
     name: Type check
     runs-on: ubuntu-latest
