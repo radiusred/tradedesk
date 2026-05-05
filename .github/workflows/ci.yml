@@ -54,3 +54,10 @@ jobs:
             --cov-report=term-missing \
             --cov-report=xml \
             --cov-fail-under=85
+
+      - name: Phase 6 leakage gate (tradedesk/ml/)
+        # Re-runs the @pytest.mark.leakage suite as a separately-named CI step
+        # so a leakage regression is the failing check on the PR rather than
+        # a buried line in the main test step. Cheap to re-run because the
+        # same marker is also in the main suite (no extra ML deps to install).
+        run: uv run pytest -m leakage --no-cov
