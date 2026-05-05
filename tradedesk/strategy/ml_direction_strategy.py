@@ -1,4 +1,4 @@
-"""ML-driven direction strategy (Phase 6 / RAD-896 / RAD-903).
+"""ML-driven direction strategy (Phase 6).
 
 Streams 1-minute candles through a trained probability model and emits a
 long/flat/short :class:`Signal` on each candle close. The strategy is the

@@ -1,4 +1,4 @@
-"""Unit tests for tradedesk.ml.labels (Phase 6 / RAD-898)."""
+"""Unit tests for tradedesk.ml.labels (Phase 6)."""
 
 from __future__ import annotations
 

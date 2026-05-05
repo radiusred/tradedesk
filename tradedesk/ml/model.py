@@ -1,4 +1,4 @@
-"""XGBoost direction classifier wrapper (Phase 6 / RAD-896).
+"""XGBoost direction classifier wrapper (Phase 6).
 
 A thin, opinionated wrapper around :class:`xgboost.XGBClassifier` that fixes
 hyperparameter defaults, enforces deterministic training, and persists models

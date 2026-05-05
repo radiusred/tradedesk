@@ -2,7 +2,7 @@
 
 The :mod:`tradedesk.ml` package collects feature engineering, label
 engineering, walk-forward cross-validation, and model wrappers used by
-ML-driven strategies (Phase 6 / RAD-896).
+ML-driven strategies (Phase 6).
 
 ML dependencies (``xgboost``, ``scikit-learn``, ``joblib``) are declared as
 the ``[ml]`` optional install::

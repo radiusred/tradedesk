@@ -1,11 +1,11 @@
 """Render the Comp 7 sample walk-forward report.
 
-This is the script referenced from the [RAD-905] PR — it builds a
+This is the script referenced from the reporting PR — it builds a
 representative walk-forward CV run using the same random-walk fixture as
 the leakage gate (so the report is reproducible without a Dukascopy
 dependency) and emits the full markdown + PNG bundle into ``output_dir``.
 
-It is *not* the Comp 5 strategy run — that lives in [RAD-903] and produces
+It is *not* the Comp 5 strategy run — that produces
 real-feature data. When Comp 5 lands, replace the
 :func:`_synthetic_walk_forward` block with a Comp 5 walk-forward run and
 re-render.

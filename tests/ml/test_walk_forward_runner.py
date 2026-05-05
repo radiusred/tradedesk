@@ -1,4 +1,4 @@
-"""Tests for :mod:`tradedesk.ml.walk_forward_runner` (Phase 6 / RAD-903)."""
+"""Tests for :mod:`tradedesk.ml.walk_forward_runner` (Phase 6)."""
 
 from __future__ import annotations
 
@@ -101,7 +101,7 @@ class TestBuildDataset:
 
 
 class TestBuildDatasetDirectional:
-    """Spread-aware ``build_dataset_directional`` (RAD-908)."""
+    """Spread-aware ``build_dataset_directional``."""
 
     def test_alignment_and_round_trip_relations(self) -> None:
         bars = _synthetic_minute_bars(800, seed=3, bid_ask_spread=2e-5)

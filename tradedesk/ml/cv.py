@@ -1,4 +1,4 @@
-"""Walk-forward cross-validation harness with embargo/purge (Phase 6 / RAD-896).
+"""Walk-forward cross-validation harness with embargo/purge (Phase 6).
 
 This module is the **leakage-gate keystone** of the Phase 6 sprint. It exposes
 a positional :class:`WalkForwardSplitter` that respects the standard López de
@@ -410,7 +410,7 @@ def fold_metrics_from_predictions(
             ``forward_returns`` is interpreted as the **long-leg** P&L and
             ``forward_returns_short`` as the **short-leg** P&L; the two
             differ when ask/bid microstructure is baked into the returns
-            (RAD-908 spread-aware path).
+            (spread-aware path).
         forward_returns_short: Optional per-bar **short-leg** forward
             return, positive when a short round-trip is profitable.
             Requires ``forward_returns`` (the long leg) to be supplied.
@@ -553,7 +553,7 @@ def walk_forward_evaluate(
             return aligned with ``X`` (positive when a short trade is
             profitable). Use the directional path when ask/bid spread is
             material — e.g. ``LabelConfig(spread_aware=True)`` runs
-            (RAD-908). Requires ``forward_returns`` to be set.
+            Requires ``forward_returns`` to be set.
         threshold: Probability threshold passed through to
             :func:`fold_metrics_from_predictions`.
         periods_per_year: Sharpe annualisation factor.

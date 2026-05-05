@@ -8,7 +8,7 @@ Three families of tests:
 * **Aggregations + plotting** — feature-importance gains, equity curve,
   markdown report writer.
 * **Leakage sanity panel** — :func:`run_leakage_sanity` returns ``passed=True``
-  on the RAD-900 leak fixture (positive control) and ``passed=False`` on a
+  on the synthetic leak fixture (positive control) and ``passed=False`` on a
   noise-only feature (negative control).
 """
 
