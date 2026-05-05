@@ -436,11 +436,19 @@ class FeatureBuilder:
           subkey equals the key (e.g. ADX's ``adx`` subkey under key
           ``adx``), the bare key is used to avoid the redundant
           ``adx_adx`` column.
+
+        Memory layout: column-major NaN-filled ``np.float64`` buffers are
+        allocated lazily on first emission and written in place per bar.
+        Earlier revisions accumulated a ``list[dict[str, float]]`` (one dict
+        per bar) which OOM'd above ~750 K bars on the 8 GB workspace
+        (RAD-909). A single :class:`Candle` instance is reused across bars —
+        no indicator retains the reference past ``update``.
         """
         indicators = self.indicators
         for ind in indicators.values():
             ind.reset()
 
+        n = len(bars)
         timestamps = bars.index
         opens = bars["open"].astype(float).to_numpy()
         highs = bars["high"].astype(float).to_numpy()
@@ -449,20 +457,38 @@ class FeatureBuilder:
         volumes = (
             bars["volume"].astype(float).to_numpy()
             if "volume" in bars.columns
-            else np.zeros(len(bars), dtype=float)
+            else np.zeros(n, dtype=float)
+        )
+        # VWAP parses ``str(candle.timestamp)`` for session reset; pre-render
+        # once instead of per-bar to keep the inner loop allocation-light.
+        ts_strings = [str(ts) for ts in timestamps]
+
+        candle = Candle(
+            timestamp="",
+            open=0.0,
+            high=0.0,
+            low=0.0,
+            close=0.0,
+            volume=0.0,
         )
 
-        rows: list[dict[str, float]] = []
-        for i, ts in enumerate(timestamps):
-            candle = Candle(
-                timestamp=str(ts),
-                open=float(opens[i]),
-                high=float(highs[i]),
-                low=float(lows[i]),
-                close=float(closes[i]),
-                volume=float(volumes[i]),
-            )
-            row: dict[str, float] = {}
+        buffers: dict[str, np.ndarray] = {}
+
+        def _store(col: str, idx: int, val: float) -> None:
+            buf = buffers.get(col)
+            if buf is None:
+                buf = np.full(n, np.nan, dtype=np.float64)
+                buffers[col] = buf
+            buf[idx] = val
+
+        for i in range(n):
+            candle.timestamp = ts_strings[i]
+            candle.open = float(opens[i])
+            candle.high = float(highs[i])
+            candle.low = float(lows[i])
+            candle.close = float(closes[i])
+            candle.volume = float(volumes[i])
+
             for name, ind in indicators.items():
                 value = ind.update(candle)
                 if value is None:
@@ -472,9 +498,8 @@ class FeatureBuilder:
                         if sub_value is None:
                             continue
                         col = name if sub_key == name else f"{name}_{sub_key}"
-                        row[col] = float(sub_value)
+                        _store(col, i, float(sub_value))
                 else:
-                    row[name] = float(value)
-            rows.append(row)
+                    _store(name, i, float(value))
 
-        return pd.DataFrame(rows, index=timestamps).astype(float)
+        return pd.DataFrame(buffers, index=timestamps)
