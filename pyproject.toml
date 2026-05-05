@@ -101,6 +101,10 @@ ignore_errors = true
 module = ["prometheus_client"]
 ignore_missing_imports = true
 
+[[tool.mypy.overrides]]
+module = ["xgboost", "xgboost.*", "sklearn", "sklearn.*", "joblib"]
+ignore_missing_imports = true
+
 [tool.ruff]
 target-version = "py311"
 line-length = 100
