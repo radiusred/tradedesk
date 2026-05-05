@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import math
 
 import numpy as np
@@ -550,3 +551,28 @@ def test_warmup_grows_when_regime_enabled() -> None:
     assert regime > base
     # ≥ 60-trading-day lookback + 2 padding days, in 1440-bar trading days.
     assert regime >= 62 * 24 * 60
+
+
+# ----------------------------------------------------------- byte-identity
+
+# Pinned by RAD-909 at the dict-of-rows -> column-major buffers refactor.
+# Any drift (indicator change, reorder, dtype, NaN handling) flips the hash.
+# Generation: hash of `out.to_numpy(dtype=float64, na_value=NaN).tobytes()`
+# on the fixture below with the pre-refactor implementation.
+_FEATURE_SNAPSHOT_HASH: str = (
+    "4d40260fc7f583ae075f8a5576cce4b875577178258adb64f8c904ba7a08ac68"
+)
+
+
+def test_indicator_stack_byte_identical_snapshot() -> None:
+    """Pin the full feature matrix bytewise — guards the RAD-909 vectorised
+    indicator-stack path from any silent drift versus the dict-of-rows
+    implementation it replaced.
+    """
+    bars = _bars(600, with_bid_ask=True, seed=42)
+    out = FeatureBuilder(config=FeatureConfig(drop_warmup=False)).transform(bars)
+    arr = out.to_numpy(dtype=np.float64, na_value=np.nan)
+    digest = hashlib.sha256(arr.tobytes()).hexdigest()
+    assert digest == _FEATURE_SNAPSHOT_HASH, (
+        f"FeatureBuilder output drifted from RAD-909 snapshot: {digest}"
+    )
