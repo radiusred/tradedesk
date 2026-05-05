@@ -186,11 +186,36 @@ Install the published package:
 pip install tradedesk
 ```
 
+To enable the optional machine-learning building blocks in `tradedesk.ml`
+(feature engineering, walk-forward CV, XGBoost direction classifier — see
+the Phase 6 sprint), install the `[ml]` extra:
+
+```bash
+pip install 'tradedesk[ml]'
+```
+
 For local development:
 
 ```bash
 pip install -e '.[dev]'
 ```
+
+
+## Machine Learning (`tradedesk.ml`)
+
+The `tradedesk.ml` subpackage hosts the building blocks for ML-driven
+strategies. Phase 6 ships:
+
+-   `FeatureBuilder` (`tradedesk.ml.features`) — vectorised pandas-first
+    feature engineering for 1-minute OHLC(V) bid/ask bars: lagged log
+    returns, realised volatility / skew / kurtosis, momentum, ATR / RSI /
+    EMA-distance / MACD / Bollinger position, time-of-day (cyclical) and
+    weekday, microstructure (body/range/wick ratios, spread). Strict
+    no-look-ahead — every column at bar `t` depends only on data up to and
+    including `t`.
+
+The label engineering, XGBoost wrapper, and walk-forward CV harness with
+embargo/purge land in subsequent components of the same sprint.
 
 
 ## Documentation
