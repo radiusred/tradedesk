@@ -1,0 +1,144 @@
+# =============================================================================
+# Validation (Stage 2) backtest config template
+# =============================================================================
+#
+# Copy to configs/<archetype>_validation.yaml and fill in every field marked
+# REQUIRED under `research:` BEFORE running the backtest. Inherit from the
+# Discovery config where useful.
+#
+# Pass gate (Validation):
+#   - OOS Sharpe degradation vs IS < 50%
+#   - no single-year drawdown > 40% of capital allocation
+#   - average correlation vs LIVE sleeves < 0.4
+#
+# Hard kill (Validation):
+#   - OOS Sharpe < 0
+#   - OR DD > 40% in any year
+#   - OR correlation >= 0.6 with any existing LIVE sleeve
+#
+# Default test window: full 8-year sample (2018-01-01 .. today) with
+# walk-forward (2-year train / 6-month OOS).
+# =============================================================================
+
+research:
+  # --- Identity --------------------------------------------------------------
+  archetype: <same as discovery>                                          # REQUIRED
+  resolution: <same as discovery>                                         # REQUIRED
+  stage: validation
+  owner: <agent or user>                                                  # REQUIRED
+  pre_registered_at: <YYYY-MM-DD>                                         # REQUIRED
+  promoted_from: <path to discovery yaml or its commit hash>              # REQUIRED
+
+  # --- Hypothesis (carried over; do not re-write) ----------------------------
+  # Reference the discovery config; do not weaken or reinterpret the
+  # hypothesis after seeing IS results.
+  hypothesis_inherits_from: <path to discovery yaml>                      # REQUIRED
+
+  # --- Universe --------------------------------------------------------------
+  instrument_set:                                                         # REQUIRED
+    - <SYMBOL_1>
+  # If validation expands the universe beyond discovery, document the
+  # rationale explicitly. Default policy: keep universe identical to
+  # discovery to avoid post-hoc universe selection bias.
+  universe_change_from_discovery: |
+    NONE (preferred). If non-empty, justify why the expansion does not
+    constitute post-hoc cherry-picking.
+
+  # --- Pass gates ------------------------------------------------------------
+  pass_gates:
+    oos_sharpe_degradation_max: 0.50    # OOS Sharpe must be >= 50% of IS Sharpe
+    single_year_drawdown_max_pct: 0.40  # of allocated capital
+    avg_correlation_vs_live_max: 0.40
+
+  # --- Kill gates ------------------------------------------------------------
+  kill_gates:
+    oos_sharpe_min: 0.0                 # negative -> kill
+    any_year_drawdown_max_pct: 0.40
+    correlation_vs_any_live_max: 0.60
+
+  # --- Date window + walk-forward -------------------------------------------
+  date_window:
+    from: "2018-01-01"
+    to: "<today or fixed YYYY-MM-DD>"   # REQUIRED, prefer fixed for reproducibility
+
+  walk_forward:
+    enabled: true
+    train_window_months: 24
+    test_window_months: 6
+    step_months: 6
+    refit: true                  # parameter refit each window; set false to test
+                                 # parameter stability across the full sample
+
+  # --- Parameter selection ---------------------------------------------------
+  # Validation must NOT introduce new parameter cells beyond what discovery
+  # explored. Either lock parameters at the discovery winner, or sweep within
+  # discovery's grid, but do not expand the grid post-hoc.
+  parameter_policy: <locked | refit_within_discovery_grid>                # REQUIRED
+  locked_parameters:
+    # If parameter_policy == "locked", list the exact parameter values here.
+    {}
+
+  # --- Cost model (carry over from discovery) -------------------------------
+  cost_model:
+    spread_source: <same as discovery>
+    half_spread_adjustment: true
+    slippage_assumption_bps: <same as discovery>
+
+  # --- Correlation gate ------------------------------------------------------
+  # Compute average daily-PnL correlation against each existing LIVE sleeve.
+  # Kill if any correlation >= 0.6.
+  correlation_check:
+    against_live_sleeves:
+      # - dax_bb
+      # - eurusd_bb
+      # - usdjpy_bb
+      []
+    method: pearson_daily_pnl
+
+  # --- Measured (filled in after running) ------------------------------------
+  measured:
+    is_sharpe: null
+    oos_sharpe: null
+    oos_sharpe_degradation: null   # 1 - (oos / is)
+    annual_drawdowns_pct:           # one entry per year in the window
+      # 2018: null
+      # 2019: null
+      {}
+    correlations_vs_live:           # one entry per LIVE sleeve listed above
+      {}
+    annual_pnl_gbp: null
+    notes: null
+
+  # --- Verdict ---------------------------------------------------------------
+  verdict:
+    outcome: <advance_to_paper | kill>      # only two — no retune at validation
+    reason: |
+      Filled in after the run. If "kill", file a memo in research/killstack/.
+    quant_days_spent: null
+
+# -----------------------------------------------------------------------------
+# Runner config (same shape as discovery; usually identical).
+# -----------------------------------------------------------------------------
+
+instrument_map:
+  # SYMBOL_1:
+  #   epic: <broker epic id>
+  {}
+
+portfolio:
+  period: <same as discovery>
+  base_period: null
+  risk:
+    portfolio_risk_budget: <number>
+    default_risk_per_trade: <number>
+  sizing:
+    min_size: 1
+    max_size: <number>
+
+strategies:
+  example_strategy_name:
+    class: <ConcreteStrategyClass>
+    instruments:
+      - <SYMBOL_1>
+    params:
+      {}
