@@ -2,8 +2,8 @@
 
 from __future__ import annotations
 
-import hashlib
 import math
+from pathlib import Path
 
 import numpy as np
 import pandas as pd
@@ -553,26 +553,38 @@ def test_warmup_grows_when_regime_enabled() -> None:
     assert regime >= 62 * 24 * 60
 
 
-# ----------------------------------------------------------- byte-identity
+# ----------------------------------------------------------- snapshot drift
 
-# Pinned by RAD-909 at the dict-of-rows -> column-major buffers refactor.
-# Any drift (indicator change, reorder, dtype, NaN handling) flips the hash.
-# Generation: hash of `out.to_numpy(dtype=float64, na_value=NaN).tobytes()`
-# on the fixture below with the pre-refactor implementation.
-_FEATURE_SNAPSHOT_HASH: str = (
-    "4d40260fc7f583ae075f8a5576cce4b875577178258adb64f8c904ba7a08ac68"
+_FEATURE_SNAPSHOT_PATH: Path = (
+    Path(__file__).parent / "fixtures" / "rad909_feature_snapshot.npz"
 )
 
 
-def test_indicator_stack_byte_identical_snapshot() -> None:
-    """Pin the full feature matrix bytewise — guards the RAD-909 vectorised
-    indicator-stack path from any silent drift versus the dict-of-rows
-    implementation it replaced.
+def test_indicator_stack_matches_pre_refactor_snapshot() -> None:
+    """Guard the RAD-909 vectorised indicator-stack path from drift versus
+    the pre-refactor dict-of-rows implementation.
+
+    Tolerance-based rather than bytewise: numpy 2.4.x wheels built against
+    different CPython ABIs emit sub-ULP-level FP differences in
+    ``rolling.skew/kurt`` and the indicator EMAs, so a SHA-256 digest of the
+    raw bytes is not stable across the 3.11–3.14 CI matrix even though every
+    cell agrees to roughly 1e-12. ``rtol=1e-7`` still flags any meaningful
+    drift in the refactored hot path while absorbing cross-build noise.
     """
     bars = _bars(600, with_bid_ask=True, seed=42)
     out = FeatureBuilder(config=FeatureConfig(drop_warmup=False)).transform(bars)
-    arr = out.to_numpy(dtype=np.float64, na_value=np.nan)
-    digest = hashlib.sha256(arr.tobytes()).hexdigest()
-    assert digest == _FEATURE_SNAPSHOT_HASH, (
-        f"FeatureBuilder output drifted from RAD-909 snapshot: {digest}"
+    actual = out.to_numpy(dtype=np.float64, na_value=np.nan)
+
+    with np.load(_FEATURE_SNAPSHOT_PATH, allow_pickle=False) as data:
+        expected = data["arr"]
+        expected_columns = list(data["columns"])
+
+    assert list(out.columns) == expected_columns, (
+        "FeatureBuilder column set / order drifted from RAD-909 snapshot"
+    )
+    assert actual.shape == expected.shape, (
+        f"FeatureBuilder output shape {actual.shape} != snapshot {expected.shape}"
+    )
+    np.testing.assert_allclose(
+        actual, expected, rtol=1e-7, atol=1e-10, equal_nan=True
     )
