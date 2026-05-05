@@ -1,213 +1,241 @@
-"""Vectorised feature engineering for 1-minute FX bars.
+"""Feature engineering for 1-minute FX bars (Phase 6 / RAD-896).
 
-Built for the Phase 6 XGBoost direction classifier (RAD-896). The builder is
-deliberately pandas-first and entirely vectorised — no per-bar Python loops —
-so it scales to the 8-year Dukascopy walk-forward window without becoming the
-bottleneck.
+This module turns a 1-minute bid/ask OHLCV ``DataFrame`` plus an *indicator
+stack* (instances of :class:`tradedesk.marketdata.indicators.Indicator`) into
+an aligned feature ``DataFrame`` suitable for an XGBoost direction
+classifier.
 
-**Strict no-look-ahead.** Every column at index ``t`` depends only on bar data
-up to and including ``t``. Labels (forward returns) live in
-:mod:`tradedesk.ml.labels` and are appended downstream of the feature matrix;
-the splitter in :mod:`tradedesk.ml.cv` is responsible for the embargo/purge
-that guards against label leakage when the horizon overlaps a fold boundary.
+**No-look-ahead is the load-bearing invariant.** Every feature value at
+index ``t`` is computed exclusively from bar data up to and including ``t``:
 
-The expected input is a pandas ``DataFrame`` indexed by a monotonically
-increasing ``DatetimeIndex`` (UTC) with at least the columns ``open``,
-``high``, ``low``, ``close``. Optional columns ``bid_close``, ``ask_close``,
-and ``volume`` enable extra feature families when present.
+* Vectorised helpers use ``shift``/``rolling``/``ewm`` only on data ≤ t.
+* Indicator outputs are produced by the same streaming
+  :class:`~tradedesk.marketdata.indicators.Indicator` classes used in live
+  trading, fed bars in chronological order — each ``update(candle_t)`` call
+  observes only bars ``≤ t``.
+* Forward-return labels live in :mod:`tradedesk.ml.labels`; the feature
+  builder never peeks at ``t + h``.
+
+The expected input ``DataFrame`` has a monotonically increasing
+``DatetimeIndex`` (UTC) and at least the columns ``open``, ``high``,
+``low``, ``close``. Optional columns ``bid_close``, ``ask_close`` and
+``volume`` enable extra microstructure / volume features when present.
+
+Typical usage::
+
+    from tradedesk.ml import FeatureBuilder, FeatureConfig
+    builder = FeatureBuilder()
+    X = builder.transform(bars)
+
+Pass a custom ``indicators`` stack to extend or shrink the indicator-derived
+feature set::
+
+    from tradedesk.marketdata.indicators import RSI, ATR
+    builder = FeatureBuilder(indicators={"rsi": RSI(period=7), "atr": ATR()})
 """
 
 from __future__ import annotations
 
 import math
-from dataclasses import dataclass, field
+from collections.abc import Mapping
+from dataclasses import dataclass
 from typing import Final
 
 import numpy as np
 import pandas as pd
 
+from tradedesk.marketdata.indicators import (
+    ADX,
+    ATR,
+    CCI,
+    EMA,
+    MACD,
+    MFI,
+    OBV,
+    RSI,
+    SMA,
+    VWAP,
+    BollingerBands,
+    Indicator,
+    KeltnerChannel,
+    Stochastic,
+    WilliamsR,
+)
+from tradedesk.types import Candle
+
 #: Required input columns. Absence raises :class:`ValueError` early.
 REQUIRED_COLUMNS: Final[tuple[str, ...]] = ("open", "high", "low", "close")
 
-#: Default rolling windows (in 1-min bars) used for return / volatility / moment
-#: features. Chosen to span sub-hour, hour, and intraday horizons without being
-#: redundant with each other.
-DEFAULT_WINDOWS: Final[tuple[int, ...]] = (1, 5, 15, 60, 240)
+#: Default rolling windows (in 1-min bars) for lagged log-return features.
+#: Sub-hour, hour, multi-hour, and intraday horizons.
+DEFAULT_RETURN_WINDOWS: Final[tuple[int, ...]] = (1, 5, 15, 60, 240)
 
-#: Default lookback windows for momentum / ATR / RSI / EMA features.
-DEFAULT_INDICATOR_WINDOWS: Final[tuple[int, ...]] = (14, 30, 60)
+#: Default rolling windows for realised volatility, skew, and kurt.
+DEFAULT_MOMENT_WINDOWS: Final[tuple[int, ...]] = (15, 60, 240)
+
+
+def default_indicator_stack() -> dict[str, Indicator]:
+    """Return a fresh copy of the default 14-indicator stack.
+
+    Each call returns *new* indicator instances so the stack can be reused
+    across multiple :class:`FeatureBuilder` runs without state bleed.
+    """
+    return {
+        "adx": ADX(period=14),
+        "atr": ATR(period=14),
+        "bb": BollingerBands(period=20, k=2.0),
+        "cci": CCI(period=20),
+        "ema": EMA(period=20),
+        "kc": KeltnerChannel(period=20, mult=1.5),
+        "macd": MACD(fast=12, slow=26, signal=9),
+        "mfi": MFI(period=14),
+        "obv": OBV(),
+        "rsi": RSI(period=14),
+        "sma": SMA(period=20),
+        "stoch": Stochastic(k_period=14, d_period=3),
+        "vwap": VWAP(),
+        "williams_r": WilliamsR(period=14),
+    }
 
 
 @dataclass(frozen=True)
 class FeatureConfig:
-    """Feature builder configuration.
+    """Configuration for :class:`FeatureBuilder`.
 
     Attributes:
-        return_windows: Lookbacks (in bars) for lagged log-return features.
-        vol_windows: Rolling-window sizes for realised volatility / skew / kurt.
-        momentum_windows: Lookbacks for cumulative-return momentum features.
-        indicator_windows: Periods for ATR, RSI, and EMA-distance indicators.
-        bb_window: Bollinger-band period (close mean +/- ``bb_std`` rolling std).
-        bb_std: Bollinger-band standard-deviation multiplier.
-        macd_fast: MACD fast EMA period.
-        macd_slow: MACD slow EMA period.
-        macd_signal: MACD signal-line EMA period.
-        include_time_features: Emit time-of-day (sin/cos) and weekday features.
-        include_microstructure: Emit body/range/wick ratios + bid/ask spread
-            features when bid/ask columns are available.
-        drop_warmup: If True, drop the leading rows where any feature is NaN
-            (the longest indicator window). If False, keep NaNs and let the
-            model / pipeline handle them.
+        return_windows: Lookbacks (in 1-min bars) for lagged log-return
+            features. Emits one ``log_ret_W`` column per window.
+        moment_windows: Window sizes for rolling volatility (std of 1-min
+            log returns), skew, and kurt. Emits ``vol_W``, ``skew_W``,
+            ``kurt_W`` per window.
+        include_time_features: Emit cyclical time-of-day (sin/cos of
+            minute-of-day) and an integer weekday feature.
+        include_microstructure: Emit body/range/wick ratios; emit
+            ``spread`` / ``spread_rel`` when ``bid_close`` and
+            ``ask_close`` columns are present.
+        drop_warmup: If ``True`` (default), drop the leading warmup rows so
+            every column in the returned frame is non-NaN. The number of
+            dropped rows equals :meth:`FeatureBuilder.warmup`. If ``False``,
+            keep the rows with explicit ``NaN`` padding.
     """
 
-    return_windows: tuple[int, ...] = DEFAULT_WINDOWS
-    vol_windows: tuple[int, ...] = (15, 60, 240)
-    momentum_windows: tuple[int, ...] = (5, 15, 60)
-    indicator_windows: tuple[int, ...] = DEFAULT_INDICATOR_WINDOWS
-    bb_window: int = 20
-    bb_std: float = 2.0
-    macd_fast: int = 12
-    macd_slow: int = 26
-    macd_signal: int = 9
+    return_windows: tuple[int, ...] = DEFAULT_RETURN_WINDOWS
+    moment_windows: tuple[int, ...] = DEFAULT_MOMENT_WINDOWS
     include_time_features: bool = True
     include_microstructure: bool = True
     drop_warmup: bool = True
-    extra_columns: tuple[str, ...] = field(default_factory=tuple)
 
-    def warmup(self) -> int:
-        """Bars required before *every* feature is non-NaN."""
-        candidates = [
+    def vectorised_warmup(self) -> int:
+        """Bars required before every vectorised feature is non-NaN."""
+        return max(
             max(self.return_windows, default=1),
-            max(self.vol_windows, default=1),
-            max(self.momentum_windows, default=1),
-            max(self.indicator_windows, default=1),
-            self.bb_window,
-            self.macd_slow + self.macd_signal,
-        ]
-        return max(candidates)
+            max(self.moment_windows, default=1),
+        )
 
 
 class FeatureBuilder:
-    """Build a feature matrix from a 1-minute OHLC(V) bid/ask DataFrame.
+    """Build a feature matrix from a 1-minute OHLC(V) bid/ask ``DataFrame``.
 
-    Usage:
-
-        >>> builder = FeatureBuilder()
-        >>> X = builder.transform(bars)
-
-    The output is a ``DataFrame`` with the same ``DatetimeIndex`` as the input
-    (less the warmup prefix when :attr:`FeatureConfig.drop_warmup` is True) and
-    one column per emitted feature. Column names are stable so downstream
-    feature-importance reports survive cross-fold rebuilds.
+    The output ``DataFrame`` shares the input's ``DatetimeIndex`` (less the
+    leading warmup rows when :attr:`FeatureConfig.drop_warmup` is True) and
+    carries one column per emitted feature. Column order is stable across
+    runs so feature-importance reports can be diffed across walk-forward
+    folds.
     """
 
-    def __init__(self, config: FeatureConfig | None = None) -> None:
+    def __init__(
+        self,
+        config: FeatureConfig | None = None,
+        indicators: Mapping[str, Indicator] | None = None,
+    ) -> None:
         self.config = config or FeatureConfig()
+        if indicators is None:
+            self.indicators: dict[str, Indicator] = default_indicator_stack()
+        else:
+            self.indicators = dict(indicators)
 
     # ------------------------------------------------------------------ public
+
+    def warmup(self) -> int:
+        """Bars required before every feature column is non-NaN.
+
+        Maximum of the vectorised feature warmup and the longest
+        :meth:`tradedesk.marketdata.indicators.Indicator.warmup_periods` in
+        the configured indicator stack.
+        """
+        indicator_warmup = max(
+            (ind.warmup_periods() for ind in self.indicators.values()),
+            default=0,
+        )
+        return max(self.config.vectorised_warmup(), indicator_warmup)
 
     def transform(self, bars: pd.DataFrame) -> pd.DataFrame:
         """Compute the feature matrix.
 
+        Args:
+            bars: 1-minute OHLC(V) frame indexed by ``DatetimeIndex``.
+
+        Returns:
+            DataFrame indexed by the same timestamps (less warmup rows when
+            ``drop_warmup``) with one column per feature.
+
         Raises:
-            ValueError: If required columns are missing or the index is not
-                monotonically increasing.
+            ValueError: Missing required columns or non-monotonic index.
         """
         self._validate(bars)
         cfg = self.config
 
-        close = bars["close"]
-        log_close = np.log(close)
-        log_ret_1 = log_close.diff()
-
         out: dict[str, pd.Series] = {}
 
-        # Lagged log returns over a fan of horizons.
+        close = bars["close"].astype(float)
+        log_close = pd.Series(np.log(close.to_numpy()), index=close.index)
+        log_ret_1 = log_close.diff()
+
+        # 1) Lagged log returns over a fan of horizons.
         for w in cfg.return_windows:
             out[f"log_ret_{w}"] = log_close.diff(w)
 
-        # Rolling realised volatility, skew, kurt of 1-min log returns.
-        for w in cfg.vol_windows:
+        # 2) Rolling realised vol / skew / kurt of 1-min log returns.
+        for w in cfg.moment_windows:
             window = log_ret_1.rolling(w)
             out[f"vol_{w}"] = window.std(ddof=0)
             out[f"skew_{w}"] = window.skew()
             out[f"kurt_{w}"] = window.kurt()
 
-        # Cumulative momentum (sum of log returns over a window).
-        for w in cfg.momentum_windows:
-            out[f"mom_{w}"] = log_ret_1.rolling(w).sum()
-
-        # ATR family (true range / rolling mean / close-to-atr ratio).
-        tr = self._true_range(bars)
-        for w in cfg.indicator_windows:
-            atr = tr.rolling(w).mean()
-            out[f"atr_{w}"] = atr
-            out[f"close_atr_ratio_{w}"] = (close - close.rolling(w).mean()) / atr.replace(0, np.nan)
-
-        # Wilder RSI on close.
-        for w in cfg.indicator_windows:
-            out[f"rsi_{w}"] = self._rsi(close, w)
-
-        # EMA distance + slope for fast trend bias.
-        for w in cfg.indicator_windows:
-            ema = close.ewm(span=w, adjust=False, min_periods=w).mean()
-            out[f"ema_dist_{w}"] = (close - ema) / close
-            out[f"ema_slope_{w}"] = ema.diff() / close
-
-        # MACD (fast EMA - slow EMA), signal line, histogram.
-        ema_fast = close.ewm(span=cfg.macd_fast, adjust=False, min_periods=cfg.macd_fast).mean()
-        ema_slow = close.ewm(span=cfg.macd_slow, adjust=False, min_periods=cfg.macd_slow).mean()
-        macd = ema_fast - ema_slow
-        signal = macd.ewm(span=cfg.macd_signal, adjust=False, min_periods=cfg.macd_signal).mean()
-        out["macd"] = macd / close
-        out["macd_signal"] = signal / close
-        out["macd_hist"] = (macd - signal) / close
-
-        # Bollinger position (z-score of close vs rolling mean of close).
-        bb_mean = close.rolling(cfg.bb_window).mean()
-        bb_std = close.rolling(cfg.bb_window).std(ddof=0)
-        out[f"bb_z_{cfg.bb_window}"] = (close - bb_mean) / bb_std.replace(0, np.nan)
-
-        # Time-of-day (cyclical) + weekday — captures session structure.
+        # 3) Time-of-day (cyclical) + weekday — captures session structure.
         if cfg.include_time_features:
             ts = bars.index
-            if not isinstance(ts, pd.DatetimeIndex):  # pragma: no cover - validated above
-                raise ValueError("Index must be a DatetimeIndex for time features")
-            minute_of_day = ts.hour * 60 + ts.minute
-            out["tod_sin"] = pd.Series(np.sin(2 * math.pi * minute_of_day / (24 * 60)), index=ts)
-            out["tod_cos"] = pd.Series(np.cos(2 * math.pi * minute_of_day / (24 * 60)), index=ts)
+            assert isinstance(ts, pd.DatetimeIndex)  # guarded in _validate
+            minute_of_day = ts.hour.values * 60 + ts.minute.values
+            angle = 2.0 * math.pi * minute_of_day / (24 * 60)
+            out["tod_sin"] = pd.Series(np.sin(angle), index=ts)
+            out["tod_cos"] = pd.Series(np.cos(angle), index=ts)
             out["weekday"] = pd.Series(ts.weekday, index=ts).astype(float)
 
-        # Microstructure: body/range/wick ratios + bid/ask spread.
+        # 4) Indicator stack — driven by the actual streaming indicator
+        # classes so live and backtest features are bit-identical.
+        indicator_frame = self._run_indicator_stack(bars)
+        for col in indicator_frame.columns:
+            out[col] = indicator_frame[col]
+
+        # 5) Microstructure: body/range/wick ratios + bid/ask spread.
         if cfg.include_microstructure:
-            rng = (bars["high"] - bars["low"]).replace(0, np.nan)
-            body = (bars["close"] - bars["open"]).abs()
+            high = bars["high"].astype(float)
+            low = bars["low"].astype(float)
+            open_ = bars["open"].astype(float)
+            rng = (high - low).replace(0.0, np.nan)
+            body = (close - open_).abs()
             out["body_range_ratio"] = body / rng
-            out["upper_wick_ratio"] = (bars["high"] - bars[["open", "close"]].max(axis=1)) / rng
-            out["lower_wick_ratio"] = (bars[["open", "close"]].min(axis=1) - bars["low"]) / rng
+            out["upper_wick_ratio"] = (high - pd.concat([open_, close], axis=1).max(axis=1)) / rng
+            out["lower_wick_ratio"] = (pd.concat([open_, close], axis=1).min(axis=1) - low) / rng
             if {"bid_close", "ask_close"}.issubset(bars.columns):
-                spread = bars["ask_close"] - bars["bid_close"]
+                spread = bars["ask_close"].astype(float) - bars["bid_close"].astype(float)
                 out["spread"] = spread
                 out["spread_rel"] = spread / close
 
-        # Volume features when present (Dukascopy 1-min bars carry tick volume).
-        if "volume" in bars.columns:
-            vol = bars["volume"].astype(float)
-            out["volume"] = vol
-            out["volume_log1p"] = pd.Series(np.log1p(vol.to_numpy()), index=vol.index)
-            for w in cfg.indicator_windows:
-                vol_mean = vol.rolling(w).mean()
-                out[f"volume_z_{w}"] = (vol - vol_mean) / vol.rolling(w).std(ddof=0).replace(
-                    0, np.nan
-                )
-
-        for col in cfg.extra_columns:
-            if col in bars.columns:
-                out[col] = bars[col].astype(float)
-
         features = pd.DataFrame(out, index=bars.index)
         if cfg.drop_warmup:
-            features = features.iloc[cfg.warmup() :]
+            features = features.iloc[self.warmup() :]
         return features
 
     # ---------------------------------------------------------------- helpers
@@ -222,26 +250,56 @@ class FeatureBuilder:
         if not bars.index.is_monotonic_increasing:
             raise ValueError("FeatureBuilder requires a monotonically increasing index")
 
-    @staticmethod
-    def _true_range(bars: pd.DataFrame) -> pd.Series:
-        prev_close = bars["close"].shift(1)
-        ranges = pd.concat(
-            [
-                bars["high"] - bars["low"],
-                (bars["high"] - prev_close).abs(),
-                (bars["low"] - prev_close).abs(),
-            ],
-            axis=1,
-        )
-        return ranges.max(axis=1)
+    def _run_indicator_stack(self, bars: pd.DataFrame) -> pd.DataFrame:
+        """Drive the indicator stack over ``bars`` in chronological order.
 
-    @staticmethod
-    def _rsi(close: pd.Series, period: int) -> pd.Series:
-        delta = close.diff()
-        gains = delta.clip(lower=0.0)
-        losses = (-delta).clip(lower=0.0)
-        # Wilder smoothing (EMA with alpha = 1/period).
-        avg_gain = gains.ewm(alpha=1 / period, adjust=False, min_periods=period).mean()
-        avg_loss = losses.ewm(alpha=1 / period, adjust=False, min_periods=period).mean()
-        rs = avg_gain / avg_loss.replace(0, np.nan)
-        return 100 - 100 / (1 + rs)
+        Each indicator is reset before iteration to avoid carrying state
+        from prior :meth:`transform` calls. Output columns:
+
+        * Scalar-output indicators emit a single column named after the key.
+        * Dict-output indicators emit ``"<key>_<subkey>"`` columns. When the
+          subkey equals the key (e.g. ADX's ``adx`` subkey under key
+          ``adx``), the bare key is used to avoid the redundant
+          ``adx_adx`` column.
+        """
+        indicators = self.indicators
+        for ind in indicators.values():
+            ind.reset()
+
+        timestamps = bars.index
+        opens = bars["open"].astype(float).to_numpy()
+        highs = bars["high"].astype(float).to_numpy()
+        lows = bars["low"].astype(float).to_numpy()
+        closes = bars["close"].astype(float).to_numpy()
+        volumes = (
+            bars["volume"].astype(float).to_numpy()
+            if "volume" in bars.columns
+            else np.zeros(len(bars), dtype=float)
+        )
+
+        rows: list[dict[str, float]] = []
+        for i, ts in enumerate(timestamps):
+            candle = Candle(
+                timestamp=str(ts),
+                open=float(opens[i]),
+                high=float(highs[i]),
+                low=float(lows[i]),
+                close=float(closes[i]),
+                volume=float(volumes[i]),
+            )
+            row: dict[str, float] = {}
+            for name, ind in indicators.items():
+                value = ind.update(candle)
+                if value is None:
+                    continue
+                if isinstance(value, dict):
+                    for sub_key, sub_value in value.items():
+                        if sub_value is None:
+                            continue
+                        col = name if sub_key == name else f"{name}_{sub_key}"
+                        row[col] = float(sub_value)
+                else:
+                    row[name] = float(value)
+            rows.append(row)
+
+        return pd.DataFrame(rows, index=timestamps).astype(float)

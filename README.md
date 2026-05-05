@@ -204,15 +204,44 @@ pip install -e '.[dev]'
 ## Machine Learning (`tradedesk.ml`)
 
 The `tradedesk.ml` subpackage hosts the building blocks for ML-driven
-strategies. Phase 6 ships:
+strategies. ML extras (`xgboost`, `scikit-learn`, `joblib`) install via the
+optional `[ml]` extra:
 
--   `FeatureBuilder` (`tradedesk.ml.features`) — vectorised pandas-first
-    feature engineering for 1-minute OHLC(V) bid/ask bars: lagged log
-    returns, realised volatility / skew / kurtosis, momentum, ATR / RSI /
-    EMA-distance / MACD / Bollinger position, time-of-day (cyclical) and
-    weekday, microstructure (body/range/wick ratios, spread). Strict
-    no-look-ahead — every column at bar `t` depends only on data up to and
-    including `t`.
+```bash
+pip install 'tradedesk[ml]'
+```
+
+Phase 6 ships:
+
+-   `FeatureBuilder` (`tradedesk.ml.features`) — feature engineering for
+    1-minute OHLC(V) bid/ask bars. Built-in feature families:
+    -   Lagged log returns over a fan of horizons (1, 5, 15, 60, 240 bars).
+    -   Rolling realised volatility, skew and kurtosis of 1-min log returns.
+    -   Time-of-day (cyclical sin/cos) and weekday.
+    -   Outputs from a configurable indicator stack — by default the full
+        `tradedesk.marketdata.indicators` set (ADX, ATR, Bollinger Bands,
+        CCI, EMA, Keltner Channel, MACD, MFI, OBV, RSI, SMA, Stochastic,
+        VWAP, Williams %R) driven by the same streaming indicator classes
+        used in live trading, so backtest and live features are
+        bit-identical.
+    -   Microstructure ratios: body/range, upper/lower wick, plus
+        bid/ask spread when those columns are present.
+
+    Strict no-look-ahead — every column at bar `t` depends only on data up
+    to and including `t`. Forward-return labels live in `tradedesk.ml.labels`
+    and the walk-forward splitter in `tradedesk.ml.cv` enforces the
+    embargo/purge that guards against label leakage at fold boundaries.
+
+```python
+from tradedesk.ml import FeatureBuilder, FeatureConfig
+
+builder = FeatureBuilder()           # default stack + default config
+features = builder.transform(bars)   # bars: DatetimeIndex, OHLC(V) [+ bid/ask]
+```
+
+Pass `indicators={...}` to swap or shrink the indicator stack and
+`config=FeatureConfig(...)` to tune the rolling-window fan or toggle
+optional feature families.
 
 The label engineering, XGBoost wrapper, and walk-forward CV harness with
 embargo/purge land in subsequent components of the same sprint.
