@@ -415,3 +415,138 @@ def test_validate_rejects_non_monotonic_index() -> None:
     shuffled = bars.iloc[[5, 1, 2, 3, 4, 0] + list(range(6, 50))]
     with pytest.raises(ValueError, match="monotonically"):
         FeatureBuilder().transform(shuffled)
+
+
+# ------------------------------------------------------ regime/calendar (RAD-910)
+
+
+def _long_bars(n_days: int = 100, *, seed: int = 7) -> pd.DataFrame:
+    """Multi-day fixture (1 bar per minute) for regime feature warmup tests."""
+    rng = np.random.default_rng(seed)
+    n = n_days * 24 * 60
+    steps = rng.normal(0, 0.0005, size=n)
+    close = 100.0 * np.exp(np.cumsum(steps))
+    open_ = np.concatenate([[close[0]], close[:-1]])
+    high = np.maximum(open_, close) + rng.uniform(0, 0.05, size=n)
+    low = np.minimum(open_, close) - rng.uniform(0, 0.05, size=n)
+    volume = rng.integers(100, 1000, size=n).astype(float)
+    idx = pd.date_range("2024-01-01 00:00", periods=n, freq="1min", tz="UTC")
+    return pd.DataFrame(
+        {"open": open_, "high": high, "low": low, "close": close, "volume": volume},
+        index=idx,
+    )
+
+
+def test_regime_features_off_by_default() -> None:
+    """Default config matches the pre-RAD-910 column set (regime opt-in)."""
+    bars = _bars(600)
+    out = FeatureBuilder().transform(bars)
+    for col in ("regime_rv_pct", "regime_volofvol"):
+        assert col not in out.columns
+
+
+def test_calendar_features_off_by_default() -> None:
+    bars = _bars(600)
+    out = FeatureBuilder().transform(bars)
+    for col in ("month_sin", "month_cos", "week_of_month", "is_first_friday"):
+        assert col not in out.columns
+
+
+def test_regime_features_emit_when_enabled() -> None:
+    bars = _long_bars(n_days=100)
+    cfg = FeatureConfig(include_regime_features=True, drop_warmup=True)
+    out = FeatureBuilder(config=cfg).transform(bars)
+
+    for col in ("regime_rv_pct", "regime_volofvol"):
+        assert col in out.columns
+    # regime_rv_pct is a percentile rank — must lie in [0, 1] after warmup.
+    pct = out["regime_rv_pct"].dropna().to_numpy()
+    assert ((pct >= 0.0) & (pct <= 1.0)).all()
+    # vol-of-vol is a non-negative std.
+    volofvol = out["regime_volofvol"].dropna().to_numpy()
+    assert (volofvol >= 0.0).all()
+    # `drop_warmup` invariant: no NaN after warmup.
+    assert not out.isna().any().any()
+
+
+def test_calendar_features_emit_when_enabled() -> None:
+    """`include_calendar_features=True` emits the documented columns."""
+    bars = _bars(600)
+    cfg = FeatureConfig(include_calendar_features=True, drop_warmup=False)
+    out = FeatureBuilder(config=cfg).transform(bars)
+
+    for col in ("month_sin", "month_cos", "week_of_month", "is_first_friday"):
+        assert col in out.columns
+    # week_of_month is in {1, 2, 3, 4, 5} (capped at 5).
+    assert set(out["week_of_month"].unique().tolist()).issubset({1.0, 2.0, 3.0, 4.0, 5.0})
+    # is_first_friday only fires when weekday==4 *and* day_of_month <= 7.
+    is_ff = out["is_first_friday"]
+    times = bars.index
+    expected = ((times.weekday == 4) & (times.day <= 7)).astype(float)
+    np.testing.assert_array_equal(is_ff.to_numpy(), expected)
+    # month_sin^2 + month_cos^2 == 1 (cyclical encoding stays on the unit circle).
+    np.testing.assert_allclose(
+        (out["month_sin"] ** 2 + out["month_cos"] ** 2).to_numpy(),
+        np.ones(len(out)),
+        rtol=1e-12,
+        atol=1e-12,
+    )
+
+
+def test_first_friday_flag_at_known_us_nfp_date() -> None:
+    """3 May 2024 was the US NFP release — first Friday of the month."""
+    idx = pd.date_range("2024-05-01 00:00", periods=10, freq="1D", tz="UTC")
+    bars = pd.DataFrame(
+        {"open": 1.0, "high": 1.0, "low": 1.0, "close": 1.0, "volume": 1.0},
+        index=idx,
+    )
+    cfg = FeatureConfig(include_calendar_features=True, drop_warmup=False)
+    out = FeatureBuilder(config=cfg, indicators={}).transform(bars)
+    # 1 May = Wed, 2 May = Thu, 3 May = Fri (first Friday of May 2024).
+    assert out.loc["2024-05-03", "is_first_friday"] == 1.0
+    # Following Friday (10 May) is NOT the first Friday.
+    assert out.loc["2024-05-10", "is_first_friday"] == 0.0
+
+
+def test_macro_event_dates_emit_event_flag() -> None:
+    """A non-empty `macro_event_dates` adds the `is_macro_event_day` column."""
+    bars = _bars(60 * 24 * 4)  # 4 days of minutes
+    event_day = bars.index[3 * 24 * 60].date()  # day 4 of the fixture
+    cfg = FeatureConfig(
+        include_calendar_features=True,
+        macro_event_dates=(event_day,),
+        drop_warmup=False,
+    )
+    out = FeatureBuilder(config=cfg).transform(bars)
+
+    assert "is_macro_event_day" in out.columns
+    flag = out["is_macro_event_day"]
+    is_event_minute = pd.Series(out.index.date == event_day, index=out.index)
+    np.testing.assert_array_equal(flag.to_numpy(), is_event_minute.astype(float).to_numpy())
+
+
+def test_regime_features_no_lookahead() -> None:
+    """Truncating bars at row T must not change regime features at rows ≤ T."""
+    bars = _long_bars(n_days=100)
+    cfg = FeatureConfig(include_regime_features=True, drop_warmup=False)
+    full = FeatureBuilder(config=cfg).transform(bars)
+
+    cutoff = 60 * 24 * 60  # 60 days into the series
+    trunc = FeatureBuilder(config=cfg).transform(bars.iloc[:cutoff])
+
+    for col in ("regime_rv_pct", "regime_volofvol"):
+        pd.testing.assert_series_equal(
+            full[col].iloc[:cutoff],
+            trunc[col],
+            check_names=False,
+            check_index=True,
+        )
+
+
+def test_warmup_grows_when_regime_enabled() -> None:
+    """Enabling regime features lifts the warmup to cover the daily lookback."""
+    base = FeatureBuilder().warmup()
+    regime = FeatureBuilder(config=FeatureConfig(include_regime_features=True)).warmup()
+    assert regime > base
+    # ≥ 60-trading-day lookback + 2 padding days, in 1440-bar trading days.
+    assert regime >= 62 * 24 * 60
