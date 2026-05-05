@@ -63,6 +63,10 @@ Issues = "https://github.com/radiusred/tradedesk/issues"
 testpaths = ["tests"]
 asyncio_mode = "auto"
 addopts = "-v --tb=short"
+markers = [
+    "leakage: Phase 6 leakage gate — tests that prove embargo/purge correctly neutralise look-ahead leaks (RAD-906). Promoted to a top-level marker so CI can fail fast on PRs touching tradedesk/ml/.",
+    "slow: tests that exceed the ~5s per-fixture budget on the matrix runners (e.g. streaming-strategy loops, walk-forward sweeps).",
+]
 
 [tool.coverage.run]
 source = ["tradedesk"]

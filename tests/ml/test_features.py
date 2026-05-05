@@ -184,6 +184,63 @@ def test_truncation_invariance_full_pipeline() -> None:
     )
 
 
+@pytest.mark.parametrize("cutoff", [60, 100, 199, 380])
+def test_no_look_ahead_invariant_holds_for_mid_stream_warmup_growth(cutoff: int) -> None:
+    """Mid-stream invariant: incrementally growing the input never rewrites past rows.
+
+    Extension of the static-truncation test (RAD-897) with the case where
+    the cut-off lands *during* indicator warmup (e.g. cut at 60 bars when
+    the longest warmup is 35 bars vs cut at 380 well past warmup). This
+    exercises the boundary between "indicator state still building" and
+    "indicator state stable", which is the regime where a stale-cache /
+    forward-leak bug would most plausibly hide. RAD-906.
+    """
+    bars = _bars(400, with_bid_ask=True, seed=11)
+    full = FeatureBuilder(config=FeatureConfig(drop_warmup=False)).transform(bars)
+    truncated = FeatureBuilder(
+        config=FeatureConfig(drop_warmup=False)
+    ).transform(bars.iloc[:cutoff])
+
+    # Feature values at every row 0..cutoff-1 must be identical regardless
+    # of whether the future bars [cutoff..end] are present or not.
+    pd.testing.assert_frame_equal(
+        full.iloc[:cutoff],
+        truncated,
+        check_dtype=False,
+    )
+
+
+def test_no_look_ahead_invariant_holds_under_incremental_growth() -> None:
+    """Walking the cut-off forwards by one bar at a time keeps row T stable.
+
+    Stronger no-look-ahead check than the parametrised cut-off test:
+    repeatedly extends the input by one bar and asserts the row at a
+    fixed observation point ``t_observe`` is bit-identical across every
+    extension. This catches subtle bugs where an indicator's *previous*
+    state is silently mutated by the *next* update — a class of leak
+    that would be invisible to a single-cut truncation test.
+    """
+    bars = _bars(220, with_bid_ask=True, seed=15)
+    t_observe = 120  # well past warmup so all features are real numbers
+
+    reference = (
+        FeatureBuilder(config=FeatureConfig(drop_warmup=False))
+        .transform(bars.iloc[: t_observe + 1])
+        .iloc[t_observe]
+    )
+
+    for extra in range(1, 30):
+        extended = FeatureBuilder(config=FeatureConfig(drop_warmup=False)).transform(
+            bars.iloc[: t_observe + 1 + extra]
+        )
+        pd.testing.assert_series_equal(
+            extended.iloc[t_observe],
+            reference,
+            check_names=False,
+            check_dtype=False,
+        )
+
+
 # --------------------------------------------------------- indicator parity
 
 

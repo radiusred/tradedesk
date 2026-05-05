@@ -29,7 +29,6 @@ from tradedesk.ml.cv import (
 )
 from tradedesk.ml.model import DirectionClassifier, DirectionClassifierConfig
 
-
 # ============================================================ splitter contract
 
 
@@ -393,6 +392,7 @@ def _make_random_walk(n: int = 1500, *, seed: int = 0) -> tuple[pd.DataFrame, pd
     return X_template, y
 
 
+@pytest.mark.leakage
 def test_leakage_gate_obvious_feature_leak_drives_accuracy_to_one() -> None:
     """If we feed the model a feature that *is* the label, the harness must
     measure near-perfect accuracy across every fold.
@@ -418,6 +418,7 @@ def test_leakage_gate_obvious_feature_leak_drives_accuracy_to_one() -> None:
     assert metrics["auc"].min() >= 0.95, metrics
 
 
+@pytest.mark.leakage
 def test_leakage_gate_legitimate_feature_lands_at_chance_accuracy() -> None:
     """With a pure-noise feature, every fold must collapse to ~50% accuracy.
 
@@ -438,6 +439,31 @@ def test_leakage_gate_legitimate_feature_lands_at_chance_accuracy() -> None:
     mean_accuracy = float(metrics["accuracy"].mean())
     # Generous chance band to keep the test stable across XGBoost versions.
     assert 0.42 < mean_accuracy < 0.58, metrics
+
+
+@pytest.mark.leakage
+def test_leakage_gate_pure_label_feature_drives_test_accuracy_to_one() -> None:
+    """Strongest synthetic future-leak fixture: a feature equal to ``y[t]``.
+
+    The same fixture as :func:`_make_random_walk` plus the *exact* label
+    as a training feature. This is a contrived future-leak: every row's
+    feature reveals its own label, so XGBoost trivially learns
+    ``predict_proba == [0, 1]`` for ``y == 1`` and the inverse for
+    ``y == 0``. Test fold accuracy must be near-perfect.
+
+    Stronger sensitivity check than the noisy-leak fixture above: if the
+    harness ever silently regresses to a state where it averages over
+    all classes or routes test data through the train pipeline, this
+    test catches it before any production data does. Merge-blocker.
+    """
+    X_template, y = _make_random_walk(n=1_500, seed=2)
+    X = X_template.assign(label_copy=y.astype(float).to_numpy())
+
+    splitter = WalkForwardSplitter(train_window=400, test_window=100, purge=5)
+    metrics = walk_forward_evaluate(X, y, splitter, _fast_classifier_factory)
+
+    assert not metrics.empty
+    assert metrics["accuracy"].min() == pytest.approx(1.0, abs=1e-9), metrics
 
 
 # ============================================================ driver-level shape

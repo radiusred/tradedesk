@@ -153,6 +153,44 @@ def test_label_config_validation():
         LabelConfig(neutral_band=-0.001)
 
 
+def test_forward_return_labels_n_equals_horizon_marks_every_row_nan():
+    """``n == horizon`` is the degenerate boundary: every row is part of the
+    h-tail and has no forward data. Output must be all-NA, not raise."""
+    bars = _flat_ohlc([100.0, 101.0, 102.0, 103.0, 104.0])
+    labels = forward_return_labels(bars, LabelConfig(horizon=5))
+    assert len(labels) == 5
+    assert all(labels.iloc[i] is pd.NA for i in range(5))
+
+
+def test_forward_return_labels_n_less_than_horizon_marks_every_row_nan():
+    """``n < horizon`` — same boundary on the wrong side. Must still emit a
+    correctly-sized all-NA series rather than IndexError."""
+    bars = _flat_ohlc([100.0, 101.0, 102.0])
+    labels = forward_return_labels(bars, LabelConfig(horizon=5))
+    assert len(labels) == 3
+    assert all(labels.iloc[i] is pd.NA for i in range(3))
+
+
+def test_forward_return_labels_n_equals_horizon_plus_one_labels_first_row():
+    """``n == horizon + 1`` — exactly one row has forward data; every other is NA."""
+    closes = [100.0] * 5 + [101.0]  # h=5 → only row 0 has a forward bar
+    bars = _flat_ohlc(closes)
+    labels = forward_return_labels(bars, LabelConfig(horizon=5))
+    assert labels.iloc[0] == 1
+    for i in range(1, 6):
+        assert labels.iloc[i] is pd.NA
+
+
+def test_forward_return_labels_neutral_band_strict_inequality_at_boundary():
+    """Forward returns *exactly* equal to ``neutral_band`` must NOT flip the
+    label off zero (the band is a strict inequality threshold)."""
+    # Forward return = 0.001 exactly == band → label 0.
+    closes = [100.0, 100.1]
+    bars = _flat_ohlc(closes)
+    labels = forward_return_labels(bars, LabelConfig(horizon=1, neutral_band=0.001))
+    assert labels.iloc[0] == 0
+
+
 def test_forward_return_labels_validates_index_and_columns():
     # Missing close column.
     df = pd.DataFrame({"open": [1.0]}, index=pd.date_range("2026-01-01", periods=1, tz="UTC"))
@@ -313,6 +351,35 @@ def test_triple_barrier_config_validation():
         TripleBarrierConfig(lower_mult=-1.0)
     with pytest.raises(ValueError, match="vertical_band"):
         TripleBarrierConfig(vertical_band=-0.001)
+
+
+def test_triple_barrier_n_too_small_emits_all_warmup_rows():
+    """Dataset shorter than ``atr_period + horizon`` cannot label anything."""
+    closes = [100.0, 100.5, 99.5, 100.0]  # n=4, atr=5 → no row ever ATR-ready
+    bars = _build_atr_warmed_bars(closes)
+    out = triple_barrier_labels(bars, TripleBarrierConfig(horizon=1, atr_period=5))
+    assert len(out) == 4
+    for i in range(4):
+        assert out["label"].iloc[i] is pd.NA
+        assert out["barrier"].iloc[i] == "warmup"
+
+
+def test_triple_barrier_vertical_band_strict_inequality_at_boundary():
+    """Vertical-barrier labels: net move equal to ``vertical_band`` is treated
+    as flat (band uses strict inequalities), not as a directional label."""
+    # Wide barrier_mult so neither upper nor lower is touched; pick closes so
+    # the net forward return at horizon equals vertical_band exactly.
+    closes = [99.0, 100.0, 101.0, 100.0, 101.0, 100.0, 100.05, 100.05, 100.10]
+    highs = closes[:]
+    lows = closes[:]
+    bars = _build_atr_warmed_bars(closes, highs, lows)
+    # Net forward return at t=5 over horizon=3 = 100.10/100.0 - 1 = 0.001.
+    config = TripleBarrierConfig(
+        horizon=3, atr_period=5, barrier_mult=20.0, vertical_band=0.001
+    )
+    out = triple_barrier_labels(bars, config)
+    assert out["label"].iloc[5] == 0
+    assert out["barrier"].iloc[5] == "vertical"
 
 
 def test_triple_barrier_asymmetric_overrides():
