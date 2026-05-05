@@ -388,6 +388,7 @@ def fold_metrics_from_predictions(
     y_true: np.ndarray,
     p_up: np.ndarray,
     forward_returns: np.ndarray | None = None,
+    forward_returns_short: np.ndarray | None = None,
     threshold: float = 0.5,
     periods_per_year: int = DEFAULT_PERIODS_PER_YEAR,
 ) -> FoldMetrics:
@@ -402,6 +403,17 @@ def fold_metrics_from_predictions(
         forward_returns: Optional per-bar forward return series aligned with
             ``y_true``, used to compute Sharpe / drawdown / trade count
             assuming a long/short/flat policy gated by ``threshold``.
+
+            When ``forward_returns_short`` is ``None`` the realised P&L on
+            a short row is ``-forward_returns`` (mid-price round-trip
+            symmetric). When ``forward_returns_short`` is supplied,
+            ``forward_returns`` is interpreted as the **long-leg** P&L and
+            ``forward_returns_short`` as the **short-leg** P&L; the two
+            differ when ask/bid microstructure is baked into the returns
+            (RAD-908 spread-aware path).
+        forward_returns_short: Optional per-bar **short-leg** forward
+            return, positive when a short round-trip is profitable.
+            Requires ``forward_returns`` (the long leg) to be supplied.
         threshold: Probability threshold for the actionability gate. Must
             satisfy ``0.5 <= threshold <= 1``.
         periods_per_year: Sharpe annualisation factor.
@@ -415,6 +427,10 @@ def fold_metrics_from_predictions(
     if y_true.shape != p_up.shape:
         raise ValueError(
             f"y_true and p_up must share shape; got {y_true.shape} vs {p_up.shape}"
+        )
+    if forward_returns_short is not None and forward_returns is None:
+        raise ValueError(
+            "forward_returns_short requires forward_returns (long leg) to be set"
         )
 
     y_true_int = y_true.astype(np.int64)
@@ -436,7 +452,21 @@ def fold_metrics_from_predictions(
                 f"{forward_returns.shape} vs {y_true.shape}"
             )
         positions = _positions_from_proba(p_up, threshold=threshold)
-        realised = positions.astype(float) * forward_returns.astype(float)
+        fr_long = forward_returns.astype(float)
+        if forward_returns_short is None:
+            realised = positions.astype(float) * fr_long
+        else:
+            if forward_returns_short.shape != y_true.shape:
+                raise ValueError(
+                    "forward_returns_short must align with y_true; got "
+                    f"{forward_returns_short.shape} vs {y_true.shape}"
+                )
+            fr_short = forward_returns_short.astype(float)
+            realised = np.where(
+                positions > 0,
+                fr_long,
+                np.where(positions < 0, fr_short, 0.0),
+            )
         # Strip flat rows from Sharpe so it represents per-trade return distribution.
         traded = realised[positions != 0]
         sharpe = _annualised_sharpe(traded, periods_per_year=periods_per_year)
@@ -487,6 +517,7 @@ def walk_forward_evaluate(
     model_factory: Callable[[], FitPredictModel],
     *,
     forward_returns: pd.Series | None = None,
+    forward_returns_short: pd.Series | None = None,
     threshold: float = 0.5,
     periods_per_year: int = DEFAULT_PERIODS_PER_YEAR,
 ) -> pd.DataFrame:
@@ -515,7 +546,14 @@ def walk_forward_evaluate(
             object satisfying :class:`FitPredictModel`.
         forward_returns: Optional per-bar realised forward return series
             aligned with ``X``, used to populate Sharpe / drawdown / trade
-            count.
+            count. When ``forward_returns_short`` is supplied this is the
+            **long-leg** return; otherwise the realised P&L on a short
+            row falls back to ``-forward_returns``.
+        forward_returns_short: Optional per-bar **short-leg** forward
+            return aligned with ``X`` (positive when a short trade is
+            profitable). Use the directional path when ask/bid spread is
+            material — e.g. ``LabelConfig(spread_aware=True)`` runs
+            (RAD-908). Requires ``forward_returns`` to be set.
         threshold: Probability threshold passed through to
             :func:`fold_metrics_from_predictions`.
         periods_per_year: Sharpe annualisation factor.
@@ -537,6 +575,15 @@ def walk_forward_evaluate(
             raise ValueError("forward_returns must align with X")
         if not forward_returns.index.equals(X.index):
             raise ValueError("forward_returns must share index with X")
+    if forward_returns_short is not None:
+        if forward_returns is None:
+            raise ValueError(
+                "forward_returns_short requires forward_returns (long leg) to be set"
+            )
+        if len(forward_returns_short) != len(X):
+            raise ValueError("forward_returns_short must align with X")
+        if not forward_returns_short.index.equals(X.index):
+            raise ValueError("forward_returns_short must share index with X")
 
     rows: list[FoldMetrics] = []
     for fold in splitter.split(X):
@@ -568,6 +615,12 @@ def walk_forward_evaluate(
             fr = forward_returns.iloc[fold.test_idx].loc[test_mask].to_numpy()
         else:
             fr = None
+        if forward_returns_short is not None:
+            fr_short = (
+                forward_returns_short.iloc[fold.test_idx].loc[test_mask].to_numpy()
+            )
+        else:
+            fr_short = None
 
         rows.append(
             fold_metrics_from_predictions(
@@ -580,6 +633,7 @@ def walk_forward_evaluate(
                 y_true=y_test.to_numpy(),
                 p_up=p_up,
                 forward_returns=fr,
+                forward_returns_short=fr_short,
                 threshold=threshold,
                 periods_per_year=periods_per_year,
             )

@@ -79,6 +79,15 @@ def main(argv: list[str] | None = None) -> int:
         default=0.0,
         help="Forward-return magnitude below which labels are treated as flat",
     )
+    p.add_argument(
+        "--spread-aware",
+        action="store_true",
+        help=(
+            "Switch labels to LabelConfig(spread_aware=True) and feed "
+            "direction-aware ask-to-bid round-trip forward returns into "
+            "walk_forward_evaluate (RAD-908). Ignores --label-neutral-band."
+        ),
+    )
     p.add_argument("--out", type=Path, required=True)
     p.add_argument("--verbose", action="store_true")
     args = p.parse_args(argv)
@@ -103,6 +112,7 @@ def main(argv: list[str] | None = None) -> int:
         test_window_bars=args.test_window_bars,
         model_config=model_cfg,
         label_neutral_band=args.label_neutral_band,
+        spread_aware=args.spread_aware,
     )
 
     result = run_walk_forward(args.cache, cfg)
