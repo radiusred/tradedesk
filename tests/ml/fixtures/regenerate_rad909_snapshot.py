@@ -1,4 +1,4 @@
-"""Regenerate ``rad909_feature_snapshot.npz`` for the RAD-909 drift guard.
+"""Regenerate ``rad909_feature_snapshot.npz`` for the feature-snapshot drift guard.
 
 Run from the repo root::
 

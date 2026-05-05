@@ -1,4 +1,4 @@
-"""Resilience tests for IG execution layer (RAD-747).
+"""Resilience tests for IG execution layer.
 
 Covers the four acceptance criteria:
   - asyncio-based subscription-retry scheduler cancels cleanly on disconnect

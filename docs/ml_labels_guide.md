@@ -1,6 +1,6 @@
 # Label engineering (`tradedesk.ml.labels`)
 
-Phase 6 (RAD-896) — supervised labels for the XGBoost direction
+Phase 6 — supervised labels for the XGBoost direction
 classifier. Two label families and a class-balance reporter.
 
 ## Forward-return binary labels
@@ -76,7 +76,7 @@ order of the supplied `classes` argument.
 `print_class_balance(...)` does the same and additionally prints a
 4-decimal-formatted table to stdout for log inspection during
 walk-forward CV. Use it on a per-fold mapping returned by the CV harness
-(RAD-900) to spot degenerate-class folds before training.
+to spot degenerate-class folds before training.
 
 ```python
 from tradedesk.ml import print_class_balance
@@ -98,6 +98,6 @@ print_class_balance({
 Both label families read **only** bars at index `>= t` for the entry
 side and bars at indices `t+1 .. t+horizon` for the forward side. The
 trailing `horizon` rows are explicitly NA. The leakage gate
-(RAD-900 / Comp 4) verifies that a deliberately-leaky feature paired
+The leakage gate (Comp 4) verifies that a deliberately-leaky feature paired
 with these labels collapses OOS — confirmation that the labels do not
 themselves leak.

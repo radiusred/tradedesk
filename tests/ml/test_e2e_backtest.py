@@ -1,4 +1,4 @@
-"""End-to-end Phase 6 ML stack tests (RAD-906).
+"""End-to-end Phase 6 ML stack tests.
 
 Wire :class:`tradedesk.ml.FeatureBuilder`, :func:`forward_return_labels`,
 :class:`DirectionClassifier`, :class:`WalkForwardSplitter`, and
@@ -302,7 +302,7 @@ def test_walk_forward_trained_model_drives_streaming_strategy() -> None:
     Marked ``slow`` because the streaming loop recomputes features over
     growing history per candle — fine on the matrix runners, but the
     10× cost on a fast laptop is enough to push past the 5s budget the
-    [RAD-896 plan](/RAD/issues/RAD-896#document-plan) asks us to mark.
+    the Phase 6 plan asks us to mark.
     """
     n_bars = 600
     bars = _streaming_safe_bars(n_bars, seed=21, drift=1e-5, sigma=1e-4)

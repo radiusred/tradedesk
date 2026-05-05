@@ -1,4 +1,4 @@
-"""Label engineering for 1-minute FX bars (Phase 6 / RAD-896).
+"""Label engineering for 1-minute FX bars (Phase 6).
 
 Two label families are exposed:
 

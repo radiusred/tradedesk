@@ -10,7 +10,7 @@ Usage::
 The script wires :func:`tradedesk.ml.run_walk_forward` to a Dukascopy cache
 and writes a tidy CSV with columns ``horizon, fold, n_train, n_test,
 log_loss, accuracy, auc, hit_rate, sharpe, max_drawdown, trade_count``
-suitable for posting on the RAD-896 Phase 6 sprint thread.
+suitable for reporting Phase 6 results.
 """
 
 from __future__ import annotations
@@ -85,7 +85,7 @@ def main(argv: list[str] | None = None) -> int:
         help=(
             "Switch labels to LabelConfig(spread_aware=True) and feed "
             "direction-aware ask-to-bid round-trip forward returns into "
-            "walk_forward_evaluate (RAD-908). Ignores --label-neutral-band."
+            "walk_forward_evaluate. Ignores --label-neutral-band."
         ),
     )
     p.add_argument("--out", type=Path, required=True)

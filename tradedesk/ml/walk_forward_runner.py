@@ -1,4 +1,4 @@
-"""End-to-end walk-forward evaluator for the Phase 6 ML stack (RAD-903).
+"""End-to-end walk-forward evaluator for the Phase 6 ML stack.
 
 Glues together the four Phase 6 building blocks —
 :class:`tradedesk.ml.FeatureBuilder`,
@@ -6,7 +6,7 @@ Glues together the four Phase 6 building blocks —
 :class:`tradedesk.ml.DirectionClassifier`, and
 :func:`tradedesk.ml.walk_forward_evaluate` — and feeds them a Dukascopy
 bid/ask cache so the resulting per-fold OOS Sharpe table can be used as
-the Phase 6 go/no-go signal (RAD-896 plan, end-of-week-2 gate).
+the Phase 6 go/no-go signal.
 
 The runner is intentionally framework-light: no async, no broker, no
 recording. The result is a tidy ``pandas.DataFrame`` per horizon you can
@@ -221,7 +221,7 @@ def build_dataset_directional(
     *,
     feature_config: FeatureConfig | None = None,
 ) -> tuple[pd.DataFrame, pd.Series, pd.Series, pd.Series]:
-    """Spread-aware variant of :func:`build_dataset` (RAD-908).
+    """Spread-aware variant of :func:`build_dataset`.
 
     Builds aligned ``(X, y_binary, fr_long, fr_short)`` where:
 
@@ -299,12 +299,12 @@ def build_dataset_directional(
 class WalkForwardRunConfig:
     """Configuration for :func:`run_walk_forward`.
 
-    Defaults target the Phase 6 first-pass run (RAD-903): a sliding 1-year
+    Defaults target the Phase 6 first-pass run: a sliding 1-year
     train window with 3-month test folds, ``embargo`` matching ``purge =
     horizon`` so the gap absorbs both label overlap and short-term feature
     autocorrelation.
 
-    Set ``spread_aware=True`` (RAD-908) to switch labels to the ask-to-bid
+    Set ``spread_aware=True`` to switch labels to the ask-to-bid
     round-trip variant and feed direction-aware long/short forward returns
     into :func:`walk_forward_evaluate`. The mid-price ``label_neutral_band``
     is ignored on the spread-aware path — round-trip costs are baked into

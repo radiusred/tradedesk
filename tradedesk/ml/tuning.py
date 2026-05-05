@@ -1,4 +1,4 @@
-"""Overfitting controls for the Phase 6 walk-forward sweep (RAD-904).
+"""Overfitting controls for the Phase 6 walk-forward sweep.
 
 The four controls layered on top of :class:`tradedesk.ml.model.DirectionClassifier`
 plus :class:`tradedesk.ml.cv.WalkForwardSplitter`:
@@ -23,8 +23,7 @@ plus :class:`tradedesk.ml.cv.WalkForwardSplitter`:
 
 All evaluation flows go through :func:`tradedesk.ml.cv.walk_forward_evaluate`
 or its sibling sweep driver below — we never optimise hyperparameters on
-in-sample data once the CV harness is locked (per the [RAD-896 plan
-guardrail](/RAD/issues/RAD-896#document-plan), enforced by the
+in-sample data once the CV harness is locked (enforced by the
 ``no_in_sample_tuning`` flag on :func:`walk_forward_sweep`).
 
 Importing this module requires the ``[ml]`` extra
@@ -466,7 +465,7 @@ def walk_forward_sweep(
             regularisation knobs. Defaults to :class:`DirectionClassifierConfig`'s
             defaults.
         grid: Grid to sweep. Defaults to a small 3×2×2×2 grid that lines up
-            with the [RAD-896 plan](/RAD/issues/RAD-896#document-plan) budget.
+            with the Phase 6 plan budget.
         validation_tail: When set, controls the head/tail split used for
             early stopping.
         forward_returns: Forward-return series for Sharpe / drawdown columns.

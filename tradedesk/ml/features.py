@@ -1,4 +1,4 @@
-"""Feature engineering for 1-minute FX bars (Phase 6 / RAD-896).
+"""Feature engineering for 1-minute FX bars (Phase 6).
 
 This module turns a 1-minute bid/ask OHLCV ``DataFrame`` plus an *indicator
 stack* (instances of :class:`tradedesk.marketdata.indicators.Indicator`) into
@@ -132,10 +132,8 @@ class FeatureConfig:
             log returns and forward-filled onto the minute index, so they
             never use information from ``t`` itself. Designed to give the
             model an explicit signal that the deployment regime differs
-            from the training regime — diagnosis of the [RAD-910](
-            https://radiusred.linear.app/issue/RAD-910) Sharpe -43 fold
-            showed the model overfitting absolute price levels with no
-            regime context.
+            from the training regime — a Sharpe -43 fold showed the model
+            overfitting absolute price levels with no regime context.
         include_calendar_features: Off by default. When ``True``, emit
             ``month_sin`` / ``month_cos`` (cyclical month-of-year),
             ``week_of_month`` (1–5), and ``is_first_friday`` (a
@@ -349,7 +347,7 @@ class FeatureBuilder:
           vol. Captures regime *instability* — high values indicate the
           vol surface itself is moving around (the kind of macro-driven
           turbulence that broke the h=60 fold at ``2025-02-24 →
-          2025-04-14`` per the RAD-910 diagnosis).
+          2025-04-14`` per the regime-overfitting diagnosis).
         """
         # Daily realised vol = std of within-day 1-min log returns.
         # `log_ret_1` is already shifted-diffed so each value is "return
@@ -441,7 +439,7 @@ class FeatureBuilder:
         allocated lazily on first emission and written in place per bar.
         Earlier revisions accumulated a ``list[dict[str, float]]`` (one dict
         per bar) which OOM'd above ~750 K bars on the 8 GB workspace
-        (RAD-909). A single :class:`Candle` instance is reused across bars —
+        A single :class:`Candle` instance is reused across bars —
         no indicator retains the reference past ``update``.
         """
         indicators = self.indicators

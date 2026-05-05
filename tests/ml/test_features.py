@@ -189,12 +189,12 @@ def test_truncation_invariance_full_pipeline() -> None:
 def test_no_look_ahead_invariant_holds_for_mid_stream_warmup_growth(cutoff: int) -> None:
     """Mid-stream invariant: incrementally growing the input never rewrites past rows.
 
-    Extension of the static-truncation test (RAD-897) with the case where
+    Extension of the static-truncation test with the case where
     the cut-off lands *during* indicator warmup (e.g. cut at 60 bars when
     the longest warmup is 35 bars vs cut at 380 well past warmup). This
     exercises the boundary between "indicator state still building" and
     "indicator state stable", which is the regime where a stale-cache /
-    forward-leak bug would most plausibly hide. RAD-906.
+    forward-leak bug would most plausibly hide.
     """
     bars = _bars(400, with_bid_ask=True, seed=11)
     full = FeatureBuilder(config=FeatureConfig(drop_warmup=False)).transform(bars)
@@ -418,7 +418,7 @@ def test_validate_rejects_non_monotonic_index() -> None:
         FeatureBuilder().transform(shuffled)
 
 
-# ------------------------------------------------------ regime/calendar (RAD-910)
+# ------------------------------------------------------ regime/calendar
 
 
 def _long_bars(n_days: int = 100, *, seed: int = 7) -> pd.DataFrame:
@@ -439,7 +439,7 @@ def _long_bars(n_days: int = 100, *, seed: int = 7) -> pd.DataFrame:
 
 
 def test_regime_features_off_by_default() -> None:
-    """Default config matches the pre-RAD-910 column set (regime opt-in)."""
+    """Default config does not include regime features (opt-in via include_regime_features)."""
     bars = _bars(600)
     out = FeatureBuilder().transform(bars)
     for col in ("regime_rv_pct", "regime_volofvol"):
@@ -561,7 +561,7 @@ _FEATURE_SNAPSHOT_PATH: Path = (
 
 
 def test_indicator_stack_matches_pre_refactor_snapshot() -> None:
-    """Guard the RAD-909 vectorised indicator-stack path from drift versus
+    """Guard the vectorised indicator-stack path from drift versus
     the pre-refactor dict-of-rows implementation.
 
     Tolerance-based rather than bytewise: numpy 2.4.x wheels built against
@@ -580,7 +580,7 @@ def test_indicator_stack_matches_pre_refactor_snapshot() -> None:
         expected_columns = list(data["columns"])
 
     assert list(out.columns) == expected_columns, (
-        "FeatureBuilder column set / order drifted from RAD-909 snapshot"
+        "FeatureBuilder column set / order drifted from snapshot"
     )
     assert actual.shape == expected.shape, (
         f"FeatureBuilder output shape {actual.shape} != snapshot {expected.shape}"

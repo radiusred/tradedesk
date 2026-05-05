@@ -1,4 +1,4 @@
-"""Unit tests for :mod:`tradedesk.ml.tuning` (Phase 6 / RAD-904).
+"""Unit tests for :mod:`tradedesk.ml.tuning` (Phase 6).
 
 Five focus areas:
 

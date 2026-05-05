@@ -32,7 +32,7 @@ def test_atr_normalised_size_is_clamped():
 
 
 def test_atr_normalised_size_default_point_value_unchanged():
-    """Default point_value=1.0 must reproduce the pre-RAD-688 formula exactly."""
+    """Default point_value=1.0 must reproduce the pre-refactor formula exactly."""
     legacy = atr_normalised_size(
         risk_per_trade=100.0,
         atr=2.5,
@@ -54,7 +54,7 @@ def test_atr_normalised_size_default_point_value_unchanged():
 
 
 def test_atr_normalised_size_unit_independent_for_xauusd():
-    """RAD-688: same contract count for LIVE-units and Dukascopy-cents.
+    """Same contract count for LIVE-units and Dukascopy-cents.
 
     LIVE IG XAUUSD feed: gold ≈ $4,580, ATR ≈ 8.9, point_value = 1.0.
     Dukascopy cache:    gold ≈ 458,000 cents, ATR ≈ 890, point_value = 0.01.

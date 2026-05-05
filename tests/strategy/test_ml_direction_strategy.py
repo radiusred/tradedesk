@@ -1,4 +1,4 @@
-"""Tests for :mod:`tradedesk.strategy.ml_direction_strategy` (Phase 6 / RAD-903)."""
+"""Tests for :mod:`tradedesk.strategy.ml_direction_strategy` (Phase 6)."""
 
 from __future__ import annotations
 
@@ -24,7 +24,7 @@ from tradedesk.types import Candle
 
 
 class TestProbabilityToSignal:
-    """probability_to_signal must respect threshold + neutral band (RAD-903)."""
+    """probability_to_signal must respect threshold + neutral band."""
 
     def test_long_at_threshold_boundary(self) -> None:
         assert probability_to_signal(0.6, threshold=0.6) is Signal.ENTRY_LONG

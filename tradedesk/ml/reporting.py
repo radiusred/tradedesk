@@ -1,4 +1,4 @@
-"""Per-fold and aggregate reporting for walk-forward CV runs (Phase 6 / RAD-905).
+"""Per-fold and aggregate reporting for walk-forward CV runs (Phase 6).
 
 Consumes the fitted models and per-fold metrics produced by the harness in
 :mod:`tradedesk.ml.cv` and renders:
@@ -363,7 +363,7 @@ def run_leakage_sanity(
     leak_noise: float = 0.05,
     threshold_accuracy: float = 0.95,
 ) -> LeakageSanityResult:
-    """Re-run the RAD-900 synthetic future-leak fixture against ``model_factory``.
+    """Re-run the synthetic future-leak fixture against ``model_factory``.
 
     Constructs a random-walk close series with a 5-bar forward-return binary
     label and attaches a feature that *is* the label plus a sliver of noise.
