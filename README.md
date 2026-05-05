@@ -243,8 +243,88 @@ Pass `indicators={...}` to swap or shrink the indicator stack and
 `config=FeatureConfig(...)` to tune the rolling-window fan or toggle
 optional feature families.
 
-The label engineering, XGBoost wrapper, and walk-forward CV harness with
-embargo/purge land in subsequent components of the same sprint.
+### Phase 6 quickstart — features → labels → model → walk-forward CV
+
+The full Phase 6 stack lives behind `tradedesk[ml]` and is exposed via
+`tradedesk.ml` and `tradedesk.strategy.MLDirectionStrategy`. The
+end-to-end workflow:
+
+```python
+import pandas as pd
+from tradedesk.ml import (
+    FeatureBuilder, FeatureConfig,
+    LabelConfig, forward_return_labels,
+    WalkForwardConfig, WalkForwardSplitter, walk_forward_evaluate,
+)
+from tradedesk.ml.model import DirectionClassifier, DirectionClassifierConfig
+
+# 1. Features --------------------------------------------------------------
+builder = FeatureBuilder(config=FeatureConfig())
+X = builder.transform(bars)   # bars indexed by UTC DatetimeIndex
+
+# 2. Forward-return labels (binary up/down) --------------------------------
+y_raw = forward_return_labels(bars, LabelConfig(horizon=15)).reindex(X.index)
+valid = y_raw.notna()
+X = X.loc[valid]
+y = (y_raw.loc[valid] > 0).astype(int); y.index = X.index
+
+# 3. Walk-forward CV with embargo/purge ------------------------------------
+splitter = WalkForwardSplitter(
+    WalkForwardConfig(train_window=200_000, test_window=50_000, embargo=15, purge=15)
+)
+
+def make_clf() -> DirectionClassifier:
+    return DirectionClassifier(DirectionClassifierConfig(n_estimators=200, n_jobs=4))
+
+metrics = walk_forward_evaluate(X, y, splitter, make_clf)
+print(metrics[["fold", "accuracy", "auc", "sharpe", "trade_count"]])
+
+# 4. Train + persist a final model -----------------------------------------
+model = DirectionClassifier(DirectionClassifierConfig()).fit(X, y)
+model.save("artefacts/direction_eurusd.joblib")
+```
+
+A runnable Phase 6 walk-forward driver sits at
+`docs/examples/phase6_walk_forward_eurusd.py`. The 8-yr Dukascopy
+bid/ask cache lives at `/paperclip/tradedesk/marketdata`.
+
+### Leakage gate (CI merge-blocker)
+
+Look-ahead bugs are silent killers; Phase 6 guards against them with two
+independent gates:
+
+* `tradedesk.ml.cv` enforces an embargo + purge at every fold boundary.
+  The default `embargo=horizon, purge=horizon` matches the forward-label
+  horizon so test rows can never overlap with train labels.
+* `tests/ml/test_cv.py` carries the **leakage canary** — a synthetic
+  feature column whose value equals the next bar's return. With the
+  embargo/purge in place the canary must produce <0.55 OOS accuracy /
+  AUC; without it the canary scores ~1.0. CI promotes this canary to a
+  separate top-level step:
+
+  ```yaml
+  - name: Phase 6 leakage gate (tradedesk/ml/)
+    run: pytest -m leakage --no-cov
+  ```
+
+  Any code change that breaks the embargo/purge contract trips the gate
+  and the build fails. Add new feature columns? Re-run `pytest -m
+  leakage` locally and confirm the canary still scores at chance level.
+
+### Walk-forward reporting & feature importance
+
+`tradedesk.ml.reporting` renders a markdown report (per-fold metrics,
+feature-importance gain, leakage sanity panel, equity curve) from a
+`walk_forward_collect` run. See `scripts/render_sample_report.py` for a
+reproducible synthetic example.
+
+### Streaming integration
+
+`tradedesk.strategy.MLDirectionStrategy` plugs a trained
+`predict_proba` model into the live event loop: rolling 1-min history
+buffer → `FeatureBuilder.transform` → probability → `Signal` →
+`SignalGeneratedEvent`. The `[ig_trader]` repository hosts a worked
+example wired into the existing portfolio CLI.
 
 
 ## Documentation
