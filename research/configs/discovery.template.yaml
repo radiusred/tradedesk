@@ -1,0 +1,135 @@
+# =============================================================================
+# Discovery (Stage 1) backtest config template
+# =============================================================================
+#
+# Copy to configs/<archetype>_discovery.yaml and fill in every field marked
+# REQUIRED under `research:` BEFORE running the backtest. The `research:` block
+# is the pre-registration record; runners should consume `portfolio:` and
+# `strategies:` and ignore `research:`.
+#
+# Pass gate (Discovery):
+#   - per-trade Sharpe >= 0.6
+#   - total Sharpe (net of spread) >= 1.0
+#   - spread absorption < 50%
+#   - >= 30 round trips in the test window
+#
+# Hard kill (Discovery):
+#   - per-trade Sharpe < 0.5
+#   - OR < 20 round trips
+#
+# Default test window: 2020-01-01 .. today (post-COVID, post-data-scale fix).
+# =============================================================================
+
+research:
+  # --- Identity --------------------------------------------------------------
+  archetype: <e.g. BollingerReversion, Donchian, IntradayVolBreakout>   # REQUIRED
+  resolution: <15m | 1H | 4H | 1D>                                       # REQUIRED
+  stage: discovery
+  owner: <agent or user>                                                  # REQUIRED
+  pre_registered_at: <YYYY-MM-DD>                                         # REQUIRED
+
+  # --- Hypothesis (pre-registration) -----------------------------------------
+  # One paragraph: what edge does this strategy capture? What economic or
+  # behavioural mechanism gives it positive expectancy?
+  hypothesis: |
+    REQUIRED. Replace with a concrete, falsifiable description of the edge.
+
+  # --- Universe (universe-fixed before signal-fixed) -------------------------
+  instrument_set:                                                         # REQUIRED
+    - <SYMBOL_1>
+    - <SYMBOL_2>
+  universe_rationale: |
+    REQUIRED. Why these instruments and not others? Liquidity? Spread? Data
+    quality? Sleeve diversification?
+
+  # --- Pre-registered targets ------------------------------------------------
+  targets:
+    expected_per_trade_alpha_bps: <number>          # REQUIRED, gross of spread
+    expected_alpha_to_spread_ratio: <number>        # REQUIRED, must justify >=5x
+    expected_trades_per_year: <number>              # REQUIRED
+    minimum_acceptable_sharpe: 1.0                  # net of spread, total
+    minimum_acceptable_per_trade_sharpe: 0.6
+
+  # --- Pass gates ------------------------------------------------------------
+  pass_gates:
+    per_trade_sharpe_min: 0.6
+    total_sharpe_net_min: 1.0
+    spread_absorption_max: 0.50
+    round_trips_min: 30
+    # Bonferroni adjustment: if parameter_grid has > 10 cells, scale the
+    # per_trade_sharpe_min by sqrt(N_cells). Set bonferroni_apply: true to
+    # opt in (default true; only disable with documented reason).
+    bonferroni_apply: true
+
+  # --- Kill gates ------------------------------------------------------------
+  kill_gates:
+    per_trade_sharpe_max: 0.5      # below this -> kill
+    round_trips_min: 20            # below this -> kill (statistical power)
+
+  # --- Date window -----------------------------------------------------------
+  date_window:
+    from: "2020-01-01"
+    to: "<today or fixed YYYY-MM-DD>"   # REQUIRED, prefer fixed for reproducibility
+
+  # --- Parameter grid (for sweeps) ------------------------------------------
+  # Single-instrument default first. Only sweep if the default produces a
+  # monotonic improvement direction (two-strike rule).
+  parameter_grid:
+    # Example shape; replace with the strategy's own knobs.
+    # bb_k: [2.5, 2.8, 3.0, 3.2, 3.5]
+    # rsi_period: [2, 3, 4]
+    {}
+
+  # --- Cost model ------------------------------------------------------------
+  cost_model:
+    spread_source: <broker_quoted | dukascopy_average | fixed_pips>       # REQUIRED
+    half_spread_adjustment: true
+    slippage_assumption_bps: <number>
+
+  # --- Measured (filled in after running) ------------------------------------
+  # Leave the right column blank in the template; populate after the run.
+  measured:
+    per_trade_sharpe: null
+    total_sharpe_net: null
+    spread_absorption: null
+    round_trips: null
+    annual_pnl_gbp: null
+    max_drawdown_gbp: null
+    notes: null
+
+  # --- Verdict (filled in after running) -------------------------------------
+  verdict:
+    outcome: <advance | kill | retune_once>     # one of three
+    reason: |
+      Filled in after the run. If "kill", file a memo in research/killstack/.
+    quant_days_spent: null
+
+# -----------------------------------------------------------------------------
+# Runner config below. Schema follows the existing run_portfolio expectations.
+# -----------------------------------------------------------------------------
+
+instrument_map:
+  # SYMBOL_1:
+  #   epic: <broker epic id>
+  {}
+
+portfolio:
+  period: <e.g. 15MIN, 1HOUR, 1DAY>      # REQUIRED, must match research.resolution
+  base_period: null
+  risk:
+    portfolio_risk_budget: <number>      # REQUIRED, in GBP per trade unit
+    default_risk_per_trade: <number>     # REQUIRED, fallback only
+  sizing:
+    min_size: 1
+    max_size: <number>
+
+strategies:
+  example_strategy_name:
+    class: <ConcreteStrategyClass>
+    instruments:
+      - <SYMBOL_1>
+    params:
+      # Strategy-specific knobs go here. Where the parameter is one of the
+      # `research.parameter_grid` keys, list its first cell here as the
+      # "default" run. The sweep wrapper fans out the grid.
+      {}
