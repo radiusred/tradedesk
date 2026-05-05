@@ -16,6 +16,16 @@ Importing this package does **not** require the ML extras —
 their backing library is missing.
 """
 
+from .cv import (
+    DEFAULT_PERIODS_PER_YEAR,
+    FoldMetrics,
+    FoldSplit,
+    WalkForwardConfig,
+    WalkForwardSplitter,
+    aggregate_fold_metrics,
+    fold_metrics_from_predictions,
+    walk_forward_evaluate,
+)
 from .features import FeatureBuilder, FeatureConfig, default_indicator_stack
 from .labels import (
     LabelConfig,
@@ -27,13 +37,21 @@ from .labels import (
 )
 
 __all__ = [
+    "DEFAULT_PERIODS_PER_YEAR",
     "FeatureBuilder",
     "FeatureConfig",
-    "default_indicator_stack",
+    "FoldMetrics",
+    "FoldSplit",
     "LabelConfig",
     "TripleBarrierConfig",
+    "WalkForwardConfig",
+    "WalkForwardSplitter",
+    "aggregate_fold_metrics",
     "class_balance_report",
+    "default_indicator_stack",
+    "fold_metrics_from_predictions",
     "forward_return_labels",
     "print_class_balance",
     "triple_barrier_labels",
+    "walk_forward_evaluate",
 ]
