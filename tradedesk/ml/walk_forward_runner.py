@@ -53,6 +53,7 @@ __all__ = [
     "WalkForwardRunConfig",
     "WalkForwardRunResult",
     "build_dataset",
+    "build_dataset_directional",
     "load_dukascopy_bidask_minutes",
     "run_walk_forward",
 ]
@@ -214,6 +215,83 @@ def build_dataset(
     return X_valid, y_binary, fr_valid
 
 
+def build_dataset_directional(
+    bars: pd.DataFrame,
+    horizon: int,
+    *,
+    feature_config: FeatureConfig | None = None,
+) -> tuple[pd.DataFrame, pd.Series, pd.Series, pd.Series]:
+    """Spread-aware variant of :func:`build_dataset` (RAD-908).
+
+    Builds aligned ``(X, y_binary, fr_long, fr_short)`` where:
+
+    * ``X`` — feature matrix from :class:`FeatureBuilder`.
+    * ``y_binary`` — ``Int64`` series in ``{0, 1}``. Derived from
+      :func:`forward_return_labels` with ``spread_aware=True`` and
+      ``neutral_band=0`` and mapped via ``(raw == 1).astype(int64)`` —
+      ``1`` only where the long round-trip is profitable, ``0`` otherwise
+      (covers down, flat, and the spread-aware "no clear edge" rows).
+    * ``fr_long`` — per-bar **long** round-trip return, i.e.
+      ``bid_close[t+h] / ask_close[t] - 1``. Positive when going long is
+      profitable.
+    * ``fr_short`` — per-bar **short** round-trip return, i.e.
+      ``bid_close[t] / ask_close[t+h] - 1``. Positive when going short is
+      profitable.
+
+    Args:
+        bars: 1-minute bid/ask OHLC frame as returned by
+            :func:`load_dukascopy_bidask_minutes`. Must include
+            ``bid_close`` and ``ask_close`` columns.
+        horizon: Forward look ``h`` in bars.
+        feature_config: Optional :class:`FeatureConfig` override.
+
+    Returns:
+        ``(X, y_binary, fr_long, fr_short)`` all aligned on the same
+        DatetimeIndex (intersection of feature warmup and label tail).
+
+    Raises:
+        ValueError: ``horizon < 1`` or missing required columns.
+    """
+    if horizon < 1:
+        raise ValueError("horizon must be >= 1")
+    missing = [c for c in ("bid_close", "ask_close") if c not in bars.columns]
+    if missing:
+        raise ValueError(
+            f"build_dataset_directional requires columns {missing} in input bars"
+        )
+
+    builder = FeatureBuilder(config=feature_config)
+    X = builder.transform(bars)
+
+    label_cfg = LabelConfig(horizon=horizon, neutral_band=0.0, spread_aware=True)
+    raw_labels = forward_return_labels(bars, label_cfg)
+
+    bid = bars["bid_close"].astype(float)
+    ask = bars["ask_close"].astype(float)
+    long_fr = bid.shift(-horizon) / ask - 1.0
+    short_fr = bid / ask.shift(-horizon) - 1.0
+    long_fr.name = "forward_return_long"
+    short_fr.name = "forward_return_short"
+
+    aligned_labels = raw_labels.reindex(X.index)
+    aligned_long = long_fr.reindex(X.index)
+    aligned_short = short_fr.reindex(X.index)
+    valid = (
+        aligned_labels.notna()
+        & aligned_long.notna()
+        & aligned_short.notna()
+    )
+
+    X_valid = X.loc[valid]
+    fr_long_valid = aligned_long.loc[valid].astype(float)
+    fr_short_valid = aligned_short.loc[valid].astype(float)
+    raw_int = aligned_labels.loc[valid].astype("int64")
+    y_binary = (raw_int == 1).astype("int64")
+    y_binary.name = "y"
+
+    return X_valid, y_binary, fr_long_valid, fr_short_valid
+
+
 # --------------------------------------------------------------- run config
 
 
@@ -225,6 +303,12 @@ class WalkForwardRunConfig:
     train window with 3-month test folds, ``embargo`` matching ``purge =
     horizon`` so the gap absorbs both label overlap and short-term feature
     autocorrelation.
+
+    Set ``spread_aware=True`` (RAD-908) to switch labels to the ask-to-bid
+    round-trip variant and feed direction-aware long/short forward returns
+    into :func:`walk_forward_evaluate`. The mid-price ``label_neutral_band``
+    is ignored on the spread-aware path — round-trip costs are baked into
+    the returns rather than into a flat band.
     """
 
     symbol: str = "EURUSD"
@@ -241,6 +325,7 @@ class WalkForwardRunConfig:
     )
     label_neutral_band: float = 0.0
     periods_per_year: int = MINUTES_PER_TRADING_YEAR
+    spread_aware: bool = False
 
 
 @dataclass(frozen=True)
@@ -300,13 +385,25 @@ def run_walk_forward(
 
     per_horizon: dict[int, pd.DataFrame] = {}
     for horizon in cfg.horizons:
-        log.info("Building dataset for horizon=%d", horizon)
-        X, y, fr = build_dataset(
-            bars,
-            horizon=horizon,
-            feature_config=cfg.feature_config,
-            label_neutral_band=cfg.label_neutral_band,
+        log.info(
+            "Building dataset for horizon=%d (spread_aware=%s)",
+            horizon,
+            cfg.spread_aware,
         )
+        if cfg.spread_aware:
+            X, y, fr_long, fr_short = build_dataset_directional(
+                bars,
+                horizon=horizon,
+                feature_config=cfg.feature_config,
+            )
+        else:
+            X, y, fr_long = build_dataset(
+                bars,
+                horizon=horizon,
+                feature_config=cfg.feature_config,
+                label_neutral_band=cfg.label_neutral_band,
+            )
+            fr_short = None
 
         splitter_config = WalkForwardConfig(
             train_window=cfg.train_window_bars,
@@ -331,7 +428,8 @@ def run_walk_forward(
             y,
             splitter,
             model_factory=factory,
-            forward_returns=fr,
+            forward_returns=fr_long,
+            forward_returns_short=fr_short,
             threshold=cfg.threshold,
             periods_per_year=cfg.periods_per_year,
         )

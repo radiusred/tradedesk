@@ -274,6 +274,72 @@ def test_fold_metrics_with_forward_returns_populates_sharpe_and_drawdown() -> No
     assert m.max_drawdown <= 0.0
 
 
+def test_fold_metrics_directional_returns_use_short_leg_on_short_positions() -> None:
+    # Two long, two short, one flat. Long leg pays +1bp, short leg pays +5bp —
+    # symmetric (positions * fr_long) would price both legs at +1bp.
+    p_up = np.array([0.9, 0.9, 0.1, 0.1, 0.5])
+    y = np.array([1, 1, 0, 0, 1], dtype=np.int64)
+    fr_long = np.array([1e-4, 1e-4, 1e-4, 1e-4, 1e-4])
+    fr_short = np.array([5e-4, 5e-4, 5e-4, 5e-4, 5e-4])
+    m_dir = fold_metrics_from_predictions(
+        fold=0,
+        n_train=10,
+        train_start=0,
+        train_end=10,
+        test_start=10,
+        test_end=15,
+        y_true=y,
+        p_up=p_up,
+        forward_returns=fr_long,
+        forward_returns_short=fr_short,
+        threshold=0.55,
+    )
+    # 4 actionable trades; flat row drops out.
+    assert m_dir.trade_count == 4
+    # Sharpe is finite and positive (every trade is profitable on its own leg).
+    assert np.isfinite(m_dir.sharpe)
+    # Compare against the symmetric path where short rows pay only -fr_long.
+    m_sym = fold_metrics_from_predictions(
+        fold=0,
+        n_train=10,
+        train_start=0,
+        train_end=10,
+        test_start=10,
+        test_end=15,
+        y_true=y,
+        p_up=p_up,
+        forward_returns=fr_long,
+        threshold=0.55,
+    )
+    # Symmetric path treats the short leg as -fr_long → -1bp (a loss).
+    # Returns split between +1bp (longs) and -1bp (shorts) → mu == 0 → NaN
+    # Sharpe (zero std after symmetric cancellation also acceptable).
+    # Either way, the directional Sharpe must differ from the symmetric one.
+    if np.isfinite(m_sym.sharpe):
+        assert m_dir.sharpe != m_sym.sharpe
+
+
+def test_fold_metrics_directional_short_without_long_raises() -> None:
+    n = 4
+    rng = np.random.default_rng(0)
+    p_up = rng.uniform(0, 1, n)
+    y = rng.integers(0, 2, n).astype(np.int64)
+    fr_short = rng.normal(0.0, 1e-4, n)
+    with pytest.raises(ValueError, match="forward_returns_short requires"):
+        fold_metrics_from_predictions(
+            fold=0,
+            n_train=10,
+            train_start=0,
+            train_end=10,
+            test_start=10,
+            test_end=10 + n,
+            y_true=y,
+            p_up=p_up,
+            forward_returns=None,
+            forward_returns_short=fr_short,
+        )
+
+
 def test_fold_metrics_no_forward_returns_emits_nan_risk_metrics() -> None:
     n = 32
     rng = np.random.default_rng(0)

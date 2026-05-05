@@ -12,6 +12,7 @@ from tradedesk.ml.walk_forward_runner import (
     MINUTES_PER_TRADING_YEAR,
     WalkForwardRunConfig,
     build_dataset,
+    build_dataset_directional,
 )
 
 
@@ -99,6 +100,50 @@ class TestBuildDataset:
         assert (y_band == 0).all() or (y_band.mean() < 0.05)
 
 
+class TestBuildDatasetDirectional:
+    """Spread-aware ``build_dataset_directional`` (RAD-908)."""
+
+    def test_alignment_and_round_trip_relations(self) -> None:
+        bars = _synthetic_minute_bars(800, seed=3, bid_ask_spread=2e-5)
+        cfg = FeatureConfig(
+            return_windows=(1, 5),
+            moment_windows=(15,),
+            include_microstructure=False,
+            include_time_features=False,
+        )
+        X, y, fr_long, fr_short = build_dataset_directional(
+            bars, horizon=15, feature_config=cfg
+        )
+        assert len(X) == len(y) == len(fr_long) == len(fr_short) > 0
+        assert X.index.equals(y.index)
+        assert X.index.equals(fr_long.index)
+        assert X.index.equals(fr_short.index)
+        assert set(np.unique(y)).issubset({0, 1})
+        assert np.isfinite(fr_long.to_numpy()).all()
+        assert np.isfinite(fr_short.to_numpy()).all()
+        # If the legs were symmetric (no spread) fr_long + fr_short would be
+        # ~0 everywhere; with a positive spread it must be strictly negative
+        # on average because the round-trip cost shows up on both sides.
+        assert (fr_long + fr_short).mean() < 0.0
+
+    def test_horizon_strips_tail(self) -> None:
+        bars = _synthetic_minute_bars(400, seed=4)
+        cfg = FeatureConfig(
+            return_windows=(1, 5),
+            moment_windows=(15,),
+            include_microstructure=False,
+            include_time_features=False,
+        )
+        X_h15, *_ = build_dataset_directional(bars, horizon=15, feature_config=cfg)
+        X_h60, *_ = build_dataset_directional(bars, horizon=60, feature_config=cfg)
+        assert len(X_h15) - len(X_h60) == pytest.approx(60 - 15, abs=1)
+
+    def test_missing_bidask_columns_raises(self) -> None:
+        bars = _synthetic_minute_bars(64, seed=5).drop(columns=["bid_close"])
+        with pytest.raises(ValueError, match="bid_close"):
+            build_dataset_directional(bars, horizon=15)
+
+
 class TestWalkForwardRunConfigDefaults:
     """Sanity-check the default config exposed publicly."""
 
@@ -113,3 +158,7 @@ class TestWalkForwardRunConfigDefaults:
 
     def test_defaults_use_default_horizons(self) -> None:
         assert DEFAULT_HORIZONS == (15, 60)
+
+    def test_spread_aware_default_off(self) -> None:
+        cfg = WalkForwardRunConfig()
+        assert cfg.spread_aware is False
