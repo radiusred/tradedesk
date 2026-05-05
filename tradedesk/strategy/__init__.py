@@ -7,9 +7,19 @@ market/chart streams they need, and override :meth:`on_price_update` and/or
 
 from .base import BaseStrategy, Signal
 from .events import SignalGeneratedEvent
+from .ml_direction_strategy import (
+    MLDirectionConfig,
+    MLDirectionStrategy,
+    ProbabilityModel,
+    probability_to_signal,
+)
 
 __all__ = [
     "BaseStrategy",
+    "MLDirectionConfig",
+    "MLDirectionStrategy",
+    "ProbabilityModel",
     "Signal",
     "SignalGeneratedEvent",
+    "probability_to_signal",
 ]
