@@ -133,5 +133,6 @@ select = ["E", "F", "I", "TID"]
 "tradedesk/portfolio/*" = ["TID251"]
 "tradedesk/recording/*" = ["TID251"]
 "tradedesk/ml/*" = ["TID251"]
+"tradedesk/research/*" = ["TID251"]
 # 3. Allow relative import to top level to prevent circular deps
 "tradedesk/**/*.py" = ["TID252"]
