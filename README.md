@@ -341,6 +341,7 @@ See the `docs/` directory for:
 -   Settings and operational tunables
 -   Operational resilience and monitoring
 -   ML label engineering (`docs/ml_labels_guide.md`)
+-   Research methodology guide (`docs/research_methodology_guide.md`)
 
 Public package entry points are grouped under:
 
@@ -349,6 +350,7 @@ Public package entry points are grouped under:
 -   `tradedesk.execution.backtest`
 -   `tradedesk.portfolio`
 -   `tradedesk.recording`
+-   `tradedesk.research`
 -   `tradedesk.strategy`
 
 
@@ -360,6 +362,7 @@ transparency.
 - docs/strategy_guide.md
 - docs/indicator_guide.md
 - docs/crash-recovery.md
+- docs/research_methodology_guide.md
 
 ## Contributing
 
