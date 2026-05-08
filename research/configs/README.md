@@ -1,7 +1,10 @@
 # Backtest config templates
 
 Standardized YAML config templates for each stage of the four-stage research
-pipeline. Use these instead of hand-rolling a config so that:
+pipeline. These files are public-safe because they define the schema and review
+discipline only; they do not contain real parameter values or measured results.
+
+Use these instead of hand-rolling a config so that:
 
 - the **research metadata** (hypothesis, pre-registered targets, kill gates) is
   captured next to the runnable backtest config — same file, same review
@@ -23,19 +26,36 @@ Stages 1 and 2 are the ones that consume backtest configs and are templated
 here. Stage 3 runs out of broker DEMO and Stage 4 is production — no template
 needed.
 
+## Public/private boundary
+
+This directory may contain:
+
+- generic templates with placeholder values
+- process documentation explaining the research fields
+
+Do not commit to this public repository:
+
+- instantiated configs with real strategy parameters for a live research run
+- `measured:` blocks populated with actual backtest outcomes
+- any config or note that names a strategy alongside measured results
+
+Create filled-in copies in a private workspace or private repository such as
+`ig_trader`, then keep only the sanitized template here.
+
 ## How to use
 
 1. Copy the appropriate template to `configs/<archetype>_<stage>.yaml` in
-   whatever runner repo you are working in (e.g. ig_trader/configs/).
+   the private runner repo you are working in (for example
+   `ig_trader/configs/`).
 2. Fill in **every field marked `# REQUIRED`** under `research:` before any
    data is touched. This is the pre-registration: it locks the hypothesis and
    pass gates *before* you see results.
 3. Fill in `portfolio:` and `strategies:` per the runner's existing schema.
-4. Run the backtest. Record measured values in the file's `measured:` block
-   (or in the kill memo if the candidate is killed).
+4. Run the backtest. Record measured values only in the private copy of the
+   config or its corresponding private kill memo.
 5. If pass gates are met, advance to the next stage by copying the next
    template and inheriting fields where useful. If the kill gate fires, file a
-   kill memo in `research/killstack/`.
+   private kill memo using `research/killstack/_template.md`.
 
 ## Why pre-register?
 
