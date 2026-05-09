@@ -20,7 +20,10 @@ def _prepare_graphs(
     equity = pd.read_csv(equity_file)
 
     round_trips["exit_ts"] = pd.to_datetime(round_trips["exit_ts"])
-    round_trips["month"] = round_trips["exit_ts"].dt.to_period("M")
+    _exit_ts = round_trips["exit_ts"]
+    if _exit_ts.dt.tz is not None:
+        _exit_ts = _exit_ts.dt.tz_convert("UTC").dt.tz_localize(None)
+    round_trips["month"] = _exit_ts.dt.to_period("M")
     equity["timestamp"] = pd.to_datetime(equity["timestamp"])
 
     # 1. Monthly Performance Heatmap

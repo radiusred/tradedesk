@@ -1,8 +1,15 @@
 """Tests for tradedesk.recording.report – analysis report preparation."""
 
+import csv
+import warnings
+from pathlib import Path
+
+import matplotlib
 import pytest
 
 from tradedesk.recording import report
+
+matplotlib.use("Agg")
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -586,3 +593,50 @@ class TestBuildInstrumentData:
         result = report._build_instrument_data(rt_rows)
         assert len(result["AAA"]) == 2
         assert len(result["BBB"]) == 1
+
+
+# ---------------------------------------------------------------------------
+# _prepare_graphs — timezone warning regression
+# ---------------------------------------------------------------------------
+
+
+def _write_csv(path: Path, headers: list[str], rows: list[dict[str, str]]) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with open(path, "w", newline="") as f:
+        writer = csv.DictWriter(f, fieldnames=headers)
+        writer.writeheader()
+        writer.writerows(rows)
+
+
+@pytest.mark.parametrize(
+    "timestamps",
+    [
+        ("2026-01-15T12:00:00Z", "2026-02-10T08:00:00Z"),
+        ("2026-01-15T17:30:00+05:30", "2026-02-10T13:30:00+05:30"),
+    ],
+    ids=["utc", "offset-plus0530"],
+)
+def test_prepare_graphs_no_timezone_warning(tmp_path: Path, timestamps: tuple[str, str]) -> None:
+    ts1, ts2 = timestamps
+    rt_headers = ["instrument", "exit_ts", "pnl", "mae_pnl"]
+    rt_rows = [
+        {"instrument": "com.example.inst1", "exit_ts": ts1, "pnl": "10.50", "mae_pnl": "5.0"},
+        {"instrument": "com.example.inst1", "exit_ts": ts2, "pnl": "-3.00", "mae_pnl": "1.5"},
+    ]
+    eq_headers = ["timestamp", "equity"]
+    eq_rows = [
+        {"timestamp": ts1, "equity": "1000.0"},
+        {"timestamp": ts2, "equity": "1007.5"},
+    ]
+
+    rt_file = tmp_path / "round_trips.csv"
+    eq_file = tmp_path / "equity.csv"
+    _write_csv(rt_file, rt_headers, rt_rows)
+    _write_csv(eq_file, eq_headers, eq_rows)
+
+    with warnings.catch_warnings():
+        warnings.simplefilter("error", UserWarning)
+        try:
+            report._prepare_graphs(rt_file, eq_file)
+        except UserWarning as exc:
+            pytest.fail(f"UserWarning emitted during _prepare_graphs: {exc}")
