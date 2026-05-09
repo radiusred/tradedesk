@@ -280,6 +280,17 @@ class TestPrepareExposureData:
         assert total == 0
         assert data[0]["pct_trades"] == 0
 
+    def test_drops_portfolio_row(self):
+        metrics = [
+            _metric(instrument="PORTFOLIO", round_trips="30", fills="60"),
+            _metric(instrument="AAA", round_trips="20", fills="40"),
+            _metric(instrument="BBB", round_trips="10", fills="20"),
+        ]
+        data, total = report._prepare_exposure_data(metrics)
+        assert total == 30
+        assert {row["instrument"] for row in data} == {"AAA", "BBB"}
+        assert data[0]["pct_trades"] == pytest.approx(66.67, abs=0.1)
+
 
 # ---------------------------------------------------------------------------
 # _prepare_risk_adj_data

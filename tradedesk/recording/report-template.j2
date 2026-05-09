@@ -4,10 +4,12 @@
 
 {% set pm = portfolio_metrics|first -%}
 
-The "{{ output_path.name }}" back test ran over a period of **{{ equity_daily|length }} days** producing a final PnL of **{{ "%.2f"|format(pm.final_equity|float) }}** from **{{ pm.round_trips }}** round trips with a maximum draw down of **{{ "%.2f"|format(pm.max_dd|float|abs) }}** 
+The "{{ output_path.name }}" back test ran over a period of **{{ equity_daily|length }} days** producing a final PnL of **{{ "%.2f"|format(pm.final_equity|float) }}** from **{{ pm.round_trips }}** round trips with a maximum draw down of **{{ "%.2f"|format(pm.max_dd|float|abs) }}**
 
+{% if graphs %}
 ![equity](./graphs/equity_curve.png)
 *Portfolio equity curve*
+{% endif %}
 
 ### Portfolio key facts
 
@@ -99,8 +101,10 @@ The "{{ output_path.name }}" back test ran over a period of **{{ equity_daily|le
 
 ### Portfolio Diversification
 
-![correlation](./graphs/instrument_correlation.png)   
+{% if graphs %}
+![correlation](./graphs/instrument_correlation.png)
 *Instrument correlation (lower is generally better)*
+{% endif %}
 
 ### Performance Similarity (Euclidean Distance):
 
@@ -125,8 +129,10 @@ The "{{ output_path.name }}" back test ran over a period of **{{ equity_daily|le
 
 ## 8. Time-Based Performance Evolution
 
-![heatmap](./graphs/monthly_pnl_heatmap.png)   
+{% if graphs %}
+![heatmap](./graphs/monthly_pnl_heatmap.png)
 *Time based PnL visualisation per instrument*
+{% endif %}
 
 | Instrument | Final PnL | Peak PnL | Max. DD | Trades in DD |
 |------------|----------:|---------:|--------:|-------------:|
@@ -212,9 +218,10 @@ The "{{ output_path.name }}" back test ran over a period of **{{ equity_daily|le
 ## 6. Maximum Favorable/Adverse Excursion (MFE/MAE) Analysis
 
 {% if mfe_mae_data %}
-
-![mae](./graphs/mae_vs_pnl.png)   
+{% if graphs %}
+![mae](./graphs/mae_vs_pnl.png)
 *MAE vs PnL*
+{% endif %}
 
 | Instrument | Avg MFE | Avg MAE | MFE/PnL | MAE/PnL |
 |------------|--------:|--------:|--------:|--------:|
