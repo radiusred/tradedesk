@@ -18,7 +18,6 @@ from tradedesk.data_sources.cot import (
     load_contract_history,
 )
 
-
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
@@ -171,7 +170,8 @@ def test_iter_cot_rows_filters_by_contract_and_date(tmp_path: Path):
             _disagg_row("2010-01-05", "088691", 100_000, 50_000, 30_000),  # GOLD
             _disagg_row("2010-01-05", "067651", 200_000, 80_000, 90_000),  # WTI
             _disagg_row("2010-01-12", "088691", 110_000, 55_000, 25_000),  # GOLD
-            _disagg_row("2017-01-03", "088691", 120_000, 60_000, 20_000),  # GOLD (out of date range)
+            # GOLD (out of date range)
+            _disagg_row("2017-01-03", "088691", 120_000, 60_000, 20_000),
         ],
     )
 
