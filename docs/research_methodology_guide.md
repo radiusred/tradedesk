@@ -100,41 +100,40 @@ below) and not retested for the same reason.
 Stages 1 and 2 consume backtest configs (see templates below). Stages 3
 and 4 run against the broker.
 
-### Backtest config templates (`research/configs/`)
+### Backtest config templates
 
-Stage-gated YAML templates for Stages 1 and 2 live in
-[`research/configs/`](../research/configs/):
+Stage-gated YAML templates for Stages 1 and 2 are maintained privately
+(outside this public repo) in `ig_trader/configs/`:
 
-- [`discovery.template.yaml`](../research/configs/discovery.template.yaml) — Stage 1 discovery run
-- [`validation.template.yaml`](../research/configs/validation.template.yaml) — Stage 2 validation run with walk-forward
+- `discovery.template.yaml` — Stage 1 discovery run
+- `validation.template.yaml` — Stage 2 validation run with walk-forward
 
 Usage:
 
 1. Copy the appropriate template to `configs/<archetype>_<stage>.yaml` in
-   the runner repo (e.g. `ig_trader/configs/`).
+   the runner repo (`ig_trader/configs/`).
 2. Fill in every field marked `# REQUIRED` under the `research:` block
    **before** any data is touched. This is the pre-registration: it locks
    the hypothesis and pass gates before results are visible.
 3. Fill in `portfolio:` and `strategies:` per the runner's existing schema.
 4. Run the backtest. Record measured values in the `measured:` block.
 5. If pass gates are met, copy the next template. If a kill gate fires, file a
-   kill memo in `research/killstack/`.
+   kill memo in the private kill-stack (see below).
 
 The `research:` block is additive; runners that do not recognise it can
 ignore it. A separate linter can validate the block independently.
 
-### Kill-stack (`research/killstack/`)
+### Kill-stack
 
-Archetypes that have been killed at any stage are recorded in
-[`research/killstack/`](../research/killstack/) as Markdown memos. Each
-memo captures:
+Archetypes that have been killed at any stage are recorded as Markdown
+memos in the **private** `ig_trader` repo (under `research/killstack/`).
+Strategy results and pass/fail figures must never be committed to this
+public repo (see RAD-1022). Each memo captures:
 
 - the archetype and resolution at which it died
 - the exact kill reason (Sharpe, spread absorption, OOS degradation, or
   correlation) with measured values
 - any specific conditions that would permit a future revival
-
-Template: [`research/killstack/_template.md`](../research/killstack/_template.md).
 
 **When to file:** immediately after a kill gate fires. One memo per killed
 archetype × resolution. If the same archetype is later revived and re-killed
