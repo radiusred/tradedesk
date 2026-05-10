@@ -8,8 +8,8 @@ Overview
   - tradedesk.portfolio: portfolio management, risk budgeting, and multi-instrument coordination.
   - tradedesk.execution: execution adapters (IG for live trading, Dukascopy paths for backtests).
   - tradedesk.recording: trade lifecycle tracking, metrics, and reporting.
-  - tradedesk.research: strategy research tools — walk-forward harness, correlation gate, stage-gated backtest config templates, and kill-stack memo structure.
-  - tradedesk.ml: machine-learning building blocks — feature engineering, walk-forward CV, XGBoost direction classifier (Phase 6).
+  - tradedesk.research: research helpers such as walk-forward tooling, correlation gates, and public configuration templates.
+  - tradedesk.ml: machine-learning building blocks for feature engineering, labels, walk-forward CV, and model wrappers.
 
 Data Flow (high level)
 - Market data events flow into strategies via the event system.

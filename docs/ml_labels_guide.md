@@ -1,7 +1,7 @@
 # Label engineering (`tradedesk.ml.labels`)
 
-Phase 6 — supervised labels for the XGBoost direction
-classifier. Two label families and a class-balance reporter.
+`tradedesk.ml.labels` provides two supervised label families plus a
+class-balance reporter.
 
 ## Forward-return binary labels
 
@@ -97,7 +97,6 @@ print_class_balance({
 
 Both label families read **only** bars at index `>= t` for the entry
 side and bars at indices `t+1 .. t+horizon` for the forward side. The
-trailing `horizon` rows are explicitly NA. The leakage gate
-The leakage gate (Comp 4) verifies that a deliberately-leaky feature paired
-with these labels collapses OOS — confirmation that the labels do not
-themselves leak.
+trailing `horizon` rows are explicitly NA. The test suite includes a
+deliberately leaky feature canary to help verify that the labels do not
+themselves introduce forward-looking information.
