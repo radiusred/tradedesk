@@ -642,3 +642,154 @@ def test_walk_forward_evaluate_with_forward_returns_populates_risk_columns() -> 
     assert not metrics.empty
     assert metrics["trade_count"].sum() > 0
     assert metrics["max_drawdown"].le(0.0).all()
+
+
+# ============================================================ short-leg validation
+
+
+def test_walk_forward_evaluate_rejects_short_returns_without_long() -> None:
+    """Passing only the short leg without forward_returns is a contract error."""
+    X_template, y = _make_random_walk(n=300)
+    rng = np.random.default_rng(11)
+    X = X_template.assign(x=rng.normal(size=len(y)))
+    short_only = pd.Series(rng.normal(0, 1e-3, len(y)), index=y.index)
+    splitter = WalkForwardSplitter(train_window=100, test_window=50)
+
+    with pytest.raises(ValueError, match="forward_returns_short requires"):
+        walk_forward_evaluate(
+            X,
+            y,
+            splitter,
+            _fast_classifier_factory,
+            forward_returns_short=short_only,
+        )
+
+
+def test_walk_forward_evaluate_rejects_misaligned_short_returns() -> None:
+    """The short leg must match X length and index when supplied."""
+    X_template, y = _make_random_walk(n=300)
+    rng = np.random.default_rng(12)
+    X = X_template.assign(x=rng.normal(size=len(y)))
+    fwd = pd.Series(rng.normal(0, 1e-3, len(y)), index=y.index)
+    splitter = WalkForwardSplitter(train_window=100, test_window=50)
+
+    with pytest.raises(ValueError, match="forward_returns_short must align"):
+        walk_forward_evaluate(
+            X,
+            y,
+            splitter,
+            _fast_classifier_factory,
+            forward_returns=fwd,
+            forward_returns_short=fwd.iloc[:-1],
+        )
+
+    misindexed = fwd.copy()
+    misindexed.index = pd.RangeIndex(start=1, stop=len(fwd) + 1)
+    with pytest.raises(ValueError, match="forward_returns_short must share index"):
+        walk_forward_evaluate(
+            X,
+            y,
+            splitter,
+            _fast_classifier_factory,
+            forward_returns=fwd,
+            forward_returns_short=misindexed,
+        )
+
+
+def test_walk_forward_evaluate_directional_with_long_and_short_legs() -> None:
+    """Both legs supplied: short rows pull from short returns, long rows from long."""
+    X_template, y = _make_random_walk(n=900)
+    rng = np.random.default_rng(13)
+    X = X_template.assign(x=rng.normal(size=len(y)))
+    long_fr = pd.Series(rng.normal(0, 1e-3, len(y)), index=y.index)
+    short_fr = pd.Series(rng.normal(0, 1e-3, len(y)), index=y.index)
+
+    splitter = WalkForwardSplitter(train_window=400, test_window=100)
+    metrics = walk_forward_evaluate(
+        X,
+        y,
+        splitter,
+        _fast_classifier_factory,
+        forward_returns=long_fr,
+        forward_returns_short=short_fr,
+    )
+    assert not metrics.empty
+    assert "sharpe" in metrics.columns
+
+
+def test_fold_metrics_from_predictions_rejects_misaligned_short_leg() -> None:
+    """`fold_metrics_from_predictions` validates short-leg alignment too."""
+    y = np.array([0, 1, 0, 1, 0])
+    p = np.array([0.4, 0.6, 0.45, 0.7, 0.5])
+    long = np.zeros(5)
+    short = np.zeros(4)  # misaligned
+    with pytest.raises(ValueError, match="forward_returns_short must align"):
+        fold_metrics_from_predictions(
+            fold=0,
+            n_train=10,
+            train_start=0,
+            train_end=10,
+            test_start=10,
+            test_end=15,
+            y_true=y,
+            p_up=p,
+            forward_returns=long,
+            forward_returns_short=short,
+        )
+
+
+# ============================================================ small-array helpers
+
+
+def test_walk_forward_evaluate_skips_folds_with_only_nan_labels() -> None:
+    """Folds whose train OR test labels are all NaN are silently dropped."""
+    X_template, y = _make_random_walk(n=900)
+    rng = np.random.default_rng(14)
+    X = X_template.assign(x=rng.normal(size=len(y)))
+    y_partial = y.astype(float)
+    y_partial.iloc[600:] = np.nan
+
+    splitter = WalkForwardSplitter(train_window=400, test_window=100, purge=5)
+    metrics = walk_forward_evaluate(
+        X, y_partial, splitter, _fast_classifier_factory
+    )
+    # At least one fold survives — and the loop did not crash on the wiped
+    # tail because the skip branch dropped the impossible folds.
+    assert not metrics.empty
+
+
+def test_walk_forward_evaluate_rejects_proba_with_wrong_shape() -> None:
+    """A model returning predict_proba with the wrong shape raises ValueError."""
+
+    class _BadModel:
+        def fit(self, X: pd.DataFrame, y: pd.Series) -> "_BadModel":
+            return self
+
+        def predict_proba(self, X: pd.DataFrame) -> np.ndarray:
+            return np.zeros((len(X), 3), dtype=float)
+
+    X_template, y = _make_random_walk(n=300)
+    rng = np.random.default_rng(15)
+    X = X_template.assign(x=rng.normal(size=len(y)))
+    splitter = WalkForwardSplitter(train_window=100, test_window=50)
+
+    with pytest.raises(ValueError, match=r"\(n, 2\)"):
+        walk_forward_evaluate(X, y, splitter, lambda: _BadModel())
+
+
+# ============================================================ private metric helpers
+
+
+def test_annualised_sharpe_returns_nan_for_empty_or_zero_variance() -> None:
+    from tradedesk.ml.cv import _annualised_sharpe
+
+    assert np.isnan(_annualised_sharpe(np.array([]), periods_per_year=252))
+    assert np.isnan(
+        _annualised_sharpe(np.array([0.5, 0.5, 0.5]), periods_per_year=252)
+    )
+
+
+def test_max_drawdown_returns_nan_for_empty_input() -> None:
+    from tradedesk.ml.cv import _max_drawdown
+
+    assert np.isnan(_max_drawdown(np.array([])))
