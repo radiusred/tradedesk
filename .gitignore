@@ -15,3 +15,7 @@ __pycache__
 *.egg
 build
 dist/
+
+# Private strategy research must never be committed to the public repo.
+# See RAD-1022 — keep all research artefacts out of git.
+research/
