@@ -4,3 +4,11 @@ repos:
   rev: v0.14.13
   hooks:
     - id: ruff-format
+- repo: local
+  hooks:
+    - id: block-private-research
+      name: Block private/research content
+      entry: scripts/hooks/block-private-research.sh
+      language: script
+      always_run: true
+      pass_filenames: false
