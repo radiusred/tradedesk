@@ -19,6 +19,20 @@ pip install -e '.[dev]'
 uv sync --extra dev
 ```
 
+4. Install the [pre-commit](https://pre-commit.com/) hooks. These run
+   `ruff-format` and a guard that blocks private strategy research from being
+   committed to this public repo (paths under `research/`, `killstack/`, or
+   anything containing `private`):
+
+```bash
+pre-commit install
+```
+
+   The guard script lives at `scripts/hooks/block-private-research.sh` and is
+   also runnable on demand against the staged tree. If a commit is rejected
+   with `Blocked: private research content detected — commit to ig_trader
+   instead`, the listed files belong in the private `ig_trader` repo, not here.
+
 ## Code Standards
 
 ### Python Version
