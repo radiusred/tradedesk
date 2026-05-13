@@ -14,8 +14,10 @@ environments.
 - Event-driven strategy execution
 - Shared strategy model across backtest and live runs
 - Market data aggregation and indicators
+- External market datasets and parsers
 - Portfolio orchestration and risk controls
 - Trade recording, metrics, and reporting
+- Research helpers for walk-forward validation and correlation checks
 - Optional machine-learning helpers in `tradedesk.ml`
 
 The design goal is portability: strategies react to framework events rather
@@ -49,11 +51,13 @@ pip install -e '.[dev]'
 The public package is organized into a small set of domains:
 
 - `tradedesk.marketdata` for market events, subscriptions, aggregation, and indicators
+- `tradedesk.data_sources` for external datasets such as CFTC COT history
 - `tradedesk.strategy` for strategy base classes and strategy-facing events
 - `tradedesk.portfolio` for portfolio state, sizing, and risk policies
 - `tradedesk.execution` for live execution adapters and order handling
 - `tradedesk.execution.backtest` for simulated execution and replay
 - `tradedesk.recording` for lifecycle events, trade records, and metrics
+- `tradedesk.research` for walk-forward and correlation-gate helpers
 - `tradedesk.ml` for optional feature engineering, labels, and walk-forward tooling
 
 For a broader system map, see [ARCHITECTURE.md](ARCHITECTURE.md).
@@ -127,6 +131,22 @@ runtimes can back off or alert explicitly.
 See [docs/ml_guide.md](docs/ml_guide.md) for the ML overview and
 [docs/ml_labels_guide.md](docs/ml_labels_guide.md) for label-specific details.
 
+## External data sources
+
+`tradedesk.data_sources` exposes loaders and parsers for datasets that sit
+outside the live IG / Dukascopy execution paths.
+
+The current public surface includes CFTC Commitment of Traders history via:
+
+- `CFTC_CONTRACTS` for the built-in contract-code map
+- `load_contract_history(...)` for one-contract weekly history loads
+- `download_cot_zip(...)` and `iter_cot_rows(...)` for lower-level archive access
+- `cot_release_date(...)` for the Tuesday-to-Friday publication offset used by
+  strategies that key off report release timing
+
+See [docs/data_sources_guide.md](docs/data_sources_guide.md) for usage and API
+notes.
+
 ## Documentation
 
 Start with:
@@ -141,6 +161,7 @@ Start with:
 - [docs/settings.md](docs/settings.md)
 - [docs/operational_resilience.md](docs/operational_resilience.md)
 - [docs/crash-recovery.md](docs/crash-recovery.md)
+- [docs/data_sources_guide.md](docs/data_sources_guide.md)
 - [docs/ml_guide.md](docs/ml_guide.md)
 
 ## Contributing
