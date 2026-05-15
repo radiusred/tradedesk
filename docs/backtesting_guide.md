@@ -93,10 +93,6 @@ Key points:
 - Prefer `await request_order(OrderRequest(...))` inside strategies. That route goes
   through `OrderExecutionHandler`, so any configured spread limits or `order_gate`
   callbacks still apply.
-- The same order path also preserves recording parity: when a live client does
-  not publish its own position-open events, `OrderExecutionHandler` emits
-  `PositionOpenedEvent` after a confirmed opening fill so recording subscribers
-  see the same entry lifecycle boundary as they do in backtests.
 
 ---
 
@@ -287,7 +283,10 @@ Output artefacts are written to `out_dir/`:
 |------|----------|
 | `trades.csv` | One row per fill, including executable price, raw price, and any recorded spread/slippage/commission/financing/admin costs |
 | `round_trips.csv` | One row per reconstructed round trip, including exit reason, excursions, and aggregated cost columns |
+| `metrics.csv` | Portfolio and per-instrument summary metrics such as round trips, win rate, drawdown, expectancy, and Sharpe ratio |
 | `equity.csv` | Equity curve snapshots |
+| `equity_daily.csv` | End-of-day equity snapshots for daily performance tracking |
+| `exposure.csv` | Per-instrument time-in-market and long/short exposure summary |
 | `analysis.md` | Human-readable performance summary; includes an overnight financing/admin-fee section when those costs were recorded |
 
 ---
@@ -302,9 +301,7 @@ When `run_portfolio` (or `portfolio.run()`) executes:
 4. Each completed candle calls `portfolio._handle_event(CandleClosedEvent)`:
    - Publishes the event to the dispatcher (recording subscribers react here)
    - Calls `portfolio.on_candle_close(event)` → `strategy.on_candle_close(event)`
-5. `BacktestClient.place_market_order_confirmed` simulates the fill at the
-   candle's close price, and the execution path emits the matching lifecycle
-   events used by recording
+5. `BacktestClient.place_market_order` simulates fills at the candle's close price
 6. `SessionEndedEvent` fires on completion
 
 ---
@@ -321,19 +318,6 @@ run_portfolio(
     client_factory=IGClient,
 )
 ```
-
-When you switch to IG-backed DEMO or LIVE runs, `request_order(...)` still goes
-through the same execution handler. If the client does not publish its own
-position-open event, tradedesk emits `PositionOpenedEvent` after the confirmed
-opening fill so recording subscribers and custom observers continue to receive
-entry lifecycle events.
-
-Live sessions may also fetch IG historical candles during strategy warmup or
-post-reconciliation exit checks. If IG reports that the account has exhausted
-its historical-data allowance, tradedesk treats that as a distinct quota failure
-rather than retrying it as a generic 403/auth issue. The default warmup and
-reconciliation paths log the failure and continue the session without priming
-that history fetch.
 
 ---
 
