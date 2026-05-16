@@ -17,6 +17,8 @@ def period_to_seconds(period: str) -> int:
         return n * 60
     if p == "HOUR":
         return 60 * 60
+    if p == "DAY":
+        return 24 * 60 * 60
 
     raise ValueError(f"Unsupported period: {period!r}")
 
