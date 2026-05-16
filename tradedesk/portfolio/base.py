@@ -13,7 +13,6 @@ from tradedesk.events import (
     SessionStartedEvent,
     get_dispatcher,
 )
-from tradedesk.ml.defaults import PORTFOLIO_WATCHDOG_THRESHOLD_S
 from tradedesk.execution import Client, OrderExecutionHandler
 from tradedesk.marketdata import (
     CandleClosedEvent,
@@ -22,6 +21,7 @@ from tradedesk.marketdata import (
     MarketDataReceivedEvent,
     MarketSubscription,
 )
+from tradedesk.ml.defaults import PORTFOLIO_WATCHDOG_THRESHOLD_S
 
 log = logging.getLogger(__name__)
 
