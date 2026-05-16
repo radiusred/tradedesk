@@ -2,7 +2,7 @@
 
 import pytest
 
-from tradedesk.marketdata.aggregation import CandleAggregator, choose_base_period
+from tradedesk.marketdata.aggregation import CandleAggregator, choose_base_period, period_to_seconds
 from tradedesk.types import Candle
 
 
@@ -217,3 +217,173 @@ def test_aggregates_seconds_into_minute() -> None:
     assert out.open == pytest.approx(10.0)
     assert out.close == pytest.approx(12.0)
     assert out.high == pytest.approx(12.0)
+
+
+# ---------------------------------------------------------------------------
+# period_to_seconds — all families
+# ---------------------------------------------------------------------------
+
+
+def test_period_to_seconds_second() -> None:
+    assert period_to_seconds("SECOND") == 1
+
+
+def test_period_to_seconds_minute_family() -> None:
+    assert period_to_seconds("1MINUTE") == 60
+    assert period_to_seconds("5MINUTE") == 300
+    assert period_to_seconds("15MINUTE") == 900
+    assert period_to_seconds("30MINUTE") == 1800
+
+
+def test_period_to_seconds_hour() -> None:
+    assert period_to_seconds("HOUR") == 3600
+
+
+def test_period_to_seconds_day() -> None:
+    assert period_to_seconds("DAY") == 86400
+
+
+def test_period_to_seconds_case_insensitive() -> None:
+    assert period_to_seconds("second") == 1
+    assert period_to_seconds("1minute") == 60
+    assert period_to_seconds("hour") == 3600
+    assert period_to_seconds("day") == 86400
+
+
+def test_period_to_seconds_whitespace_stripped() -> None:
+    assert period_to_seconds("  5MINUTE  ") == 300
+
+
+def test_period_to_seconds_invalid_raises() -> None:
+    with pytest.raises(ValueError, match="Unsupported period"):
+        period_to_seconds("WEEK")
+    with pytest.raises(ValueError, match="Unsupported period"):
+        period_to_seconds("INVALID")
+
+
+# ---------------------------------------------------------------------------
+# CandleAggregator — UTC bucket-boundary tests
+# ---------------------------------------------------------------------------
+
+# base_ts = 2026-01-01 00:00:00 UTC in milliseconds
+_BASE_TS = 1767225600000
+
+
+def test_utc_midnight_boundary() -> None:
+    """Candle arriving just after midnight triggers rollover of the prev-hour bucket."""
+    agg = CandleAggregator(target_period="HOUR", base_period="SECOND")
+    inst = "EURUSD"
+
+    # Candle at 2025-12-31 23:30:00 UTC  →  bucket [23:00, 00:00)
+    c_prev = Candle(timestamp=_BASE_TS - 30 * 60 * 1000, open=1.1, high=1.2, low=1.0, close=1.15)
+    assert agg.update(instrument=inst, candle=c_prev) is None
+
+    # Candle at 2026-01-01 00:15:00 UTC  →  bucket [00:00, 01:00)  — triggers rollover
+    c_next = Candle(timestamp=_BASE_TS + 15 * 60 * 1000, open=1.2, high=1.3, low=1.1, close=1.25)
+    out = agg.update(instrument=inst, candle=c_next)
+
+    assert out is not None
+    # Emitted timestamp == end of the [23:00, 00:00) bucket == midnight in ms
+    assert out.timestamp == str(_BASE_TS)
+    assert out.open == pytest.approx(1.1)
+    assert out.close == pytest.approx(1.15)
+
+
+def test_utc_hour_boundary() -> None:
+    """Candle at 01:00 triggers rollover of the 00:xx bucket."""
+    agg = CandleAggregator(target_period="HOUR", base_period="SECOND")
+    inst = "EURUSD"
+
+    # 00:45 → bucket [00:00, 01:00)
+    c1 = Candle(timestamp=_BASE_TS + 45 * 60 * 1000, open=2.0, high=2.5, low=1.9, close=2.3)
+    assert agg.update(instrument=inst, candle=c1) is None
+
+    # 01:15 → bucket [01:00, 02:00) — triggers rollover
+    c2 = Candle(timestamp=_BASE_TS + 75 * 60 * 1000, open=2.3, high=2.6, low=2.2, close=2.4)
+    out = agg.update(instrument=inst, candle=c2)
+
+    assert out is not None
+    assert out.timestamp == str(_BASE_TS + 3600 * 1000)  # 01:00 in ms
+    assert out.open == pytest.approx(2.0)
+    assert out.high == pytest.approx(2.5)
+
+
+def test_utc_minute_boundary() -> None:
+    """Candle at 00:05:00 triggers rollover of the 00:00–00:05 bucket."""
+    agg = CandleAggregator(target_period="5MINUTE", base_period="SECOND")
+    inst = "EURUSD"
+
+    # 00:03 → bucket [00:00, 00:05)
+    c1 = Candle(timestamp=_BASE_TS + 3 * 60 * 1000, open=1.0, high=1.1, low=0.9, close=1.05)
+    assert agg.update(instrument=inst, candle=c1) is None
+
+    # 00:07 → bucket [00:05, 00:10) — triggers rollover
+    c2 = Candle(timestamp=_BASE_TS + 7 * 60 * 1000, open=1.05, high=1.2, low=1.0, close=1.1)
+    out = agg.update(instrument=inst, candle=c2)
+
+    assert out is not None
+    assert out.timestamp == str(_BASE_TS + 5 * 60 * 1000)  # 00:05:00 in ms
+    assert out.open == pytest.approx(1.0)
+    assert out.close == pytest.approx(1.05)
+
+
+# ---------------------------------------------------------------------------
+# CandleAggregator — edge cases
+# ---------------------------------------------------------------------------
+
+
+def test_first_candle_returns_none() -> None:
+    """A single candle with no prior state never triggers emission (empty period)."""
+    agg = CandleAggregator(target_period="5MINUTE", base_period="SECOND")
+    c = Candle(timestamp=_BASE_TS, open=1.0, high=1.1, low=0.9, close=1.0)
+    assert agg.update(instrument="EURUSD", candle=c) is None
+    # No second candle — aggregator has accumulated one candle but emits nothing
+    assert "EURUSD" in agg._state
+
+
+def test_exact_boundary_tick_opens_next_bucket() -> None:
+    """A tick at the exact bucket boundary belongs to the NEXT bucket and triggers rollover."""
+    agg = CandleAggregator(target_period="5MINUTE", base_period="SECOND")
+    inst = "EURUSD"
+
+    # 00:00:00 → bucket [00:00, 00:05)
+    c1 = Candle(timestamp=_BASE_TS, open=1.0, high=1.1, low=0.9, close=1.05, volume=10)
+    assert agg.update(instrument=inst, candle=c1) is None
+
+    # 00:05:00 exactly → bucket [00:05, 00:10) — triggers rollover, opens new bucket
+    c2 = Candle(
+        timestamp=_BASE_TS + 5 * 60 * 1000, open=1.06, high=1.2, low=1.0, close=1.1, volume=20
+    )
+    out = agg.update(instrument=inst, candle=c2)
+
+    assert out is not None
+    assert out.timestamp == str(_BASE_TS + 5 * 60 * 1000)  # bucket end == c2 ts
+    # c2 is now the open of the NEW bucket, not part of the emitted candle
+    assert out.open == pytest.approx(1.0)
+    assert out.close == pytest.approx(1.05)
+    assert out.volume == pytest.approx(10.0)
+
+
+def test_out_of_order_ticks_within_same_bucket() -> None:
+    """Ticks arriving out of wall-clock order but within the same bucket are merged normally."""
+    agg = CandleAggregator(target_period="5MINUTE", base_period="SECOND")
+    inst = "EURUSD"
+
+    # 00:04:00 arrives first
+    c_late = Candle(timestamp=_BASE_TS + 4 * 60 * 1000, open=1.0, high=1.5, low=0.9, close=1.4)
+    assert agg.update(instrument=inst, candle=c_late) is None
+
+    # 00:01:00 arrives second — same 5-min bucket, earlier timestamp
+    c_early = Candle(timestamp=_BASE_TS + 1 * 60 * 1000, open=0.95, high=1.2, low=0.85, close=1.1)
+    assert agg.update(instrument=inst, candle=c_early) is None
+
+    # 00:06:00 — triggers rollover
+    c_trigger = Candle(timestamp=_BASE_TS + 6 * 60 * 1000, open=1.1, high=1.3, low=1.0, close=1.2)
+    out = agg.update(instrument=inst, candle=c_trigger)
+
+    assert out is not None
+    # open = c_late (first seen), high = max(1.5, 1.2), low = min(0.9, 0.85)
+    assert out.open == pytest.approx(1.0)
+    assert out.high == pytest.approx(1.5)
+    assert out.low == pytest.approx(0.85)
+    assert out.close == pytest.approx(1.1)  # c_early is last accumulated
