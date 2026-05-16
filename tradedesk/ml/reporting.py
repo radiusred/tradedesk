@@ -48,6 +48,10 @@ from tradedesk.ml.cv import (
     fold_metrics_from_predictions,
     walk_forward_evaluate,
 )
+from tradedesk.ml.defaults import (
+    LEAKAGE_SANITY_LEAK_NOISE,
+    LEAKAGE_SANITY_THRESHOLD_ACCURACY,
+)
 from tradedesk.ml.model import DirectionClassifier  # noqa: E402
 
 __all__ = [
@@ -360,8 +364,8 @@ def run_leakage_sanity(
     splitter: WalkForwardSplitter | None = None,
     n: int = 1500,
     seed: int = 0,
-    leak_noise: float = 0.05,
-    threshold_accuracy: float = 0.95,
+    leak_noise: float = LEAKAGE_SANITY_LEAK_NOISE,
+    threshold_accuracy: float = LEAKAGE_SANITY_THRESHOLD_ACCURACY,
 ) -> LeakageSanityResult:
     """Re-run the synthetic future-leak fixture against ``model_factory``.
 
