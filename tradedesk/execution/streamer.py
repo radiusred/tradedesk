@@ -1,3 +1,10 @@
+"""Abstract ``Streamer`` interface for real-time or replay market data feeds.
+
+Concrete streamers (Lightstreamer, WebSocket, file-backed replay) implement
+``connect``/``disconnect``/``run`` and dispatch incoming updates into a
+``StreamConsumer`` supplied by the engine.
+"""
+
 import abc
 
 from tradedesk.types import StreamConsumer

@@ -1,3 +1,11 @@
+"""Instrument identity and tick-level ``MarketData`` value types.
+
+``Instrument`` is the immutable, broker-agnostic representation of a tradable
+asset (symbol plus optional ISIN/RIC/name/asset class and a per-broker code
+map, with ISIN format and Luhn checksum validation). ``MarketData`` is a
+lightweight value object carrying a single bid/offer tick update.
+"""
+
 import re
 from dataclasses import dataclass, field
 from typing import Any, Dict, Optional
