@@ -1,3 +1,10 @@
+"""Domain events for the execution/order-routing lifecycle.
+
+Defines ``OrderRequestEvent`` (published by strategies to request execution)
+and ``OrderCompletedEvent`` (published once the broker reports the outcome).
+The request/result pair is correlated by a shared ``request_id``.
+"""
+
 from ..events import DomainEvent, event
 from ..types import OrderRequest, OrderResult
 

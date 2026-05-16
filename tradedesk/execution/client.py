@@ -1,3 +1,10 @@
+"""Abstract broker/provider ``Client`` interface for order and market-data access.
+
+Concrete implementations (e.g. the IG REST/Lightstreamer client) supply the
+historical candle, snapshot, ordering, position, and stream-factory methods
+that the execution engine uses to talk to a venue.
+"""
+
 import abc
 from typing import Any
 

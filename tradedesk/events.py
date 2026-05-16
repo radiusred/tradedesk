@@ -1,3 +1,11 @@
+"""Core domain-event primitives and the async ``EventDispatcher``.
+
+Defines the ``@event`` decorator and the ``DomainEvent`` base class used across
+tradedesk, plus session lifecycle events (``SessionStartedEvent``,
+``SessionEndedEvent``, ``SessionReadyEvent``) and the dispatcher that fans
+events out to subscribed sync or async handlers.
+"""
+
 import asyncio
 import logging
 from abc import ABC

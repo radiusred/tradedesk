@@ -1,3 +1,10 @@
+"""Rolling candle history container used by indicator and strategy code.
+
+Provides ``ChartHistory``, a per-(instrument, timeframe) bounded deque of
+``Candle`` objects with helpers for extracting OHLC/volume numpy arrays for
+indicator calculations.
+"""
+
 from collections import deque
 from typing import Optional
 

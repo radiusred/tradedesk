@@ -1,3 +1,11 @@
+"""Subscription value types describing what market data a strategy consumes.
+
+Defines the abstract ``Subscription`` plus concrete ``MarketSubscription``
+(tick-by-tick bid/offer updates) and ``ChartSubscription`` (OHLCV candles at a
+chosen timeframe). Each subscription knows how to render its Lightstreamer item
+name and field list.
+"""
+
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
 

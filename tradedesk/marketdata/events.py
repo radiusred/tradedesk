@@ -1,3 +1,10 @@
+"""Domain events emitted by the market-data pipeline.
+
+Defines ``CandleClosedEvent`` (fired when a candle bar completes for a given
+instrument/timeframe) and ``MarketDataReceivedEvent`` (fired on each tick-level
+update).
+"""
+
 from ..events import DomainEvent, event
 from ..types import Candle
 from .instrument import MarketData

@@ -1,3 +1,12 @@
+"""Core public value types shared across the tradedesk package.
+
+Defines the ``Candle`` OHLCV record (with derived ``typical_price``, ``mid``,
+``range`` helpers and timestamp normalisation), the ``Direction`` enum, the
+``StreamConsumer`` and ``DataProvider`` protocols used by streaming/historical
+data backends, and the ``OrderRequest``/``OrderResult`` order-execution
+payloads.
+"""
+
 from __future__ import annotations
 
 import copy

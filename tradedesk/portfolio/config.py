@@ -1,3 +1,11 @@
+"""Portfolio-level configuration value types for backtest and live runs.
+
+Defines ``PortfolioConfig`` (shared instrument list, risk budget, ATR-based
+sizing parameters) and its specialisations ``BacktestPortfolioConfig`` (cache
+dir, date range, spread adjustment) and ``LivePortfolioConfig`` (live-only
+period, reconciliation cadence, margin/journal toggles).
+"""
+
 from __future__ import annotations
 
 from dataclasses import dataclass
