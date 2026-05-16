@@ -13,6 +13,7 @@ from tradedesk.events import (
     SessionStartedEvent,
     get_dispatcher,
 )
+from tradedesk.ml.defaults import PORTFOLIO_WATCHDOG_THRESHOLD_S
 from tradedesk.execution import Client, OrderExecutionHandler
 from tradedesk.marketdata import (
     CandleClosedEvent,
@@ -68,7 +69,7 @@ class BasePortfolio(ABC):
         self._order_gate = order_gate
         self.last_update = datetime.now(timezone.utc)
         self.subscriptions: list[MarketSubscription | ChartSubscription] = []
-        self.watchdog_threshold: float = 60.0
+        self.watchdog_threshold: float = PORTFOLIO_WATCHDOG_THRESHOLD_S
 
     @abstractmethod
     async def on_candle_close(self, event: CandleClosedEvent) -> None:
