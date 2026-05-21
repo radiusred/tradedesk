@@ -28,11 +28,22 @@ class TestPeriodToRestResolution:
         assert cache.period_to_rest_resolution("DAY") == "DAY"
         assert cache.period_to_rest_resolution("WEEK") == "WEEK"
 
+    def test_minute_aliases(self) -> None:
+        """NMINUTE form used by strategy period configs (RAD-2112)."""
+        client = _make_client()
+        cache = IGMetadataCache(client)
+        assert cache.period_to_rest_resolution("60MINUTE") == "HOUR"
+        assert cache.period_to_rest_resolution("240MINUTE") == "HOUR_4"
+        assert cache.period_to_rest_resolution("1440MINUTE") == "DAY"
+
     def test_ig_native_passthrough(self) -> None:
         client = _make_client()
         cache = IGMetadataCache(client)
         assert cache.period_to_rest_resolution("MINUTE_5") == "MINUTE_5"
         assert cache.period_to_rest_resolution("HOUR_4") == "HOUR_4"
+        assert cache.period_to_rest_resolution("MINUTE_2") == "MINUTE_2"
+        assert cache.period_to_rest_resolution("HOUR_3") == "HOUR_3"
+        assert cache.period_to_rest_resolution("MONTH") == "MONTH"
 
     def test_unknown_passthrough(self) -> None:
         client = _make_client()
