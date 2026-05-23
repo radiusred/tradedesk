@@ -16,6 +16,7 @@ from .subscriptions import (
     MarketSubscription,
     Subscription,
 )
+from .timeframe import Timeframe
 
 __all__ = [
     "CandleAggregator",
@@ -29,4 +30,5 @@ __all__ = [
     "MarketData",
     "MarketSubscription",
     "Subscription",
+    "Timeframe",
 ]

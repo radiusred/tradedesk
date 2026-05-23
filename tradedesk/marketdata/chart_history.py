@@ -11,6 +11,7 @@ from typing import Optional
 import numpy as np
 
 from ..types import Candle
+from .timeframe import Timeframe
 
 
 class ChartHistory:
@@ -29,17 +30,20 @@ class ChartHistory:
         highs = history.get_highs(count=20)  # Last 20 candles only
     """
 
-    def __init__(self, instrument: str, period: str, max_length: int = 200):
+    def __init__(self, instrument: str, period: str | Timeframe, max_length: int = 200):
         """
         Initialize chart history.
 
         Args:
             instrument: Instrument identifier
-            period: Timeframe (e.g., "5MINUTE", "HOUR")
+            period: Timeframe — prefer a :class:`Timeframe` member; legacy
+                strings (``"5MINUTE"``, ``"HOUR"``, …) are coerced.
             max_length: Maximum number of candles to retain
         """
         self.instrument = instrument
-        self.period = period
+        self.period: Timeframe = (
+            period if isinstance(period, Timeframe) else Timeframe.from_value(period)
+        )
         self.max_length = max_length
         self.candles: deque[Candle] = deque(maxlen=max_length)
 

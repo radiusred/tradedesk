@@ -9,6 +9,8 @@ name and field list.
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
 
+from .timeframe import Timeframe
+
 
 @dataclass
 class Subscription(ABC):
@@ -61,23 +63,32 @@ class ChartSubscription(Subscription):
 
     Attributes:
         instrument: The instrument identifier (e.g., 'CS.D.GBPUSD.TODAY.IP').
-        period: The candle period. Common values include "1MINUTE", "5MINUTE",
-            "15MINUTE", "30MINUTE", "HOUR", "4HOUR", "DAY", "WEEK".
+        period: The candle timeframe.  Prefer :class:`Timeframe` members
+            (e.g. ``Timeframe.MINUTE_5``); plain strings such as ``"5MINUTE"``,
+            ``"HOUR"``, ``"DAY"`` etc. are still accepted and coerced via
+            :meth:`Timeframe.from_value`.
         fields: An optional list of custom provider-specific fields to subscribe
             to. If `None`, a default set of OHLCV and volume fields is used.
 
     Example:
         SUBSCRIPTIONS = [
-            ChartSubscription("CS.D.GBPUSD.TODAY.IP", "5MINUTE"),
-            ChartSubscription("CS.D.EURUSD.TODAY.IP", "1MINUTE"),
+            ChartSubscription("CS.D.GBPUSD.TODAY.IP", Timeframe.MINUTE_5),
+            ChartSubscription("CS.D.EURUSD.TODAY.IP", Timeframe.MINUTE_1),
         ]
     """
 
-    period: str
+    period: str | Timeframe
     fields: list[str] | None = field(default=None)
 
     def __post_init__(self) -> None:
-        """Set default fields if not provided."""
+        """Normalise the period to a :class:`Timeframe` and set default fields."""
+        # Coerce eagerly so a typo'd period string fails at construction time
+        # rather than silently propagating through to Lightstreamer item names.
+        # Keeping ``period`` typed as ``str | Timeframe`` (the field stays a
+        # Timeframe, which IS a str via StrEnum) preserves the public string
+        # API for existing callers.
+        if not isinstance(self.period, Timeframe):
+            self.period = Timeframe.from_value(self.period)
         if self.fields is None:
             # Standard OHLCV fields plus metadata
             self.fields = [

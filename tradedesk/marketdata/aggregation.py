@@ -4,22 +4,31 @@ from dataclasses import dataclass
 from typing import Optional
 
 from ..types import Candle
+from .timeframe import Timeframe
 
 
-def period_to_seconds(period: str) -> int:
-    """Convert period string to seconds."""
+def period_to_seconds(period: str | Timeframe) -> int:
+    """Convert a period (string or :class:`Timeframe`) to seconds.
+
+    Falls back to ad-hoc ``NMINUTE`` parsing for any string that the enum
+    doesn't recognise — preserves the old "unsupported -> ValueError" contract.
+    """
+    if isinstance(period, Timeframe):
+        return period.to_seconds()
+    try:
+        return Timeframe.from_value(period).to_seconds()
+    except ValueError:
+        # Fall through to the legacy ad-hoc parser below for any uncommon
+        # NMINUTE values (e.g. "7MINUTE") that don't have an enum member.
+        pass
+
     p = period.strip().upper()
-
-    if p == "SECOND":
-        return 1
     if p.endswith("MINUTE"):
-        n = int(p.removesuffix("MINUTE"))
+        try:
+            n = int(p.removesuffix("MINUTE"))
+        except ValueError as e:
+            raise ValueError(f"Unsupported period: {period!r}") from e
         return n * 60
-    if p == "HOUR":
-        return 60 * 60
-    if p == "DAY":
-        return 24 * 60 * 60
-
     raise ValueError(f"Unsupported period: {period!r}")
 
 
