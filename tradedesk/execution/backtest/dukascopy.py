@@ -17,6 +17,7 @@ cause an immediate exit with a message to re-run ``tradedesk-dc-export``.
 from __future__ import annotations
 
 import io
+import logging
 import re
 import sys
 from collections.abc import Iterator
@@ -28,6 +29,8 @@ import pandas as pd
 import zstandard as zstd
 
 from tradedesk.types import Candle
+
+log = logging.getLogger(__name__)
 
 # ---------------------------------------------------------------------------
 # Internal helpers
@@ -85,7 +88,23 @@ def _load_daily_candles(path: Path) -> pd.DataFrame | None:
             return None
         df["timestamp"] = pd.to_datetime(df["timestamp"], utc=True)
         return df.set_index("timestamp")
-    except Exception:
+    except (
+        OSError,
+        UnicodeDecodeError,
+        zstd.ZstdError,
+        pd.errors.EmptyDataError,
+        pd.errors.ParserError,
+        KeyError,
+        ValueError,
+    ) as e:
+        # Surface skipped days so RAD-1920-style cache corruption is visible
+        # to operators instead of being silently dropped from backtests.
+        log.warning(
+            "Skipping unreadable Dukascopy cache file %s: %s: %s",
+            path,
+            type(e).__name__,
+            e,
+        )
         return None
 
 

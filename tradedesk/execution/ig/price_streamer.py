@@ -79,7 +79,7 @@ class RetryScheduler:
         try:
             SUBSCRIPTION_RETRIES.labels(kind=kind).inc()
             action()
-        except Exception:
+        except (RuntimeError, AttributeError, OSError):
             log.exception("Subscription retry action failed (kind=%s)", kind)
 
     async def cancel_all(self) -> None:
@@ -98,7 +98,7 @@ try:
         LightstreamerClient,
         Subscription,
     )
-except Exception:  # pragma: no cover
+except ImportError:  # pragma: no cover
     LightstreamerClient = None
     Subscription = None
 
@@ -168,7 +168,7 @@ class _MarketListener:
             }
 
             self._loop.call_soon_threadsafe(self._queue.put_nowait, data)
-        except Exception as e:
+        except (ValueError, TypeError, KeyError, AttributeError) as e:
             log.exception("Error processing market update: %s", e)
 
     def onSubscriptionError(self, code: Any, message: Any) -> None:
@@ -281,7 +281,7 @@ class _ChartListener:
             }
 
             self._loop.call_soon_threadsafe(self._queue.put_nowait, data)
-        except Exception as e:
+        except (ValueError, TypeError, KeyError, AttributeError) as e:
             log.exception("Error processing chart update: %s", e)
 
     def onSubscriptionError(self, code: Any, message: Any) -> None:
@@ -371,7 +371,7 @@ class Lightstreamer(Streamer):
         if self._ls_client is not None:
             try:
                 self._ls_client.disconnect()
-            except Exception:
+            except (RuntimeError, AttributeError, OSError):
                 log.exception("Lightstreamer disconnect failed")
 
     async def run(self, consumer: Any) -> None:

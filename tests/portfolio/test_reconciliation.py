@@ -324,7 +324,7 @@ class TestReconciliationManager:
     @pytest.mark.asyncio
     async def test_startup_broker_failure(self, manager, mock_client, mock_journal, mock_runner):
         """Broker fails, restore from journal."""
-        mock_client.get_positions.side_effect = Exception("Broker down")
+        mock_client.get_positions.side_effect = RuntimeError("Broker down")
         mock_journal.load.return_value = [_journal_entry(instrument="USDJPY", direction="long")]
 
         restored = await manager.reconcile_on_startup()

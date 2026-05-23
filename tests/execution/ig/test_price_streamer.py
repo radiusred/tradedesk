@@ -203,7 +203,7 @@ def test_market_onItemUpdate_exception_logged_not_raised(
 ) -> None:
     """When onItemUpdate raises internally, error is logged with exc_info and tick is dropped."""
     bad_update = MagicMock()
-    bad_update.getValue.side_effect = RuntimeError("parse failure")
+    bad_update.getValue.side_effect = AttributeError("parse failure")
 
     queue: asyncio.Queue[dict[str, Any]] = asyncio.Queue()
     listener = _MarketListener(
