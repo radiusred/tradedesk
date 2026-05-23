@@ -5,6 +5,7 @@ owns side-effecting concerns (broker calls, journal persistence, candle
 counters). All decision logic lives in :mod:`.policy`.
 """
 
+import asyncio
 import logging
 from typing import Any, cast
 
@@ -14,6 +15,7 @@ from ...marketdata import CandleClosedEvent
 from ..journal import JournalEntry, PositionJournal
 from ..runner import PortfolioRunner
 from ..types import ReconcilableStrategy
+from .metrics import RECONCILIATION_FAILURES
 from .policy import (
     apply_periodic_corrections,
     apply_startup_decisions,
@@ -23,6 +25,16 @@ from .policy import (
 from .result import reconcile
 
 log = logging.getLogger(__name__)
+
+# Broker-call failure modes we expect to recover from (network blips, HTTP
+# errors, rate-limit RuntimeErrors raised by IGClient._request, async
+# timeouts). Anything outside this set is a programming error and must
+# propagate so it is surfaced in monitoring.
+_BROKER_CALL_ERRORS: tuple[type[BaseException], ...] = (
+    RuntimeError,
+    OSError,
+    asyncio.TimeoutError,
+)
 
 
 class ReconciliationManager:
@@ -174,7 +186,8 @@ class ReconciliationManager:
 
         try:
             broker_positions = await self.client.get_positions()
-        except Exception:
+        except _BROKER_CALL_ERRORS:
+            RECONCILIATION_FAILURES.labels(operation="startup_get_positions").inc()
             log.exception(
                 "Failed to fetch broker positions for reconciliation; restoring from journal only"
             )
@@ -209,8 +222,12 @@ class ReconciliationManager:
         """Periodic check: sync local state to match broker (source of truth)."""
         try:
             broker_positions = await self.client.get_positions()
-        except Exception:
-            log.warning("Periodic reconciliation skipped: failed to fetch broker positions")
+        except _BROKER_CALL_ERRORS:
+            RECONCILIATION_FAILURES.labels(operation="periodic_get_positions").inc()
+            log.warning(
+                "Periodic reconciliation skipped: failed to fetch broker positions",
+                exc_info=True,
+            )
             return
 
         journal_positions = self._snapshot_local_state()
@@ -282,7 +299,8 @@ class ReconciliationManager:
                 log.info("Post-reconciliation: %s position was closed (exit condition met)", epic)
             else:
                 log.info("Post-reconciliation: %s position retained", epic)
-        except Exception:
+        except _BROKER_CALL_ERRORS:
+            RECONCILIATION_FAILURES.labels(operation="post_warmup_check").inc()
             log.exception("Post-reconciliation check failed for %s", epic)
 
     # ------------------------------------------------------------------
@@ -321,5 +339,6 @@ class ReconciliationManager:
                 balance.available,
                 utilisation,
             )
-        except Exception:
-            log.debug("Failed to fetch margin status")
+        except _BROKER_CALL_ERRORS:
+            RECONCILIATION_FAILURES.labels(operation="margin_status").inc()
+            log.warning("Failed to fetch margin status", exc_info=True)
