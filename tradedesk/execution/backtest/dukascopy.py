@@ -28,6 +28,7 @@ from typing import cast
 import pandas as pd
 import zstandard as zstd
 
+from tradedesk.marketdata.timeframe import Timeframe
 from tradedesk.types import Candle
 
 log = logging.getLogger(__name__)
@@ -108,9 +109,13 @@ def _load_daily_candles(path: Path) -> pd.DataFrame | None:
         return None
 
 
-def _period_to_pandas_rule(period: str) -> str:
+def _period_to_pandas_rule(period: str | Timeframe) -> str:
     """
-    Convert a tradedesk period string to a pandas resample rule.
+    Convert a tradedesk period to a pandas resample rule.
+
+    Prefers the :class:`Timeframe` enum (single source of truth), falling
+    back to ad-hoc parsing for uncommon NMINUTE / NH values that don't have
+    an enum member.
 
     Examples::
 
@@ -121,6 +126,14 @@ def _period_to_pandas_rule(period: str) -> str:
         "4H"       -> "4h"
         "1D"       -> "1D"
     """
+    if isinstance(period, Timeframe):
+        return period.to_dukascopy_rule()
+    try:
+        return Timeframe.from_value(period).to_dukascopy_rule()
+    except ValueError:
+        # Fall through for uncommon multipliers (e.g. "7MIN") not in the enum.
+        pass
+
     p = period.strip().upper()
     m = re.fullmatch(r"(\d+)(MIN(?:UTE)?|H(?:OUR)?|D(?:AY)?|W(?:EEK)?)", p)
     if not m:

@@ -254,9 +254,12 @@ def test_period_to_seconds_whitespace_stripped() -> None:
     assert period_to_seconds("  5MINUTE  ") == 300
 
 
+def test_period_to_seconds_week_supported() -> None:
+    # WEEK is now resolved via the Timeframe enum.
+    assert period_to_seconds("WEEK") == 7 * 86400
+
+
 def test_period_to_seconds_invalid_raises() -> None:
-    with pytest.raises(ValueError, match="Unsupported period"):
-        period_to_seconds("WEEK")
     with pytest.raises(ValueError, match="Unsupported period"):
         period_to_seconds("INVALID")
 

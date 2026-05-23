@@ -6,6 +6,8 @@ import logging
 from decimal import ROUND_DOWN, Decimal
 from typing import TYPE_CHECKING, Any
 
+from tradedesk.marketdata.timeframe import Timeframe
+
 if TYPE_CHECKING:
     from .client import IGClient
 
@@ -15,47 +17,23 @@ log = logging.getLogger(__name__)
 class IGMetadataCache:
     """Fetches and caches IG instrument/market metadata and dealing rules."""
 
-    _PERIOD_MAP: dict[str, str] = {
-        "1MINUTE": "MINUTE",
-        "2MINUTE": "MINUTE_2",
-        "3MINUTE": "MINUTE_3",
-        "5MINUTE": "MINUTE_5",
-        "10MINUTE": "MINUTE_10",
-        "15MINUTE": "MINUTE_15",
-        "30MINUTE": "MINUTE_30",
-        "60MINUTE": "HOUR",
-        "120MINUTE": "HOUR_2",
-        "180MINUTE": "HOUR_3",
-        "240MINUTE": "HOUR_4",
-        "1440MINUTE": "DAY",
-        "HOUR": "HOUR",
-        "2HOUR": "HOUR_2",
-        "3HOUR": "HOUR_3",
-        "4HOUR": "HOUR_4",
-        "DAY": "DAY",
-        "WEEK": "WEEK",
-        "MONTH": "MONTH",
-        # Pass IG-native formats through unchanged
-        "SECOND": "SECOND",
-        "MINUTE": "MINUTE",
-        "MINUTE_2": "MINUTE_2",
-        "MINUTE_3": "MINUTE_3",
-        "MINUTE_5": "MINUTE_5",
-        "MINUTE_10": "MINUTE_10",
-        "MINUTE_15": "MINUTE_15",
-        "MINUTE_30": "MINUTE_30",
-        "HOUR_2": "HOUR_2",
-        "HOUR_3": "HOUR_3",
-        "HOUR_4": "HOUR_4",
-    }
-
     def __init__(self, client: IGClient) -> None:
         self._client = client
         self._cache: dict[str, dict[str, Any]] = {}
 
-    def period_to_rest_resolution(self, period: str) -> str:
-        """Map tradedesk period strings to IG REST resolution strings."""
-        return self._PERIOD_MAP.get(period.upper(), period.upper())
+    def period_to_rest_resolution(self, period: str | Timeframe) -> str:
+        """Map a tradedesk period (string or :class:`Timeframe`) to IG REST resolution.
+
+        Unrecognised strings are upper-cased and passed through unchanged so
+        the IG REST call can return the actual server error (matches the
+        pre-enum behaviour relied on by callers and tests).
+        """
+        if isinstance(period, Timeframe):
+            return period.to_ig_resolution()
+        try:
+            return Timeframe.from_value(period).to_ig_resolution()
+        except ValueError:
+            return period.upper()
 
     async def get_market_snapshot(self, epic: str) -> dict[str, Any]:
         """Return the latest market snapshot for the given epic."""
