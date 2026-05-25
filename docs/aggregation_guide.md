@@ -222,6 +222,36 @@ for minute_candle in historical_1min_candles:
         await strategy.on_candle_close(aggregated)
 ```
 
+## Canonical timeframe strings: `Timeframe`
+
+The `target_period` / `base_period` arguments throughout this module accept
+either a canonical string (`"5MINUTE"`, `"HOUR"`, `"DAY"` …) or a member of
+the `tradedesk.marketdata.Timeframe` enum. The enum is a `StrEnum` whose
+values are the canonical strings, so it is interchangeable with bare strings
+in any call site that previously accepted one:
+
+```python
+from tradedesk.marketdata import CandleAggregator, Timeframe
+
+agg = CandleAggregator(
+    target_period=Timeframe.MINUTE_15,
+    base_period=Timeframe.MINUTE_1,
+)
+```
+
+`Timeframe` knows how to render itself for the destinations that matter:
+`to_ig_resolution()` for IG REST history requests, `to_dukascopy_rule()` for
+pandas resample on the Dukascopy cache, and `to_seconds()` for bar-length
+math. Use `Timeframe.from_value(value)` to coerce legacy shortforms
+(`"1MIN"`, `"60MINUTE"`, `"1440MINUTE"`, `"HOUR_4"` …) into the canonical
+member — that conversion is the same one used internally to normalise
+strings on the way to the broker, so call sites that adopt the enum cannot
+drift from the canonical form.
+
+Adopting the enum is encouraged but not required: bare strings still work
+and are coerced through `Timeframe.from_value` at the public API boundary,
+so call sites can be migrated incrementally.
+
 ## See Also
 
 - [Strategy Guide](strategy_guide.md) - Using aggregated candles in strategies
