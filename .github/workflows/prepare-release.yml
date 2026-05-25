@@ -6,6 +6,9 @@ on:
 jobs:
   call-reusable-release:
     uses: radiusred/.github/.github/workflows/reusable-release.yml@main
+    permissions:
+      contents: write
+      pull-requests: write
     with:
       approval_environment: release-approval
     secrets:
