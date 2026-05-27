@@ -363,6 +363,61 @@ def test_tff_exposes_asset_manager_and_leveraged_buckets(tmp_path: Path):
     assert r.commercial_net == -100
 
 
+def test_tff_historic_archive_us_datetime_dates(tmp_path: Path):
+    """The 2006-2016 TFF archive stores dates as US ``M/D/YYYY HH:MM:SS AM``.
+
+    Regression for the silent drop of all pre-2017 TFF history.
+    """
+    archive = tmp_path / "cftc"
+    archive.mkdir(parents=True)
+    # Consolidated historic TFF archive filename.
+    zp = archive / "fin_fut_txt_2006_2016.zip"
+    _write_zip(
+        zp,
+        header=_TFF_FULL_HEADER,
+        rows=[
+            [
+                "EURO FX - CHICAGO MERCANTILE EXCHANGE",
+                "100105",
+                "1/5/2010 12:00:00 AM",  # US datetime, not ISO
+                "099741",
+                "TFF",
+                "00",
+                "001",
+                "500000",
+                "100",
+                "200",
+                "300",
+                "50",
+                "400",
+                "250",
+            ],
+        ],
+    )
+    rows = list(
+        iter_cot_rows(
+            tmp_path,
+            CFTCReport.TFF,
+            date_from=date(2010, 1, 1),
+            date_to=date(2010, 12, 31),
+            contract_codes={"099741"},
+        )
+    )
+    assert len(rows) == 1
+    assert rows[0].report_date_tuesday == date(2010, 1, 5)
+    assert rows[0].asset_mgr_net == 250
+
+
+def test_parse_report_date_handles_both_formats():
+    from tradedesk.data_sources.cot import _parse_report_date
+
+    assert _parse_report_date("2024-06-04") == date(2024, 6, 4)
+    assert _parse_report_date("12/27/2016 12:00:00 AM") == date(2016, 12, 27)
+    assert _parse_report_date("1/5/2010 12:00:00 AM") == date(2010, 1, 5)
+    assert _parse_report_date("") is None
+    assert _parse_report_date("garbage") is None
+
+
 def test_disaggregated_rows_have_zero_tff_buckets(tmp_path: Path):
     archive = tmp_path / "cftc"
     archive.mkdir(parents=True)
