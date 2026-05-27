@@ -287,6 +287,109 @@ def test_iter_cot_rows_handles_blank_and_dot_integer_fields(tmp_path: Path):
 
 
 # ---------------------------------------------------------------------------
+# RAD-2987 — CME FX contracts + TFF Asset-Manager / Leveraged-Funds buckets
+# ---------------------------------------------------------------------------
+
+
+_TFF_FULL_HEADER = [
+    "Market_and_Exchange_Names",
+    "As_of_Date_In_Form_YYMMDD",
+    "Report_Date_as_YYYY-MM-DD",
+    "CFTC_Contract_Market_Code",
+    "CFTC_Market_Code",
+    "CFTC_Region_Code",
+    "CFTC_Commodity_Code",
+    "Open_Interest_All",
+    "Dealer_Positions_Long_All",
+    "Dealer_Positions_Short_All",
+    "Asset_Mgr_Positions_Long_All",
+    "Asset_Mgr_Positions_Short_All",
+    "Lev_Money_Positions_Long_All",
+    "Lev_Money_Positions_Short_All",
+]
+
+
+def test_fx_currency_contracts_registered():
+    """EUR/JPY/GBP CME currency futures are in the TFF report."""
+    for label in ("EURUSD", "JPYUSD", "GBPUSD"):
+        assert label in CFTC_CONTRACTS
+        assert CFTC_CONTRACTS[label].report is CFTCReport.TFF
+    assert CFTC_CONTRACTS["EURUSD"].code == "099741"
+    assert CFTC_CONTRACTS["JPYUSD"].code == "097741"
+    assert CFTC_CONTRACTS["GBPUSD"].code == "096742"
+
+
+def test_tff_exposes_asset_manager_and_leveraged_buckets(tmp_path: Path):
+    archive = tmp_path / "cftc"
+    archive.mkdir(parents=True)
+    zp = archive / "fut_fin_txt_2024.zip"
+    _write_zip(
+        zp,
+        header=_TFF_FULL_HEADER,
+        rows=[
+            [
+                "EURO FX - CHICAGO MERCANTILE EXCHANGE",
+                "240604",
+                "2024-06-04",
+                "099741",
+                "TFF",
+                "00",
+                "001",
+                "700000",  # OI
+                "100",  # dealer long
+                "200",  # dealer short
+                "300",  # asset-mgr long
+                "50",  # asset-mgr short
+                "400",  # leveraged long
+                "250",  # leveraged short
+            ],
+        ],
+    )
+    rows = list(
+        iter_cot_rows(
+            tmp_path,
+            CFTCReport.TFF,
+            date_from=date(2024, 1, 1),
+            date_to=date(2024, 12, 31),
+            contract_codes={"099741"},
+        )
+    )
+    assert len(rows) == 1
+    r = rows[0]
+    assert (r.dealer_long, r.dealer_short, r.dealer_net) == (100, 200, -100)
+    assert (r.asset_mgr_long, r.asset_mgr_short, r.asset_mgr_net) == (300, 50, 250)
+    assert (r.leveraged_long, r.leveraged_short, r.leveraged_net) == (400, 250, 150)
+    # Dealer bucket mirrored into commercial_* (back-compat).
+    assert r.commercial_net == -100
+
+
+def test_disaggregated_rows_have_zero_tff_buckets(tmp_path: Path):
+    archive = tmp_path / "cftc"
+    archive.mkdir(parents=True)
+    zp = archive / "fut_disagg_txt_2024.zip"
+    _write_zip(
+        zp,
+        header=_DISAGG_HEADER,
+        rows=[_disagg_row("2024-06-04", "088691", 100, 60, 20)],
+    )
+    rows = list(
+        iter_cot_rows(
+            tmp_path,
+            CFTCReport.DISAGGREGATED,
+            date_from=date(2024, 1, 1),
+            date_to=date(2024, 12, 31),
+            contract_codes={"088691"},
+        )
+    )
+    assert len(rows) == 1
+    r = rows[0]
+    assert r.commercial_net == 40  # producer/merchant
+    assert r.dealer_net == 0
+    assert r.asset_mgr_net == 0
+    assert r.leveraged_net == 0
+
+
+# ---------------------------------------------------------------------------
 # Mapping sanity
 # ---------------------------------------------------------------------------
 

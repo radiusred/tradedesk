@@ -37,6 +37,8 @@ from enum import Enum
 from pathlib import Path
 from typing import Iterable, Iterator
 
+from ._http import USER_AGENT
+
 log = logging.getLogger(__name__)
 
 
@@ -73,19 +75,28 @@ class CFTCContract:
 
 
 # RAD-1078 — initial mapping for the COT commercials-extreme strategy.
-# All seven contracts have been verified against the 2024 annual zip on 2026-05-09.
+# All seven original contracts verified against the 2024 annual zip 2026-05-09.
+# RAD-2987 — added CME currency futures (TFF) so FX trend-gating studies can
+# reference dealer / asset-manager / leveraged-fund positioning.  FX codes
+# verified against the 2026 TFF annual zip on 2026-05-27.
 CFTC_CONTRACTS: dict[str, CFTCContract] = {
     "GOLD": CFTCContract("GOLD", "088691", CFTCReport.DISAGGREGATED),
     "SILVER": CFTCContract("SILVER", "084691", CFTCReport.DISAGGREGATED),
     "WTI": CFTCContract("WTI", "067651", CFTCReport.DISAGGREGATED),
     "BRENT": CFTCContract("BRENT", "06765T", CFTCReport.DISAGGREGATED),
     "NATGAS": CFTCContract("NATGAS", "023651", CFTCReport.DISAGGREGATED),
-    # SP500 + 10Y T-Note are financial futures and live in the TFF report.
-    # The "Dealer/Intermediary" bucket is the closest TFF analogue of the
-    # disaggregated "Producer/Merchant" bucket; it is exposed via the
-    # ``commercial_*`` fields on :class:`COTRow`.
+    # SP500 + 10Y T-Note + CME currency futures are financial futures and live
+    # in the TFF report.  TFF splits positioning into Dealer/Intermediary,
+    # Asset-Manager and Leveraged-Funds buckets — all three are exposed on
+    # :class:`COTRow`.  The Dealer bucket is mirrored into ``commercial_*`` for
+    # backward compatibility with the RAD-1078 commercials-extreme strategy.
     "SP500": CFTCContract("SP500", "13874A", CFTCReport.TFF),
     "TNOTE10": CFTCContract("TNOTE10", "043602", CFTCReport.TFF),
+    # CME FX futures are quoted as foreign-currency/USD, i.e. a net-long
+    # position is bullish the base currency vs USD.
+    "EURUSD": CFTCContract("EURUSD", "099741", CFTCReport.TFF),  # Euro FX
+    "JPYUSD": CFTCContract("JPYUSD", "097741", CFTCReport.TFF),  # Japanese Yen
+    "GBPUSD": CFTCContract("GBPUSD", "096742", CFTCReport.TFF),  # British Pound
 }
 
 
@@ -96,10 +107,14 @@ class COTRow:
     ``commercial_*`` semantics depend on the report family:
 
     * Disaggregated → Producer/Merchant/Processor/User positions.
-    * TFF → Dealer/Intermediary positions (closest analogue).
+    * TFF → Dealer/Intermediary positions (closest analogue, mirrored here for
+      backward compatibility).
 
-    The :class:`COTRow.report` field records which family produced the row
-    so callers can tell the two apart.
+    The TFF-only bucket fields — ``dealer_*``, ``asset_mgr_*`` and
+    ``leveraged_*`` — carry the three Traders-in-Financial-Futures categories
+    used for FX/commodity trend gating (`RAD-2987`).  They are ``0`` for
+    Disaggregated rows, which have no such breakdown.  The :class:`COTRow.report`
+    field records which family produced the row so callers can tell them apart.
     """
 
     report_date_tuesday: date
@@ -111,6 +126,16 @@ class COTRow:
     commercial_long: int
     commercial_short: int
     commercial_net: int
+    # TFF positioning buckets (0 for Disaggregated rows).
+    dealer_long: int = 0
+    dealer_short: int = 0
+    dealer_net: int = 0
+    asset_mgr_long: int = 0
+    asset_mgr_short: int = 0
+    asset_mgr_net: int = 0
+    leveraged_long: int = 0
+    leveraged_short: int = 0
+    leveraged_net: int = 0
 
 
 def cot_release_date(report_date_tuesday: date) -> date:
@@ -188,7 +213,10 @@ def download_cot_zip(
     url = _zip_url(report, year)
     log.info("Downloading CFTC archive %s", url)
     tmp_path = out_path.with_suffix(out_path.suffix + ".part")
-    with urllib.request.urlopen(url) as resp, open(tmp_path, "wb") as fh:
+    # cftc.gov is fronted by Cloudflare, which 403s the default
+    # ``Python-urllib`` agent — send a descriptive User-Agent (RAD-2987).
+    req = urllib.request.Request(url, headers={"User-Agent": USER_AGENT})
+    with urllib.request.urlopen(req) as resp, open(tmp_path, "wb") as fh:
         # Stream in chunks so 12 MB historical zips do not blow up memory.
         while True:
             chunk = resp.read(64 * 1024)
@@ -248,13 +276,7 @@ def _parse_zip(
     CSV with quoted strings since ~2010).  ``contract_codes=None`` yields
     every contract in the archive.
     """
-    if report is CFTCReport.DISAGGREGATED:
-        long_col = "Prod_Merc_Positions_Long_All"
-        short_col = "Prod_Merc_Positions_Short_All"
-    elif report is CFTCReport.TFF:
-        long_col = "Dealer_Positions_Long_All"
-        short_col = "Dealer_Positions_Short_All"
-    else:
+    if report not in (CFTCReport.DISAGGREGATED, CFTCReport.TFF):
         raise ValueError(f"unsupported report family: {report!r}")
 
     with zipfile.ZipFile(zip_path) as zf:
@@ -279,20 +301,66 @@ def _parse_zip(
                     except ValueError:
                         log.debug("skipping unparseable report_date=%r", report_date_str)
                         continue
-                    long_v = _to_int(row.get(long_col) or "")
-                    short_v = _to_int(row.get(short_col) or "")
-                    oi = _to_int(row.get("Open_Interest_All") or "")
-                    yield COTRow(
-                        report_date_tuesday=rdate,
-                        release_date_friday=cot_release_date(rdate),
-                        cftc_code=code,
-                        market_name=(row.get("Market_and_Exchange_Names") or "").strip(),
-                        report=report,
-                        open_interest=oi,
-                        commercial_long=long_v,
-                        commercial_short=short_v,
-                        commercial_net=long_v - short_v,
-                    )
+                    yield _row_from_csv(row, code, rdate, report)
+
+
+def _col(row: dict[str, str], name: str) -> int:
+    return _to_int(row.get(name) or "")
+
+
+def _row_from_csv(
+    row: dict[str, str], code: str, rdate: date, report: CFTCReport
+) -> COTRow:
+    """Build a :class:`COTRow` from one parsed CSV record.
+
+    For Disaggregated rows the ``commercial_*`` fields hold Producer/Merchant
+    positions and the TFF-only buckets stay ``0``.  For TFF rows the Dealer
+    bucket is mirrored into ``commercial_*`` (back-compat) and the Dealer,
+    Asset-Manager and Leveraged-Funds buckets are populated explicitly.
+    """
+    oi = _col(row, "Open_Interest_All")
+    if report is CFTCReport.DISAGGREGATED:
+        comm_long = _col(row, "Prod_Merc_Positions_Long_All")
+        comm_short = _col(row, "Prod_Merc_Positions_Short_All")
+        return COTRow(
+            report_date_tuesday=rdate,
+            release_date_friday=cot_release_date(rdate),
+            cftc_code=code,
+            market_name=(row.get("Market_and_Exchange_Names") or "").strip(),
+            report=report,
+            open_interest=oi,
+            commercial_long=comm_long,
+            commercial_short=comm_short,
+            commercial_net=comm_long - comm_short,
+        )
+
+    # TFF
+    dealer_long = _col(row, "Dealer_Positions_Long_All")
+    dealer_short = _col(row, "Dealer_Positions_Short_All")
+    am_long = _col(row, "Asset_Mgr_Positions_Long_All")
+    am_short = _col(row, "Asset_Mgr_Positions_Short_All")
+    lev_long = _col(row, "Lev_Money_Positions_Long_All")
+    lev_short = _col(row, "Lev_Money_Positions_Short_All")
+    return COTRow(
+        report_date_tuesday=rdate,
+        release_date_friday=cot_release_date(rdate),
+        cftc_code=code,
+        market_name=(row.get("Market_and_Exchange_Names") or "").strip(),
+        report=report,
+        open_interest=oi,
+        commercial_long=dealer_long,
+        commercial_short=dealer_short,
+        commercial_net=dealer_long - dealer_short,
+        dealer_long=dealer_long,
+        dealer_short=dealer_short,
+        dealer_net=dealer_long - dealer_short,
+        asset_mgr_long=am_long,
+        asset_mgr_short=am_short,
+        asset_mgr_net=am_long - am_short,
+        leveraged_long=lev_long,
+        leveraged_short=lev_short,
+        leveraged_net=lev_long - lev_short,
+    )
 
 
 def iter_cot_rows(
