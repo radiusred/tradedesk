@@ -265,6 +265,35 @@ def _to_int(value: str) -> int:
     return int(float(s.replace(",", "")))
 
 
+def _parse_report_date(value: str) -> date | None:
+    """Parse the ``Report_Date_as_YYYY-MM-DD`` cell, tolerating two formats.
+
+    The per-year annual files use ISO ``YYYY-MM-DD``, but the consolidated
+    2006-2016 *financial-futures* (TFF) archive stores this column as a US
+    ``M/D/YYYY HH:MM:SS AM`` datetime despite the ISO column name.  Without
+    handling both, the entire 2006-2016 TFF history is silently dropped
+    (every TFF contract would start in 2017).  Returns ``None`` for an
+    unparseable cell so the caller can skip the row.
+    """
+    s = value.strip()
+    if not s:
+        return None
+    try:
+        return date.fromisoformat(s)
+    except ValueError:
+        pass
+    # US ``M/D/YYYY[ HH:MM:SS AM]`` — take the date portion before any space.
+    head = s.split(" ", 1)[0]
+    parts = head.split("/")
+    if len(parts) == 3:
+        try:
+            month, day, year = (int(p) for p in parts)
+            return date(year, month, day)
+        except ValueError:
+            return None
+    return None
+
+
 def _parse_zip(
     zip_path: Path,
     report: CFTCReport,
@@ -294,12 +323,10 @@ def _parse_zip(
                     if contract_codes is not None and code not in contract_codes:
                         continue
                     report_date_str = (row.get("Report_Date_as_YYYY-MM-DD") or "").strip()
-                    if not report_date_str:
-                        continue
-                    try:
-                        rdate = date.fromisoformat(report_date_str)
-                    except ValueError:
-                        log.debug("skipping unparseable report_date=%r", report_date_str)
+                    rdate = _parse_report_date(report_date_str)
+                    if rdate is None:
+                        if report_date_str:
+                            log.debug("skipping unparseable report_date=%r", report_date_str)
                         continue
                     yield _row_from_csv(row, code, rdate, report)
 
