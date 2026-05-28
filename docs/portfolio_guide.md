@@ -7,6 +7,7 @@ The `tradedesk.portfolio` module provides a framework for managing multiple inst
 ### Portfolio Runner
 
 The `PortfolioRunner` is a client-agnostic orchestrator that:
+
 - Manages multiple strategies across different instruments
 - Dynamically allocates risk based on regime activity
 - Routes candle events to the appropriate strategies

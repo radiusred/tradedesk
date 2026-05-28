@@ -7,6 +7,7 @@
 This guide is a practical, end-to-end tutorial for implementing trading strategies using the `tradedesk` framework.
 
 It assumes:
+
 - strong general programming ability,
 - basic familiarity with Python,
 - little or no prior experience with systematic trading frameworks.
@@ -26,12 +27,14 @@ The goal is to teach **correct strategy construction**, not trading theory or pr
 In `tradedesk`, a strategy is a **pure event-driven component**.
 
 It:
+
 - subscribes to market data,
 - reacts to ordered events,
 - updates internal state,
 - emits execution decisions.
 
 It does *not*:
+
 - own capital,
 - manage portfolios,
 - retry failed orders,
@@ -58,6 +61,7 @@ Each phase has different constraints and failure modes.
 ## Construction and parameters
 
 Construction is where you:
+
 - define immutable parameters,
 - declare required subscriptions,
 - initialise per-instrument state.
@@ -96,6 +100,7 @@ class MyStrategy(BaseStrategy):
 ```
 
 At this point:
+
 - no network calls should occur,
 - no assumptions about market state should be made.
 
@@ -111,6 +116,7 @@ subscribe only to chart data.
 A strategy will **only** receive events it explicitly subscribes to.
 
 This is deliberate:
+
 - it makes data dependencies explicit,
 - it prevents accidental coupling to provider behaviour,
 - it simplifies testing.
@@ -131,6 +137,7 @@ async def on_candle_close(self, candle_close: CandleClosedEvent): ...
 ```
 
 Ordering guarantees:
+
 - ticks arrive before the candle close they contribute to,
 - candle close is final and immutable.
 
@@ -143,11 +150,13 @@ Your strategy must not infer future candles or prices.
 Do **not** store mutable trading state directly on the strategy.
 
 Instead:
+
 - create a per-epic state object,
 - store indicators, windows, and position state there,
 - keep the strategy as a coordinator.
 
 This enables:
+
 - clean unit testing,
 - deterministic backtests,
 - multi-epic safety.
@@ -157,6 +166,7 @@ This enables:
 ## Warmup: why and how
 
 Warmup exists to solve a real problem:
+
 - indicators require history,
 - early values are unstable,
 - first live events are not representative.
@@ -201,6 +211,7 @@ If your warmup logic can accidentally trigger entries, your design is unsafe.
 Entries must enforce invariants explicitly.
 
 Typical invariants:
+
 - indicators are warmed and valid,
 - stop distance is computable,
 - no position already open.
@@ -226,11 +237,13 @@ Skipping an entry is always preferable to entering in an undefined state.
 Exit logic must tolerate repeated signals.
 
 Rules:
+
 - closing an already-closed position must be a no-op,
 - exit signals may arrive multiple times,
 - order placement must not duplicate state transitions.
 
 This usually means:
+
 - checking state before acting,
 - updating state only after confirmed intent.
 
@@ -239,10 +252,12 @@ This usually means:
 ## Candle-only backtests (practical)
 
 When tick data is unavailable:
+
 - you must approximate tick-driven logic,
 - results will be conditional.
 
 Common approach:
+
 - inject a synthetic tick at candle open,
 - approximate stops via candle extremes.
 
@@ -253,11 +268,13 @@ Your strategy must make these approximations explicit.
 ## Testing strategies properly
 
 A strategy should be testable without:
+
 - a live broker,
 - network access,
 - time-based sleeps.
 
 Recommended tests:
+
 - unit tests for state transitions,
 - deterministic backtest runs,
 - explicit failure-mode tests (e.g. stop not ready).
@@ -296,6 +313,7 @@ Backtests validate logic. DEMO validates integration.
 This section walks through a complete strategy implementation that is intentionally modest in scope but operationally realistic.
 
 Design goals:
+
 - **Candle-driven** signals (stable ordering)
 - One instrument (`epic`) per state container
 - Explicit **warmup** and **indicator readiness**
@@ -308,6 +326,7 @@ This example is *not* a recommendation for live trading. It is a reference imple
 ## Code alignment
 
 This guide is aligned with the actual code in the public repo paths:
+
 - Base strategy and lifecycle: `tradedesk/tradedesk/strategy/base.py` (methods like `on_price_update` and `on_candle_close`).
 - Strategy coordination: `tradedesk/tradedesk/strategy` and `ChartSubscription` usage in `strategy/base.py`.
 For hands-on examples, refer to the code comments in those modules; the public docs mirror the implemented behavior to ensure engineers can move from concept to runnable code with confidence.
@@ -315,11 +334,13 @@ For hands-on examples, refer to the code comments in those modules; the public d
 ### Strategy definition
 
 We will implement:
+
 - a simple trend-following entry based on **EMA fast/slow crossover**,
 - an ATR-based stop distance,
 - a maximum holding period in bars.
 
 The implementation uses two cooperating components:
+
 - `EmaAtrState` – per-epic state (indicators + position tracking)
 - `EmaAtrStrategy` – coordinator (subscriptions + execution)
 
@@ -452,6 +473,7 @@ class EmaAtrState:
 ```
 
 Notes:
+
 - `indicators_ready()` provides the single readiness check.
 - `compute_initial_stop()` is the enforcement point: entries are invalid without ATR.
 - `entry_signal()` emits only on crossover transitions, preventing repeated entries while trend persists.
@@ -568,6 +590,7 @@ class EmaAtrStrategy(BaseStrategy):
 ```
 
 Notes:
+
 - This example is candle-driven only, which simplifies event ordering.
 - `warmup_from_provider()` warms state directly without relying on `register_indicator()`.
 - `request_order()` is the strategy-facing order API. It keeps execution inside
@@ -644,6 +667,7 @@ These tests are intentionally minimal: they verify the invariants that prevent u
 ## Code Alignment
 
 This guide is aligned with the actual code in the public repo paths:
+
 - `tradedesk/tradedesk/strategy/base.py`
 - `tradedesk/tradedesk/marketdata/subscriptions.py`
 - `tradedesk/tradedesk/execution/backtest/client.py`
