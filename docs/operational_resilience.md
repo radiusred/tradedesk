@@ -18,6 +18,7 @@ Subscription retries (price stream reconnects) use an asyncio-based `RetrySchedu
 ### Single-Flight OAuth Refresh
 
 When multiple concurrent callers need to refresh an expired session token, they share a single `/session` authentication request instead of racing and creating duplicate tokens. This avoids:
+
 - IG API rate limits on session creation
 - Transient auth failures during high concurrency
 - Wasted network requests

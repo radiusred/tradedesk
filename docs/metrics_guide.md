@@ -5,6 +5,7 @@ The `tradedesk.recording` module provides tools for analyzing trading strategy p
 ## Overview
 
 The metrics module helps you:
+
 - Reconstruct round-trip trades from fill history
 - Calculate performance statistics (win rate, profit factor, drawdown, etc.)
 - Derive equity curves from trade history
