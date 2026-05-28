@@ -1,6 +1,6 @@
 # Architecture
 
-Overview
+## Overview
 
 - tradedesk is an event-driven trading framework designed to run strategies across both backtesting and live broker environments.
 - The codebase is organized into distinct domains:
@@ -13,7 +13,7 @@ Overview
   - tradedesk.research: research helpers such as walk-forward tooling, correlation gates, and public configuration templates.
   - tradedesk.ml: machine-learning building blocks for feature engineering, labels, walk-forward CV, and model wrappers.
 
-Data Flow (high level)
+## Data Flow (high level)
 
 - Market data events flow into strategies via the event system.
 - Strategies emit execution requests in response to data events.
@@ -23,12 +23,12 @@ Data Flow (high level)
   order-completion plus position-lifecycle events.
 - Recording layer captures lifecycle events and metrics for reporting.
 
-Live vs Backtest paths
+## Live vs Backtest paths
 
 - Live trading uses the IG module (IGClient, IGAuthManager, etc.).
 - Backtesting uses the Dukascopy-based data path, converting Dukascopy data to the internal candle/tick format.
 
-Key design decisions
+## Key design decisions
 
 - Pure event-driven components: strategies react to events, not to direct broker state.
 - Separate concerns: data handling, strategy logic, risk management, and execution are decoupled to simplify testing and maintenance.
@@ -38,7 +38,6 @@ Key design decisions
   confirmed opening fill so recording and downstream observers see the same
   lifecycle boundary in backtest and IG-backed sessions.
 
-See also: `../README.md`, `backtesting_guide.md`, `strategy_guide.md`, and `research_methodology_guide.md`.
 
 ---
 
