@@ -60,7 +60,7 @@ The public package is organized into a small set of domains:
 - `tradedesk.research` for walk-forward and correlation-gate helpers
 - `tradedesk.ml` for optional feature engineering, labels, and walk-forward tooling
 
-For a broader system map, see [ARCHITECTURE.md](ARCHITECTURE.md).
+For a broader system map, see [docs/architecture.md](docs/architecture.md).
 
 ## Runtime model
 

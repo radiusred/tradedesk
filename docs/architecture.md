@@ -34,7 +34,7 @@ Key design decisions
   confirmed opening fill so recording and downstream observers see the same
   lifecycle boundary in backtest and IG-backed sessions.
 
-See also: `README.md`, `docs/backtesting_guide.md`, `docs/strategy_guide.md`, and `docs/research_methodology_guide.md`.
+See also: `../README.md`, `backtesting_guide.md`, `strategy_guide.md`, and `research_methodology_guide.md`.
 
 ---
 
