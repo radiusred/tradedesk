@@ -136,16 +136,33 @@ See [docs/ml_guide.md](docs/ml_guide.md) for the ML overview and
 `tradedesk.data_sources` exposes loaders and parsers for datasets that sit
 outside the live IG / Dukascopy execution paths.
 
-The current public surface includes CFTC Commitment of Traders history via:
+Three free, no-auth macro feeds are supported:
 
-- `CFTC_CONTRACTS` for the built-in contract-code map
-- `load_contract_history(...)` for one-contract weekly history loads
-- `download_cot_zip(...)` and `iter_cot_rows(...)` for lower-level archive access
-- `cot_release_date(...)` for the Tuesday-to-Friday publication offset used by
-  strategies that key off report release timing
+- **FRED** — US rates (DFF, DGS3MO/2/10, T10Y2Y) and VIX from the St. Louis Fed
+- **ECB** — EUR €STR, AAA government yield curve (3M–10Y) and Euribor from the
+  ECB Data Portal
+- **CFTC COT** — Commitment-of-Traders positioning for metals, energy, indices,
+  10Y notes and CME EUR/JPY/GBP currency futures, including the TFF dealer,
+  asset-manager and leveraged-funds buckets
 
-See [docs/data_sources_guide.md](docs/data_sources_guide.md) for usage and API
-notes.
+Series are materialized to a Parquet lake under the existing market-data root
+and loaded uniformly via `load_macro_series` / `load_macro_frame`:
+
+```python
+from tradedesk.data_sources import load_macro_series, load_macro_frame
+
+rates = load_macro_frame("FRED", ["DGS2", "DGS10", "VIXCLS"])
+estr = load_macro_series("ECB", "EUR_ESTR")
+eur_cot = load_macro_series("CFTC", "EURUSD")
+```
+
+A `python -m tradedesk.data_sources.ingest` CLI refreshes the lake on demand or
+on a weekly cron (idempotent; per-series failures are non-fatal).
+
+See [docs/data_sources_guide.md](docs/data_sources_guide.md) for the full series
+catalogue, the look-ahead semantics for CFTC release dates, and the lower-level
+CFTC COT API (`CFTC_CONTRACTS`, `load_contract_history`, `download_cot_zip`,
+`iter_cot_rows`, `cot_release_date`).
 
 ## Documentation
 

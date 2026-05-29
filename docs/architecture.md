@@ -5,7 +5,7 @@
 - tradedesk is an event-driven trading framework designed to run strategies across both backtesting and live broker environments.
 - The codebase is organized into distinct domains:
   - tradedesk.marketdata: ingestion and normalization of price data and events.
-  - tradedesk.data_sources: external datasets such as CFTC Commitment of Traders history.
+  - tradedesk.data_sources: free, no-auth macro datasets (FRED rates and VIX, ECB €STR / yield curve / Euribor, CFTC COT positioning) materialized to a Parquet lake and loaded via a single `load_macro_series` / `load_macro_frame` access pattern.
   - tradedesk.strategy: base classes and helpers for writing event-driven strategies.
   - tradedesk.portfolio: portfolio management, risk budgeting, and multi-instrument coordination.
   - tradedesk.execution: execution adapters (IG for live trading, Dukascopy paths for backtests).
