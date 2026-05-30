@@ -8,7 +8,17 @@ to no-ops so tradedesk itself does not gain a hard dependency on it.
 
 from __future__ import annotations
 
-from typing import Any, Protocol
+from typing import Any, Final, Protocol
+
+LATENCY_BUCKETS_S: Final[tuple[float, ...]] = (
+    30.0,
+    60.0,
+    120.0,
+    300.0,
+    600.0,
+    1800.0,
+    3600.0,
+)
 
 
 class _Counter(Protocol):
@@ -59,7 +69,7 @@ try:
     STREAM_STALE_SECONDS: Any = Histogram(
         "tradedesk_ig_stream_stale_seconds",
         "Observed stale-stream durations before reconnect (seconds)",
-        buckets=(30.0, 60.0, 120.0, 300.0, 600.0, 1800.0, 3600.0),
+        buckets=LATENCY_BUCKETS_S,
     )
     SUBSCRIPTION_RETRIES: Any = Counter(
         "tradedesk_ig_subscription_retries_total",

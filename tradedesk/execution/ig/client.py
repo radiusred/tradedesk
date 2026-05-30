@@ -14,6 +14,7 @@ from tradedesk.execution.broker import (
     HistoricalDataAllowanceError,
 )
 from tradedesk.execution.client import Client
+from tradedesk.settings import IG_DEAL_CONFIRM_POLL_S, IG_DEAL_CONFIRM_TIMEOUT_S
 from tradedesk.types import Candle
 
 from .auth import IGAuthManager
@@ -24,6 +25,8 @@ from .price_streamer import Lightstreamer
 from .settings import settings
 
 log = logging.getLogger(__name__)
+
+_ERROR_BODY_TRUNCATE = 200
 
 
 class IGClient(Client):
@@ -190,7 +193,7 @@ class IGClient(Client):
                         raw = await resp.text()
                         if "<html" in raw.lower():
                             err_body = re.sub(r"<[^>]+>", " ", raw)
-                            err_body = " ".join(err_body.split())[:200]
+                            err_body = " ".join(err_body.split())[:_ERROR_BODY_TRUNCATE]
                         else:
                             err_body = raw
                     raise RuntimeError(f"IG request failed: HTTP {resp.status}: {err_body}")
@@ -296,8 +299,8 @@ class IGClient(Client):
         self,
         deal_reference: str,
         *,
-        timeout_s: float = 10.0,
-        poll_s: float = 0.25,
+        timeout_s: float = IG_DEAL_CONFIRM_TIMEOUT_S,
+        poll_s: float = IG_DEAL_CONFIRM_POLL_S,
     ) -> dict[str, Any]:
         return await self._orders.confirm_deal(
             deal_reference, timeout_s=timeout_s, poll_s=poll_s
@@ -314,8 +317,8 @@ class IGClient(Client):
         time_in_force: str = "FILL_OR_KILL",
         expiry: str = "-",
         guaranteed_stop: bool = False,
-        confirm_timeout_s: float = 10.0,
-        confirm_poll_s: float = 0.25,
+        confirm_timeout_s: float = IG_DEAL_CONFIRM_TIMEOUT_S,
+        confirm_poll_s: float = IG_DEAL_CONFIRM_POLL_S,
         **kwargs: Any,
     ) -> dict[str, Any]:
         return await self._orders.place_market_order_confirmed(
