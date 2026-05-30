@@ -3,7 +3,9 @@
 Covers:
   - RetryScheduler: scheduling, cancellation, and closed-state semantics
   - RetryScheduler._run: metric increment on action invocation
-  - _MarketListener.onSubscriptionError: linear-backoff delay + max-retries cutoff
+  - _subscription_retry_delay: exponential schedule with cap and full jitter
+  - _MarketListener.onSubscriptionError: jittered exponential backoff +
+    max-retries cutoff
   - Subscription retry action: calls ls_client.subscribe()
   - _MarketListener.onItemUpdate exception path: logged with traceback, tick dropped
   - _ChartListener.onItemUpdate exception path: logged with traceback, tick dropped
@@ -111,14 +113,68 @@ async def test_retry_scheduler_increments_metric(monkeypatch: pytest.MonkeyPatch
 
 
 # ──────────────────────────────────────────────────────────────────────────────
+# _subscription_retry_delay — jittered exponential backoff
+# ──────────────────────────────────────────────────────────────────────────────
+
+
+def test_subscription_retry_delay_jittered_exponential_schedule(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Delay grows as ``min(BASE * 2**retry, MAX) * jitter`` with full jitter.
+
+    Pins ``random.uniform`` so the schedule is deterministic, then walks
+    enough retries to cross the cap, verifying both the exponential growth
+    region and the saturated region.
+    """
+    monkeypatch.setattr(streamer_mod, "STREAM_SUB_RETRY_BASE_DELAY_S", 2.0)
+    monkeypatch.setattr(streamer_mod, "STREAM_SUB_RETRY_MAX_DELAY_S", 30.0)
+
+    jitter_calls: list[tuple[float, float]] = []
+
+    def fake_uniform(lo: float, hi: float) -> float:
+        jitter_calls.append((lo, hi))
+        return 1.0
+
+    monkeypatch.setattr(streamer_mod.random, "uniform", fake_uniform)
+
+    # Exponential region: 2, 4, 8, 16 (all ≤ MAX=30)
+    assert streamer_mod._subscription_retry_delay(0) == pytest.approx(2.0)
+    assert streamer_mod._subscription_retry_delay(1) == pytest.approx(4.0)
+    assert streamer_mod._subscription_retry_delay(2) == pytest.approx(8.0)
+    assert streamer_mod._subscription_retry_delay(3) == pytest.approx(16.0)
+
+    # Cap region: 32 → 30, 64 → 30, 128 → 30
+    assert streamer_mod._subscription_retry_delay(4) == pytest.approx(30.0)
+    assert streamer_mod._subscription_retry_delay(5) == pytest.approx(30.0)
+    assert streamer_mod._subscription_retry_delay(10) == pytest.approx(30.0)
+
+    # Full jitter spans the documented [0.5, 1.5) range every call
+    assert jitter_calls == [(0.5, 1.5)] * 7
+
+
+def test_subscription_retry_delay_applies_jitter_multiplier(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Jitter multiplier is applied to the capped exponential term."""
+    monkeypatch.setattr(streamer_mod, "STREAM_SUB_RETRY_BASE_DELAY_S", 2.0)
+    monkeypatch.setattr(streamer_mod, "STREAM_SUB_RETRY_MAX_DELAY_S", 30.0)
+
+    monkeypatch.setattr(streamer_mod.random, "uniform", lambda lo, hi: 0.5)
+    assert streamer_mod._subscription_retry_delay(2) == pytest.approx(8.0 * 0.5)
+
+    monkeypatch.setattr(streamer_mod.random, "uniform", lambda lo, hi: 1.5)
+    assert streamer_mod._subscription_retry_delay(2) == pytest.approx(8.0 * 1.5)
+
+
+# ──────────────────────────────────────────────────────────────────────────────
 # _MarketListener — subscription retry path
 # ──────────────────────────────────────────────────────────────────────────────
 
 
-def test_market_subscription_error_schedules_with_linear_delay(
+def test_market_subscription_error_schedules_with_jittered_delay(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """onSubscriptionError schedules retries at attempt * STREAM_SUB_RETRY_BASE_DELAY_S."""
+    """onSubscriptionError schedules retries via the jittered backoff helper."""
     schedule_calls: list[tuple[float, Any, str]] = []
 
     def fake_schedule(
@@ -127,19 +183,25 @@ def test_market_subscription_error_schedules_with_linear_delay(
         schedule_calls.append((delay, action, kind))
 
     monkeypatch.setattr(RetryScheduler, "schedule", fake_schedule)
+    monkeypatch.setattr(streamer_mod, "STREAM_SUB_RETRY_BASE_DELAY_S", 2.0)
+    monkeypatch.setattr(streamer_mod, "STREAM_SUB_RETRY_MAX_DELAY_S", 30.0)
+    monkeypatch.setattr(streamer_mod.random, "uniform", lambda lo, hi: 1.0)
 
     sched = RetryScheduler.__new__(RetryScheduler)
     listener = _make_market_listener(scheduler=sched)
-    base = streamer_mod.STREAM_SUB_RETRY_BASE_DELAY_S
 
     listener.onSubscriptionError(503, "unavailable")
     assert len(schedule_calls) == 1
-    assert schedule_calls[0][0] == pytest.approx(1 * base)
+    assert schedule_calls[0][0] == pytest.approx(2.0)  # BASE * 2**0 * 1.0
     assert schedule_calls[0][2] == "market"
 
     listener.onSubscriptionError(503, "unavailable")
     assert len(schedule_calls) == 2
-    assert schedule_calls[1][0] == pytest.approx(2 * base)
+    assert schedule_calls[1][0] == pytest.approx(4.0)  # BASE * 2**1 * 1.0
+
+    listener.onSubscriptionError(503, "unavailable")
+    assert len(schedule_calls) == 3
+    assert schedule_calls[2][0] == pytest.approx(8.0)  # BASE * 2**2 * 1.0
 
 
 def test_market_subscription_error_stops_after_max_retries(

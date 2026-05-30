@@ -1,5 +1,6 @@
 import asyncio
 import logging
+import random
 from datetime import datetime, timezone
 from typing import Any, Callable
 
@@ -19,6 +20,7 @@ from tradedesk.settings import (
     STREAM_SILENCE_SUPPRESS_THRESHOLD_S,
     STREAM_SUB_MAX_RETRIES,
     STREAM_SUB_RETRY_BASE_DELAY_S,
+    STREAM_SUB_RETRY_MAX_DELAY_S,
     STREAM_UNPRODUCTIVE_GRACE_S,
     STREAM_UNPRODUCTIVE_RECONNECT_CAP,
 )
@@ -31,6 +33,29 @@ from .metrics import (
 )
 
 log = logging.getLogger(__name__)
+
+
+def _subscription_retry_delay(retry: int) -> float:
+    """Compute the delay before the ``retry``-th subscription retry.
+
+    Schedule is exponential with full jitter:
+    ``min(STREAM_SUB_RETRY_BASE_DELAY_S * 2 ** retry,
+    STREAM_SUB_RETRY_MAX_DELAY_S) * random.uniform(0.5, 1.5)``.
+
+    Exponential backoff bounded by ``STREAM_SUB_RETRY_MAX_DELAY_S`` prevents
+    unbounded growth; the ``[0.5, 1.5)`` multiplier spreads retries across
+    instruments so that group-wide subscription failures do not produce a
+    thundering herd of synchronised resubscriptions.
+
+    ``retry`` is 0-indexed, so the first retry waits roughly
+    ``STREAM_SUB_RETRY_BASE_DELAY_S`` seconds.
+    """
+    capped = min(
+        STREAM_SUB_RETRY_BASE_DELAY_S * (2**retry),
+        STREAM_SUB_RETRY_MAX_DELAY_S,
+    )
+    return float(capped * random.uniform(0.5, 1.5))
+
 
 class RetryScheduler:
     """Schedule subscription retries on the asyncio loop and track pending tasks.
@@ -232,10 +257,10 @@ class _MarketListener:
     def onSubscriptionError(self, code: Any, message: Any) -> None:
         self._retries += 1
         if self._retries <= STREAM_SUB_MAX_RETRIES:
-            delay = self._retries * STREAM_SUB_RETRY_BASE_DELAY_S
+            delay = _subscription_retry_delay(self._retries - 1)
             log.warning(
                 "Market subscription error (items=%s): %s - %s "
-                "— retrying in %.0fs (%d/%d)",
+                "— retrying in %.1fs (%d/%d)",
                 self._items,
                 code,
                 message,
@@ -349,10 +374,10 @@ class _ChartListener:
     def onSubscriptionError(self, code: Any, message: Any) -> None:
         self._retries += 1
         if self._retries <= STREAM_SUB_MAX_RETRIES:
-            delay = self._retries * STREAM_SUB_RETRY_BASE_DELAY_S
+            delay = _subscription_retry_delay(self._retries - 1)
             log.warning(
                 "Chart subscription error for %s (item=%s): "
-                "%s - %s — retrying in %.0fs (%d/%d)",
+                "%s - %s — retrying in %.1fs (%d/%d)",
                 self._sub.instrument,
                 self._sub.get_item_name(),
                 code,
