@@ -69,6 +69,8 @@ def ig_client() -> MagicMock:
     client.ls_xst = "XST"
     client.client_id = "CID"
     client.account_id = "AID"
+    # Pre-reconnect re-auth path awaits this — fixture default is a no-op.
+    client.auth.authenticate = AsyncMock(return_value=None)
     return client
 
 
