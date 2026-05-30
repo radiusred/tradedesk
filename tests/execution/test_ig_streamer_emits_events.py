@@ -435,6 +435,8 @@ async def test_subscription_error_retries_then_resubscribes(
     monkeypatch.setattr(
         ig_streamer.RetryScheduler, "schedule", fake_schedule
     )
+    # Pin jitter so the first-retry delay equals BASE deterministically.
+    monkeypatch.setattr(ig_streamer.random, "uniform", lambda lo, hi: 1.0)
 
     strat, _ = make_strategy()
     streamer = ig_streamer.Lightstreamer(ig_client)

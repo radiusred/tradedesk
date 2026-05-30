@@ -59,10 +59,17 @@ def _env_int(name: str, default: int) -> int:
 # giving up and logging an error.  Count.
 STREAM_SUB_MAX_RETRIES: int = _env_int("TRADEDESK_STREAM_SUB_MAX_RETRIES", 3)
 
-# Base delay between subscription retries; actual delay is
-# ``attempt * STREAM_SUB_RETRY_BASE_DELAY_S``.  Seconds.
+# Base delay between subscription retries.  Combined with the retry index in
+# an exponential-with-jitter schedule:
+# ``min(BASE * 2 ** retry, MAX) * uniform(0.5, 1.5)``.  Seconds.
 STREAM_SUB_RETRY_BASE_DELAY_S: float = _env_float(
     "TRADEDESK_STREAM_SUB_RETRY_BASE_DELAY_S", 2.0
+)
+
+# Ceiling on the deterministic part of the subscription retry delay (before
+# jitter is applied), to bound exponential growth.  Seconds.
+STREAM_SUB_RETRY_MAX_DELAY_S: float = _env_float(
+    "TRADEDESK_STREAM_SUB_RETRY_MAX_DELAY_S", 30.0
 )
 
 # Heartbeat monitor sleep cadence — how often the staleness check runs.
