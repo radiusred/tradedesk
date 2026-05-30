@@ -49,6 +49,31 @@ The Lightstreamer price stream includes a heartbeat monitor that detects stale c
 
 **Tuning**: Adjust `STREAM_MAX_STALE_S` for high-latency or unreliable networks.
 
+### Pre-Reconnect Session Refresh and Unproductive-Reconnect Cap
+
+Every reconnect attempt first refreshes the IG REST `/session` (CST/XST) **before** recreating the Lightstreamer client. The new tokens are then used to authenticate the fresh LS connection. This prevents the in-process reconnect loop from re-using stale session tokens that IG silently accepts but no longer streams data against.
+
+A reconnect is treated as **unproductive** when:
+
+- The LS connection reaches `CONNECTED:*` but no real-time updates arrive within `STREAM_UNPRODUCTIVE_GRACE_S` (default 60s), or
+- The pre-reconnect `/session` refresh raises (network error, rate limit, etc.).
+
+After `STREAM_UNPRODUCTIVE_RECONNECT_CAP` (default 3) consecutive unproductive reconnects, the streamer raises `UnproductiveReconnectError`. The supervising process (systemd, orchestrator) is expected to restart the container — which forces a completely fresh IG session and LS connection — instead of allowing the in-process loop to spin forever.
+
+A productive session (any session that received at least one update before going stale) resets the consecutive-unproductive counter, so routine IG session-rollover does not accumulate toward the cap.
+
+**Structured Loki markers** emitted on the reconnect path:
+
+| Marker | Level | Fields |
+|--------|-------|--------|
+| `reauth_attempted` | INFO | `reason`, `attempt` |
+| `reauth_result` | INFO (ok) / ERROR (fail) | `attempt`, `status`, `error`, `cst_refreshed` |
+| `reconnect_attempt` | INFO | `attempt`, `cap` |
+| `reconnect_unproductive` | WARNING | `attempt`, `grace_seconds`, `bars_received` |
+| `reconnect_surrender` | ERROR | `attempts`, `last_error` |
+
+**Tuning**: Increase `STREAM_UNPRODUCTIVE_GRACE_S` for chart-only streams with long bar periods where the first bar close can legitimately exceed 60s.
+
 ## Operational Metrics
 
 tradedesk emits Prometheus metrics for operational visibility. Metrics are **lazily imported** — no hard dependency on `prometheus_client`.

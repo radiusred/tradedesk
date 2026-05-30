@@ -35,6 +35,14 @@ Stream silence threshold beyond which heartbeat warnings are suppressed until da
 ### `TRADEDESK_STREAM_HEARTBEAT_SUPPRESSED_SLEEP_S` (default: 60)
 Sleep cadence used when heartbeat warnings are suppressed. Seconds.
 
+### `TRADEDESK_STREAM_UNPRODUCTIVE_RECONNECT_CAP` (default: 3)
+
+Cap on consecutive unproductive reconnect attempts before `UnproductiveReconnectError` is escalated. A reconnect is "unproductive" when the LS connection reaches `CONNECTED:*` but no real-time updates arrive within `TRADEDESK_STREAM_UNPRODUCTIVE_GRACE_S`, or when the pre-reconnect IG `/session` refresh fails. Escalation surfaces the failure to the supervising process (systemd, orchestrator) so the host can restart instead of looping in-process forever with stale tokens. Count. Overridable per-instance via `Lightstreamer(unproductive_reconnect_cap=...)`.
+
+### `TRADEDESK_STREAM_UNPRODUCTIVE_GRACE_S` (default: 60.0)
+
+Grace window after `CONNECTED:*` to wait for the first real-time update before treating the session as unproductive. Tune higher if the stream subscribes only to long-period charts (e.g. ≥ 5MINUTE) where the first bar close may legitimately take longer than 60s. Seconds. Overridable per-instance via `Lightstreamer(unproductive_grace_seconds=...)`.
+
 ## IG REST: Authentication & Order Confirmation
 
 ### `IG_AUTH_MIN_INTERVAL_S` (default: 5.0)

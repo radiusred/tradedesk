@@ -19,6 +19,8 @@ from tradedesk.settings import (
     STREAM_SILENCE_SUPPRESS_THRESHOLD_S,
     STREAM_SUB_MAX_RETRIES,
     STREAM_SUB_RETRY_BASE_DELAY_S,
+    STREAM_UNPRODUCTIVE_GRACE_S,
+    STREAM_UNPRODUCTIVE_RECONNECT_CAP,
 )
 from tradedesk.types import Candle
 
@@ -111,10 +113,62 @@ class StaleStreamError(RuntimeError):
     """
 
 
+class UnproductiveReconnectError(RuntimeError):
+    """Raised after consecutive unproductive reconnects exceed the cap.
+
+    Escalates to the orchestrator / systemd supervisor so the host process
+    restarts (which forces a fresh IG session and a fresh LS connection)
+    instead of looping in-process indefinitely with stale tokens.
+    """
+
+
+class _UnproductiveSession(Exception):
+    """Internal signal: a session reached CONNECTED but received no bars."""
+
+    def __init__(self, message: str, *, bars_received: int) -> None:
+        super().__init__(message)
+        self.bars_received = bars_received
+
+
+class _SessionState:
+    """Mutable per-session state shared with listeners and the grace monitor.
+
+    ``bars_received`` is bumped from Lightstreamer listener threads — single
+    integer increments under the GIL are atomic enough for the
+    "did we see any data" check the grace monitor needs.
+    """
+
+    def __init__(self) -> None:
+        self.bars_received: int = 0
+
+    def bump(self) -> None:
+        self.bars_received += 1
+
 
 class _ConnectionListener:
+    def __init__(
+        self,
+        *,
+        loop: asyncio.AbstractEventLoop | None = None,
+        on_connected: Callable[[], None] | None = None,
+    ) -> None:
+        self._loop = loop
+        self._on_connected = on_connected
+
     def onStatusChange(self, status: Any) -> None:
         log.info("Lightstreamer connection status: %s", status)
+        if (
+            self._on_connected is None
+            or self._loop is None
+            or not isinstance(status, str)
+            or not status.startswith("CONNECTED:")
+        ):
+            return
+        try:
+            self._loop.call_soon_threadsafe(self._on_connected)
+        except RuntimeError:
+            # Loop already closed.
+            pass
 
     def onServerError(self, code: Any, message: Any) -> None:
         log.error("Lightstreamer server error: %s - %s", code, message)
@@ -129,6 +183,7 @@ class _MarketListener:
         ls_client: Any,
         ls_subscription: Any,
         scheduler: RetryScheduler,
+        session_state: _SessionState | None = None,
     ) -> None:
         self._loop = loop
         self._queue = queue
@@ -136,9 +191,12 @@ class _MarketListener:
         self._ls_client = ls_client
         self._ls_subscription = ls_subscription
         self._scheduler = scheduler
+        self._session_state = session_state
         self._retries = 0
 
     def onItemUpdate(self, update: Any) -> None:
+        if self._session_state is not None:
+            self._session_state.bump()
         try:
             bid_str = update.getValue("BIDPRICE1")
             offer_str = update.getValue("ASKPRICE1")
@@ -216,6 +274,7 @@ class _ChartListener:
         ls_client: Any,
         ls_subscription: Any,
         scheduler: RetryScheduler,
+        session_state: _SessionState | None = None,
     ) -> None:
         self._loop = loop
         self._queue = queue
@@ -223,9 +282,12 @@ class _ChartListener:
         self._ls_client = ls_client
         self._ls_subscription = ls_subscription
         self._scheduler = scheduler
+        self._session_state = session_state
         self._retries = 0
 
     def onItemUpdate(self, update: Any) -> None:
+        if self._session_state is not None:
+            self._session_state.bump()
         try:
             cons_end = update.getValue("CONS_END")
             if cons_end != "1":
@@ -339,7 +401,17 @@ class Lightstreamer(Streamer):
 
     When ``auto_reconnect`` is enabled (the default), the streamer will
     automatically disconnect and reconnect when the stream is stale for
-    longer than ``max_stale_seconds``.
+    longer than ``max_stale_seconds``.  Each reconnect refreshes the IG
+    REST ``/session`` (CST/XST) before recreating the Lightstreamer client
+    so that the new LS connection authenticates with fresh tokens.
+
+    A reconnect is considered "unproductive" if the LS connection reaches
+    ``CONNECTED:*`` but no real-time updates arrive within
+    ``unproductive_grace_seconds``, or if the pre-reconnect re-auth itself
+    fails.  After ``unproductive_reconnect_cap`` consecutive unproductive
+    reconnects, ``UnproductiveReconnectError`` is raised so the supervising
+    process (systemd, orchestrator) can restart the container instead of
+    looping in-process forever.
     """
 
     def __init__(
@@ -350,6 +422,8 @@ class Lightstreamer(Streamer):
         auto_reconnect: bool = True,
         max_reconnect_attempts: int = 0,
         reconnect_delay: float = STREAM_RECONNECT_DELAY_DEFAULT_S,
+        unproductive_reconnect_cap: int = STREAM_UNPRODUCTIVE_RECONNECT_CAP,
+        unproductive_grace_seconds: float = STREAM_UNPRODUCTIVE_GRACE_S,
     ):
         self.client = client
         self._ls_client: Any = None
@@ -358,7 +432,10 @@ class Lightstreamer(Streamer):
         self.auto_reconnect = auto_reconnect
         self.max_reconnect_attempts = max_reconnect_attempts
         self.reconnect_delay = reconnect_delay
+        self.unproductive_reconnect_cap = unproductive_reconnect_cap
+        self.unproductive_grace_seconds = unproductive_grace_seconds
         self._scheduler: RetryScheduler | None = None
+        self._last_session_state: _SessionState | None = None
 
     async def connect(self) -> None:
         # Connection is established inside run() to preserve the existing flow.
@@ -374,16 +451,115 @@ class Lightstreamer(Streamer):
             except (RuntimeError, AttributeError, OSError):
                 log.exception("Lightstreamer disconnect failed")
 
+    async def _reauth_for_reconnect(
+        self, attempt: int
+    ) -> tuple[bool, Exception | None]:
+        """Refresh IG /session before recreating the LS client.
+
+        Returns ``(True, None)`` on success or ``(False, exc)`` on failure.
+        Logging emits the structured ``reauth_attempted`` / ``reauth_result``
+        markers expected by the supervisor's Loki searches.
+        """
+        log.info(
+            "reauth_attempted reason=reconnect attempt=%d", attempt,
+        )
+        try:
+            await self.client.auth.authenticate()
+        except Exception as exc:  # noqa: BLE001 — re-auth can fail many ways
+            log.error(
+                "reauth_result attempt=%d status=fail "
+                "error=%r cst_refreshed=False",
+                attempt,
+                exc,
+            )
+            return False, exc
+        refreshed_cst = bool(getattr(self.client, "ls_cst", None))
+        log.info(
+            "reauth_result attempt=%d status=ok cst_refreshed=%s",
+            attempt,
+            refreshed_cst,
+        )
+        return True, None
+
     async def run(self, consumer: Any) -> None:
         if LightstreamerClient is None or Subscription is None:
             raise RuntimeError("Lightstreamer client library not available")
 
         attempts = 0
+        unproductive = 0
+
         while True:
+            if attempts > 0:
+                log.info(
+                    "reconnect_attempt attempt=%d cap=%d",
+                    attempts,
+                    self.unproductive_reconnect_cap,
+                )
+                ok, reauth_exc = await self._reauth_for_reconnect(attempts)
+                if not ok:
+                    unproductive += 1
+                    STREAM_RECONNECTS.labels(reason="reauth_failed").inc()
+                    if unproductive >= self.unproductive_reconnect_cap:
+                        log.error(
+                            "reconnect_surrender attempts=%d "
+                            "last_error=reauth_failed",
+                            attempts,
+                        )
+                        STREAM_RECONNECTS.labels(
+                            reason="surrendered"
+                        ).inc()
+                        raise UnproductiveReconnectError(
+                            f"Unproductive reconnect cap "
+                            f"({self.unproductive_reconnect_cap}) exceeded; "
+                            f"last error: reauth failed ({reauth_exc!r})"
+                        ) from reauth_exc
+                    await asyncio.sleep(self.reconnect_delay)
+                    attempts += 1
+                    continue
+
             try:
                 await self._run_session(consumer)
                 return
+            except _UnproductiveSession as exc:
+                unproductive += 1
+                log.warning(
+                    "reconnect_unproductive attempt=%d "
+                    "grace_seconds=%s bars_received=%d",
+                    attempts + 1,
+                    self.unproductive_grace_seconds,
+                    exc.bars_received,
+                )
+                if unproductive >= self.unproductive_reconnect_cap:
+                    log.error(
+                        "reconnect_surrender attempts=%d "
+                        "last_error=unproductive",
+                        attempts + 1,
+                    )
+                    STREAM_RECONNECTS.labels(reason="surrendered").inc()
+                    raise UnproductiveReconnectError(
+                        f"Unproductive reconnect cap "
+                        f"({self.unproductive_reconnect_cap}) exceeded; "
+                        f"last session received 0 bars in "
+                        f"{self.unproductive_grace_seconds:.0f}s grace window"
+                    ) from exc
+                STREAM_RECONNECTS.labels(reason="unproductive").inc()
+                attempts += 1
+                if (
+                    self.max_reconnect_attempts > 0
+                    and attempts >= self.max_reconnect_attempts
+                ):
+                    STREAM_RECONNECTS.labels(reason="exhausted").inc()
+                    raise
+                await asyncio.sleep(self.reconnect_delay)
             except StaleStreamError:
+                # Productive session ending in staleness — reset the
+                # consecutive-unproductive counter so transient session
+                # rollover does not accumulate toward the surrender cap.
+                if (
+                    self._last_session_state is not None
+                    and self._last_session_state.bars_received > 0
+                ):
+                    unproductive = 0
                 attempts += 1
                 if not self.auto_reconnect:
                     STREAM_RECONNECTS.labels(reason="stale_no_retry").inc()
@@ -407,7 +583,12 @@ class Lightstreamer(Streamer):
                 )
                 await asyncio.sleep(self.reconnect_delay)
 
-    def _create_ls_client(self) -> Any:
+    def _create_ls_client(
+        self,
+        *,
+        loop: asyncio.AbstractEventLoop | None = None,
+        on_connected: Callable[[], None] | None = None,
+    ) -> Any:
         ls_client = LightstreamerClient(self.client.ls_url, "DEFAULT")
         self._ls_client = ls_client
 
@@ -425,7 +606,9 @@ class Lightstreamer(Streamer):
             self.client.client_id,
         )
 
-        ls_client.addListener(_ConnectionListener())
+        ls_client.addListener(
+            _ConnectionListener(loop=loop, on_connected=on_connected)
+        )
         return ls_client
 
     @staticmethod
@@ -437,6 +620,7 @@ class Lightstreamer(Streamer):
         chart_queue: "asyncio.Queue[dict[str, Any]]",
         loop: asyncio.AbstractEventLoop,
         scheduler: RetryScheduler,
+        session_state: _SessionState | None = None,
     ) -> list[Any]:
         assert Subscription is not None
 
@@ -454,6 +638,7 @@ class Lightstreamer(Streamer):
                 _MarketListener(
                     loop, market_queue, market_items,
                     ls_client, market_sub, scheduler,
+                    session_state=session_state,
                 )
             )
             subscriptions.append(market_sub)
@@ -468,6 +653,7 @@ class Lightstreamer(Streamer):
                 ls_sub.addListener(
                     _ChartListener(
                         loop, chart_queue, cs, ls_client, ls_sub, scheduler,
+                        session_state=session_state,
                     )
                 )
                 subscriptions.append(ls_sub)
@@ -560,6 +746,33 @@ class Lightstreamer(Streamer):
                         "❤  OK: Last update %.1fs ago", delta
                     )
 
+    async def _grace_monitor(
+        self,
+        session_state: _SessionState,
+        connected_event: asyncio.Event,
+    ) -> None:
+        """Raise ``_UnproductiveSession`` if no updates arrive after CONNECTED.
+
+        Waits for the LS connection to reach a ``CONNECTED:*`` status, then
+        sleeps the grace window.  If no bars/ticks arrived during that window
+        the session is signalled as unproductive — ``run()`` then increments
+        the unproductive counter and decides whether to retry or surrender.
+        """
+        try:
+            await connected_event.wait()
+        except asyncio.CancelledError:
+            return
+        try:
+            await asyncio.sleep(self.unproductive_grace_seconds)
+        except asyncio.CancelledError:
+            return
+        if session_state.bars_received == 0:
+            raise _UnproductiveSession(
+                f"No bars received within "
+                f"{self.unproductive_grace_seconds:.0f}s of CONNECTED",
+                bars_received=0,
+            )
+
     @staticmethod
     async def _consume_market_queue(
         consumer: Any,
@@ -638,10 +851,17 @@ class Lightstreamer(Streamer):
         scheduler = RetryScheduler(loop)
         self._scheduler = scheduler
 
-        ls_client = self._create_ls_client()
+        session_state = _SessionState()
+        self._last_session_state = session_state
+        connected_event = asyncio.Event()
+
+        ls_client = self._create_ls_client(
+            loop=loop, on_connected=connected_event.set
+        )
         subscriptions = self._setup_subscriptions(
             market_subs, chart_subs, ls_client,
             market_queue, chart_queue, loop, scheduler,
+            session_state=session_state,
         )
 
         ls_client.connect()
@@ -652,7 +872,12 @@ class Lightstreamer(Streamer):
 
         self._tune_watchdog(consumer, chart_subs, market_subs)
 
-        tasks = [asyncio.create_task(self._heartbeat_monitor(consumer))]
+        tasks = [
+            asyncio.create_task(self._heartbeat_monitor(consumer)),
+            asyncio.create_task(
+                self._grace_monitor(session_state, connected_event)
+            ),
+        ]
         if market_subs:
             tasks.append(
                 asyncio.create_task(

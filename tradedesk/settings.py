@@ -95,6 +95,21 @@ STREAM_HEARTBEAT_SUPPRESSED_SLEEP_S: int = _env_int(
     "TRADEDESK_STREAM_HEARTBEAT_SUPPRESSED_SLEEP_S", 60
 )
 
+# Cap on consecutive unproductive reconnect attempts before
+# ``UnproductiveReconnectError`` is escalated to the supervisor.  A reconnect
+# is "unproductive" when the LS connection reaches CONNECTED but no real-time
+# updates arrive within ``STREAM_UNPRODUCTIVE_GRACE_S``, or when the
+# pre-reconnect IG /session refresh fails.  Count.
+STREAM_UNPRODUCTIVE_RECONNECT_CAP: int = _env_int(
+    "TRADEDESK_STREAM_UNPRODUCTIVE_RECONNECT_CAP", 3
+)
+
+# Grace window after the LS status reaches CONNECTED before a session is
+# treated as unproductive when no updates arrive.  Seconds.
+STREAM_UNPRODUCTIVE_GRACE_S: float = _env_float(
+    "TRADEDESK_STREAM_UNPRODUCTIVE_GRACE_S", 60.0
+)
+
 # ---------------------------------------------------------------------------
 # IG REST: authentication & order confirmation
 # ---------------------------------------------------------------------------

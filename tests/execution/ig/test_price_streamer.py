@@ -303,3 +303,452 @@ async def test_heartbeat_logs_resumed_after_data_resumes(
     messages = [r.message for r in caplog.records]
     assert any("silent" in m.lower() or "Suppressing" in m for m in messages)
     assert any("resumed" in m.lower() for m in messages)
+
+
+# ──────────────────────────────────────────────────────────────────────────────
+# Session-state bumping by listeners
+# ──────────────────────────────────────────────────────────────────────────────
+
+
+def test_market_listener_bumps_session_state_on_each_update() -> None:
+    """Every onItemUpdate call increments session_state.bars_received."""
+    state = streamer_mod._SessionState()
+    listener = _MarketListener(
+        loop=MagicMock(),
+        queue=asyncio.Queue(),
+        items=["PRICE:AID:CS.D.EURUSD.CFD.IP"],
+        ls_client=MagicMock(),
+        ls_subscription=MagicMock(),
+        scheduler=MagicMock(),
+        session_state=state,
+    )
+    update = MagicMock()
+    update.getValue.side_effect = lambda f: {
+        "BIDPRICE1": "1.10000",
+        "ASKPRICE1": "1.10002",
+        "TIMESTAMP": "x",
+        "DLG_FLAG": "0",
+    }.get(f)
+    update.getItemName.return_value = "PRICE:AID:CS.D.EURUSD.CFD.IP"
+
+    listener.onItemUpdate(update)
+    listener.onItemUpdate(update)
+
+    assert state.bars_received == 2
+
+
+def test_chart_listener_bumps_session_state_on_each_update() -> None:
+    """_ChartListener bumps session_state on every onItemUpdate (even partial bars)."""
+    state = streamer_mod._SessionState()
+    sub = ChartSubscription("CS.D.EURUSD.CFD.IP", "5MINUTE")
+    listener = _ChartListener(
+        loop=MagicMock(),
+        queue=asyncio.Queue(),
+        sub=sub,
+        ls_client=MagicMock(),
+        ls_subscription=MagicMock(),
+        scheduler=MagicMock(),
+        session_state=state,
+    )
+    # CONS_END != "1" — partial bar — still counts as data flowing
+    update = MagicMock()
+    update.getValue.return_value = "0"
+
+    listener.onItemUpdate(update)
+    listener.onItemUpdate(update)
+    listener.onItemUpdate(update)
+
+    assert state.bars_received == 3
+
+
+# ──────────────────────────────────────────────────────────────────────────────
+# _ConnectionListener — connected-event signalling
+# ──────────────────────────────────────────────────────────────────────────────
+
+
+def test_connection_listener_fires_on_connected_for_connected_status() -> None:
+    """on_connected callback is scheduled via the loop for any CONNECTED:* status."""
+    fired: list[bool] = []
+    loop = MagicMock()
+    loop.call_soon_threadsafe.side_effect = lambda cb: fired.append(True) or cb()
+
+    listener = streamer_mod._ConnectionListener(
+        loop=loop, on_connected=lambda: None,
+    )
+    listener.onStatusChange("CONNECTED:WS-STREAMING")
+    assert fired == [True]
+
+    listener.onStatusChange("CONNECTED:HTTP-POLLING")
+    assert fired == [True, True]
+
+
+def test_connection_listener_ignores_non_connected_status() -> None:
+    """Statuses like CONNECTING / STALLED / DISCONNECTED don't fire on_connected."""
+    fired: list[bool] = []
+    loop = MagicMock()
+    loop.call_soon_threadsafe.side_effect = lambda cb: fired.append(True)
+
+    listener = streamer_mod._ConnectionListener(
+        loop=loop, on_connected=lambda: None,
+    )
+    for status in ("CONNECTING", "STALLED", "DISCONNECTED:WILL-RETRY"):
+        listener.onStatusChange(status)
+
+    assert fired == []
+
+
+def test_connection_listener_without_callback_is_noop() -> None:
+    """Backwards-compat: no callback / no loop wired ⇒ status changes don't crash."""
+    listener = streamer_mod._ConnectionListener()
+    listener.onStatusChange("CONNECTED:WS-STREAMING")  # must not raise
+
+
+# ──────────────────────────────────────────────────────────────────────────────
+# _grace_monitor
+# ──────────────────────────────────────────────────────────────────────────────
+
+
+async def test_grace_monitor_raises_unproductive_when_no_bars(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """If connected fires and grace elapses with bars=0, raise _UnproductiveSession."""
+    ig_client = MagicMock()
+    s = streamer_mod.Lightstreamer(
+        ig_client, unproductive_grace_seconds=0.01,
+    )
+    state = streamer_mod._SessionState()
+    connected = asyncio.Event()
+    connected.set()
+
+    with pytest.raises(streamer_mod._UnproductiveSession) as ei:
+        await s._grace_monitor(state, connected)
+    assert ei.value.bars_received == 0
+
+
+async def test_grace_monitor_returns_clean_when_bars_arrived() -> None:
+    """If bars_received > 0 by the time grace elapses, return cleanly."""
+    ig_client = MagicMock()
+    s = streamer_mod.Lightstreamer(
+        ig_client, unproductive_grace_seconds=0.01,
+    )
+    state = streamer_mod._SessionState()
+    state.bump()  # Simulate one tick arrived
+    connected = asyncio.Event()
+    connected.set()
+
+    # Must not raise — productive session
+    await s._grace_monitor(state, connected)
+
+
+async def test_grace_monitor_blocks_until_connected() -> None:
+    """Grace timer doesn't start until the connected_event fires."""
+    ig_client = MagicMock()
+    s = streamer_mod.Lightstreamer(
+        ig_client, unproductive_grace_seconds=0.01,
+    )
+    state = streamer_mod._SessionState()
+    connected = asyncio.Event()
+    # connected is NOT set — monitor should block
+
+    task = asyncio.create_task(s._grace_monitor(state, connected))
+    await asyncio.sleep(0.05)
+    assert not task.done()  # Still waiting for connected
+
+    task.cancel()
+    try:
+        await task
+    except asyncio.CancelledError:
+        pass
+
+
+# ──────────────────────────────────────────────────────────────────────────────
+# run() — pre-reconnect IG /session re-auth
+# ──────────────────────────────────────────────────────────────────────────────
+
+
+def _stub_ls_client(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Replace LightstreamerClient + Subscription with cheap mocks."""
+    monkeypatch.setattr(
+        streamer_mod, "LightstreamerClient",
+        lambda *a, **k: MagicMock(connectionDetails=MagicMock()),
+    )
+    monkeypatch.setattr(streamer_mod, "Subscription", MagicMock())
+
+
+async def test_run_reauths_before_recreating_lightstreamer_on_reconnect(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """On a reconnect attempt, IG /session is refreshed BEFORE the new LS client is built.
+
+    Token refresh is observed by ensuring the second LS-client construction
+    sees the post-reauth CST/XST, not the original ones.
+    """
+    _stub_ls_client(monkeypatch)
+
+    ig_client = MagicMock()
+    ig_client.ls_url = "https://lsdemo"
+    ig_client.ls_cst = "OLD_CST"
+    ig_client.ls_xst = "OLD_XST"
+    ig_client.client_id = "CID"
+    ig_client.account_id = "AID"
+
+    async def fake_authenticate() -> None:
+        ig_client.ls_cst = "NEW_CST"
+        ig_client.ls_xst = "NEW_XST"
+
+    ig_client.auth.authenticate = fake_authenticate
+
+    call_log: list[tuple[str, str | None]] = []
+
+    s = streamer_mod.Lightstreamer(
+        ig_client,
+        max_reconnect_attempts=2,
+        unproductive_reconnect_cap=10,
+        unproductive_grace_seconds=999,
+    )
+    s.reconnect_delay = 0
+
+    async def fake_run_session(consumer: Any) -> None:
+        call_log.append(("session", ig_client.ls_cst))
+        # Pretend the session ran and was productive, then went stale —
+        # so unproductive cap doesn't trip and we get a clean reconnect path.
+        s._last_session_state = streamer_mod._SessionState()
+        s._last_session_state.bars_received = 1
+        raise streamer_mod.StaleStreamError("forced")
+
+    monkeypatch.setattr(s, "_run_session", fake_run_session)
+
+    consumer = MagicMock()
+
+    with pytest.raises(streamer_mod.StaleStreamError):
+        await s.run(consumer)
+
+    # First session uses original tokens (no reauth on initial attempt);
+    # second session sees the NEW tokens populated by fake_authenticate.
+    assert call_log == [
+        ("session", "OLD_CST"),
+        ("session", "NEW_CST"),
+    ]
+
+
+async def test_run_emits_structured_reauth_log_markers(
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """reauth_attempted / reauth_result / reconnect_attempt structured markers emitted."""
+    _stub_ls_client(monkeypatch)
+
+    ig_client = MagicMock()
+    ig_client.ls_cst = "CST"
+
+    async def fake_authenticate() -> None:
+        return None
+
+    ig_client.auth.authenticate = fake_authenticate
+
+    s = streamer_mod.Lightstreamer(
+        ig_client,
+        max_reconnect_attempts=2,
+        unproductive_reconnect_cap=10,
+    )
+    s.reconnect_delay = 0
+
+    async def fake_run_session(consumer: Any) -> None:
+        s._last_session_state = streamer_mod._SessionState()
+        s._last_session_state.bars_received = 1
+        raise streamer_mod.StaleStreamError("forced")
+
+    monkeypatch.setattr(s, "_run_session", fake_run_session)
+
+    with caplog.at_level(logging.INFO, logger="tradedesk.execution.ig.price_streamer"):
+        with pytest.raises(streamer_mod.StaleStreamError):
+            await s.run(MagicMock())
+
+    messages = [r.message for r in caplog.records]
+    assert any("reconnect_attempt attempt=1" in m for m in messages)
+    assert any("reauth_attempted reason=reconnect attempt=1" in m for m in messages)
+    assert any("reauth_result attempt=1 status=ok" in m for m in messages)
+
+
+# ──────────────────────────────────────────────────────────────────────────────
+# run() — unproductive reconnect cap
+# ──────────────────────────────────────────────────────────────────────────────
+
+
+async def test_run_raises_unproductive_error_exactly_after_cap(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """N consecutive unproductive sessions → UnproductiveReconnectError; no further attempts."""
+    _stub_ls_client(monkeypatch)
+
+    ig_client = MagicMock()
+    ig_client.ls_cst = "CST"
+
+    async def fake_authenticate() -> None:
+        return None
+
+    ig_client.auth.authenticate = fake_authenticate
+
+    s = streamer_mod.Lightstreamer(
+        ig_client,
+        max_reconnect_attempts=0,
+        unproductive_reconnect_cap=3,
+        unproductive_grace_seconds=0.01,
+    )
+    s.reconnect_delay = 0
+
+    session_count = 0
+
+    async def fake_run_session(consumer: Any) -> None:
+        nonlocal session_count
+        session_count += 1
+        s._last_session_state = streamer_mod._SessionState()
+        raise streamer_mod._UnproductiveSession(
+            "no bars", bars_received=0,
+        )
+
+    monkeypatch.setattr(s, "_run_session", fake_run_session)
+
+    with pytest.raises(streamer_mod.UnproductiveReconnectError):
+        await s.run(MagicMock())
+
+    # cap=3 ⇒ exactly 3 sessions before surrender
+    assert session_count == 3
+
+
+async def test_run_surrender_log_marker_after_cap(
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """reconnect_unproductive + reconnect_surrender markers fire before the error escalates."""
+    _stub_ls_client(monkeypatch)
+
+    ig_client = MagicMock()
+    ig_client.ls_cst = "CST"
+
+    async def fake_authenticate() -> None:
+        return None
+
+    ig_client.auth.authenticate = fake_authenticate
+
+    s = streamer_mod.Lightstreamer(
+        ig_client,
+        max_reconnect_attempts=0,
+        unproductive_reconnect_cap=2,
+    )
+    s.reconnect_delay = 0
+
+    async def fake_run_session(consumer: Any) -> None:
+        s._last_session_state = streamer_mod._SessionState()
+        raise streamer_mod._UnproductiveSession(
+            "no bars", bars_received=0,
+        )
+
+    monkeypatch.setattr(s, "_run_session", fake_run_session)
+
+    with caplog.at_level(logging.INFO, logger="tradedesk.execution.ig.price_streamer"):
+        with pytest.raises(streamer_mod.UnproductiveReconnectError):
+            await s.run(MagicMock())
+
+    messages = [r.message for r in caplog.records]
+    assert any("reconnect_unproductive" in m for m in messages)
+    assert any(
+        "reconnect_surrender" in m and "last_error=unproductive" in m
+        for m in messages
+    )
+
+
+async def test_run_reauth_failure_counts_against_cap(
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """Re-auth failure increments the unproductive counter and surrenders at cap."""
+    _stub_ls_client(monkeypatch)
+
+    ig_client = MagicMock()
+    ig_client.ls_cst = "CST"
+
+    async def fake_authenticate() -> None:
+        raise RuntimeError("network down")
+
+    ig_client.auth.authenticate = fake_authenticate
+
+    s = streamer_mod.Lightstreamer(
+        ig_client,
+        max_reconnect_attempts=0,
+        unproductive_reconnect_cap=2,
+    )
+    s.reconnect_delay = 0
+
+    async def fake_run_session(consumer: Any) -> None:
+        s._last_session_state = streamer_mod._SessionState()
+        raise streamer_mod.StaleStreamError("forced")
+
+    monkeypatch.setattr(s, "_run_session", fake_run_session)
+
+    with caplog.at_level(logging.INFO, logger="tradedesk.execution.ig.price_streamer"):
+        with pytest.raises(streamer_mod.UnproductiveReconnectError):
+            await s.run(MagicMock())
+
+    messages = [r.message for r in caplog.records]
+    assert any(
+        "reauth_result attempt=1 status=fail" in m for m in messages
+    )
+    assert any(
+        "reconnect_surrender" in m and "last_error=reauth_failed" in m
+        for m in messages
+    )
+
+
+async def test_run_unproductive_counter_resets_on_productive_session(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A productive session (bars > 0) ending in StaleStreamError zeros the unproductive counter.
+
+    Without reset, three unproductive sessions interleaved with productive ones
+    would still surrender at cap=2. With reset, the productive sessions zero the
+    counter and the streamer runs through the whole pattern and exits cleanly.
+    """
+    _stub_ls_client(monkeypatch)
+
+    ig_client = MagicMock()
+    ig_client.ls_cst = "CST"
+
+    async def fake_authenticate() -> None:
+        return None
+
+    ig_client.auth.authenticate = fake_authenticate
+
+    s = streamer_mod.Lightstreamer(
+        ig_client,
+        max_reconnect_attempts=0,
+        unproductive_reconnect_cap=2,
+    )
+    s.reconnect_delay = 0
+
+    pattern: list[str] = [
+        "unproductive", "stale", "unproductive", "stale", "unproductive",
+    ]
+    session_count = 0
+
+    async def fake_run_session(consumer: Any) -> None:
+        nonlocal session_count
+        if session_count >= len(pattern):
+            return  # Clean stream exit
+        kind = pattern[session_count]
+        session_count += 1
+        state = streamer_mod._SessionState()
+        if kind == "stale":
+            state.bars_received = 5
+            s._last_session_state = state
+            raise streamer_mod.StaleStreamError("rolled over")
+        s._last_session_state = state
+        raise streamer_mod._UnproductiveSession(
+            "no bars", bars_received=0,
+        )
+
+    monkeypatch.setattr(s, "_run_session", fake_run_session)
+
+    await s.run(MagicMock())  # Must exit cleanly — no surrender
+
+    assert session_count == len(pattern)
