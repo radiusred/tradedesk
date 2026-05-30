@@ -61,12 +61,14 @@ def choose_base_period(target_period: str, *, supported_periods: list[str] | Non
 
     # Try 5MINUTE first if supported
     if "5MINUTE" in supported_periods:
-        if target_s >= 300 and (target_s % 300 == 0):
+        five_min_s = Timeframe.MINUTE_5.to_seconds()
+        if target_s >= five_min_s and (target_s % five_min_s == 0):
             return "5MINUTE"
 
     # Try 1MINUTE if supported
     if "1MINUTE" in supported_periods:
-        if target_s >= 60 and (target_s % 60 == 0):
+        one_min_s = Timeframe.MINUTE_1.to_seconds()
+        if target_s >= one_min_s and (target_s % one_min_s == 0):
             return "1MINUTE"
 
     # Fall back to SECOND if supported
