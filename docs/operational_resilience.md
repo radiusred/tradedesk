@@ -9,7 +9,8 @@ tradedesk is designed for production use with built-in resilience mechanisms and
 Subscription retries (price stream reconnects) use an asyncio-based `RetryScheduler` that is cancellable when the streamer closes. This replaces earlier threading-based approaches and ensures clean, deterministic shutdown without orphaned threads.
 
 **Behavior**:
-- Linear backoff: `delay = attempt * STREAM_SUB_RETRY_BASE_DELAY_S`
+- Exponential backoff with full jitter: `delay = min(STREAM_SUB_RETRY_BASE_DELAY_S * 2 ** retry, STREAM_SUB_RETRY_MAX_DELAY_S) * uniform(0.5, 1.5)`. The jitter desynchronises retries across instruments so a group-wide subscription error does not trigger a thundering herd of simultaneous resubscriptions.
+- Backoff ceiling: `STREAM_SUB_RETRY_MAX_DELAY_S` (default: 30.0s) caps the deterministic term before jitter
 - Maximum retries: `STREAM_SUB_MAX_RETRIES` (default: 3)
 - Automatic cancellation on streamer shutdown
 
