@@ -16,9 +16,18 @@ For **IG credentials** (API key, username, password, environment, account ID), s
 Maximum retry attempts for a failed Lightstreamer subscription before giving up and logging an error. Count.
 
 ### `TRADEDESK_STREAM_SUB_RETRY_BASE_DELAY_S` (default: 2.0)
-Base delay between subscription retries; actual delay is `attempt * STREAM_SUB_RETRY_BASE_DELAY_S`. Seconds.
+Base delay for the subscription-retry schedule. Retries use exponential backoff with full jitter, bounded by `TRADEDESK_STREAM_SUB_RETRY_MAX_DELAY_S`:
 
-Example: with 3 retry attempts and base delay of 2 seconds, actual delays are 2s, 4s, 6s.
+```
+delay = min(BASE * 2 ** retry, MAX) * uniform(0.5, 1.5)
+```
+
+where `retry` is 0-indexed. The jitter multiplier spreads retries across instruments so a group-wide subscription failure (e.g. IG `21 Invalid group`) does not produce a thundering herd of synchronised resubscriptions. Seconds.
+
+Example: with base delay 2s and max delay 30s, the deterministic part of the schedule grows 2s, 4s, 8s, 16s, 30s, 30s, … and each actual delay is then multiplied by a random factor in `[0.5, 1.5)`.
+
+### `TRADEDESK_STREAM_SUB_RETRY_MAX_DELAY_S` (default: 30.0)
+Ceiling on the deterministic part of the subscription-retry delay (before jitter is applied), bounding the exponential growth seeded by `TRADEDESK_STREAM_SUB_RETRY_BASE_DELAY_S`. Seconds.
 
 ### `TRADEDESK_STREAM_HEARTBEAT_SLEEP_S` (default: 10)
 Heartbeat monitor sleep cadence — how often the staleness check runs. Seconds.
