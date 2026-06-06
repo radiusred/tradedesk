@@ -26,16 +26,16 @@ _SENSITIVE_KEYS: frozenset[str] = frozenset({
 })
 
 
-def _redact(value: Any, *, _depth: int = 0) -> Any:
+def _redact(value: Any) -> Any:
     """Return a copy of *value* with known token fields replaced by '<redacted:N>'."""
-    if isinstance(value, dict) and _depth < 5:
+    if isinstance(value, dict):
         return {
             k: f"<redacted:{len(str(v))}>" if k in _SENSITIVE_KEYS
-            else _redact(v, _depth=_depth + 1)
+            else _redact(v)
             for k, v in value.items()
         }
-    if isinstance(value, list) and _depth < 5:
-        return [_redact(item, _depth=_depth + 1) for item in value]
+    if isinstance(value, (list, tuple)):
+        return type(value)(_redact(item) for item in value)
     return value
 
 
