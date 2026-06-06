@@ -19,6 +19,7 @@ from tradedesk.types import Candle
 
 from .auth import IGAuthManager
 from .metadata import IGMetadataCache
+from .metrics import REQUEST_AUTH_RETRIES, REQUEST_ERRORS
 from .orders import IGOrderHandler
 from .positions import IGPositionTracker
 from .price_streamer import Lightstreamer
@@ -27,6 +28,11 @@ from .settings import settings
 log = logging.getLogger(__name__)
 
 _ERROR_BODY_TRUNCATE = 200
+
+# A single bounded re-auth retry: on a 401/403 we re-authenticate once and
+# re-issue the request with refreshed headers. Capped to avoid an infinite
+# auth/retry loop when credentials are genuinely rejected.
+_MAX_AUTH_RETRIES = 1
 
 
 class IGClient(Client):
@@ -170,45 +176,86 @@ class IGClient(Client):
         if self.auth.uses_oauth:
             await self.auth.ensure_valid()
 
-        req_headers: dict[str, str] = dict(self._session.headers)
         caller_headers = kwargs.pop("headers", None)
-        if caller_headers:
-            req_headers.update(dict(caller_headers))
-        if api_version is not None:
-            req_headers["VERSION"] = str(api_version)
 
+        # Bounded re-auth retry loop. On a 401/403 we re-authenticate (which
+        # refreshes self._session.headers) and re-issue the request with the
+        # new token. ``attempt`` caps the number of re-auths so a genuinely
+        # rejected credential cannot spin forever.
+        attempt = 0
+        while True:
+            # Rebuild headers each iteration so a re-auth's refreshed token is
+            # actually applied to the retried request.
+            req_headers: dict[str, str] = dict(self._session.headers)
+            if caller_headers:
+                req_headers.update(dict(caller_headers))
+            if api_version is not None:
+                req_headers["VERSION"] = str(api_version)
+
+            try:
+                async with self._session.request(
+                    method, url, headers=req_headers, **kwargs
+                ) as resp:
+                    if resp.status in (401, 403) and attempt < _MAX_AUTH_RETRIES:
+                        await self._handle_retry_logic(
+                            resp, method, url, headers=req_headers, **kwargs
+                        )
+                        attempt += 1
+                        REQUEST_AUTH_RETRIES.labels(outcome="reissued").inc()
+                        continue
+
+                    if resp.status >= 400:
+                        if resp.status in (401, 403):
+                            # Retry budget exhausted — credential still rejected.
+                            REQUEST_AUTH_RETRIES.labels(outcome="exhausted").inc()
+                        await self._raise_for_status(resp)
+
+                    result = await resp.json()
+                    return result if isinstance(result, dict) else {}
+
+            except aiohttp.ClientError as e:
+                log.error("Request failed: %s %s - %s", method, url, e)
+                raise
+
+    async def _raise_for_status(self, resp: Any) -> None:
+        """Raise a RuntimeError for an HTTP >= 400 response.
+
+        Preserves IG's structured ``errorCode`` (parsed from the JSON body when
+        present) both in the exception message and as a metric label, instead of
+        letting it get lost when a non-JSON/HTML body is stripped and truncated.
+        """
+        error_code = ""
+        err_body: Any
         try:
-            async with self._session.request(
-                method, url, headers=req_headers, **kwargs
-            ) as resp:
-                if resp.status in (401, 403):
-                    await self._handle_retry_logic(
-                        resp, method, url, headers=req_headers, **kwargs
-                    )
+            err_body = await resp.json()
+            if isinstance(err_body, dict):
+                error_code = str(err_body.get("errorCode", "") or "")
+        except Exception:
+            raw = await resp.text()
+            if "<html" in raw.lower():
+                stripped = re.sub(r"<[^>]+>", " ", raw)
+                err_body = " ".join(stripped.split())[:_ERROR_BODY_TRUNCATE]
+            else:
+                err_body = raw
 
-                if resp.status >= 400:
-                    try:
-                        err_body = await resp.json()
-                    except Exception:
-                        raw = await resp.text()
-                        if "<html" in raw.lower():
-                            err_body = re.sub(r"<[^>]+>", " ", raw)
-                            err_body = " ".join(err_body.split())[:_ERROR_BODY_TRUNCATE]
-                        else:
-                            err_body = raw
-                    raise RuntimeError(f"IG request failed: HTTP {resp.status}: {err_body}")
+        REQUEST_ERRORS.labels(
+            status=str(resp.status), error_code=error_code or "none"
+        ).inc()
 
-                result = await resp.json()
-                return result if isinstance(result, dict) else {}
-
-        except aiohttp.ClientError as e:
-            log.error("Request failed: %s %s - %s", method, url, e)
-            raise
+        code_suffix = f" (errorCode={error_code})" if error_code else ""
+        raise RuntimeError(
+            f"IG request failed: HTTP {resp.status}: {err_body}{code_suffix}"
+        )
 
     async def _handle_retry_logic(
         self, resp: Any, method: str, url: str, **kwargs: Any
     ) -> None:
-        """Attempt re-authentication on 401/403; raise immediately on rate limit."""
+        """Attempt re-authentication on 401/403; raise immediately on rate limit.
+
+        Returns normally after a successful re-auth so the caller can re-issue
+        the request with refreshed headers. Rate-limit / historical-data
+        allowance errors are non-recoverable and raise immediately.
+        """
         try:
             body = await resp.json()
             if isinstance(body, dict):

@@ -85,6 +85,16 @@ try:
         "tradedesk_ig_auth_refresh_inflight",
         "Number of OAuth refresh requests currently in flight",
     )
+    REQUEST_ERRORS: Any = Counter(
+        "tradedesk_ig_request_errors_total",
+        "IG REST request failures by HTTP status and IG errorCode",
+        ["status", "error_code"],
+    )
+    REQUEST_AUTH_RETRIES: Any = Counter(
+        "tradedesk_ig_request_auth_retries_total",
+        "IG REST requests re-issued after a 401/403 re-authentication",
+        ["outcome"],
+    )
 except ImportError:  # pragma: no cover - exercised only when dep missing
     _noop = _NoopMetric()
     STREAM_RECONNECTS = _noop
@@ -92,11 +102,15 @@ except ImportError:  # pragma: no cover - exercised only when dep missing
     SUBSCRIPTION_RETRIES = _noop
     AUTH_REFRESHES = _noop
     AUTH_REFRESH_INFLIGHT = _noop
+    REQUEST_ERRORS = _noop
+    REQUEST_AUTH_RETRIES = _noop
 
 
 __all__ = [
     "AUTH_REFRESHES",
     "AUTH_REFRESH_INFLIGHT",
+    "REQUEST_AUTH_RETRIES",
+    "REQUEST_ERRORS",
     "STREAM_RECONNECTS",
     "STREAM_STALE_SECONDS",
     "SUBSCRIPTION_RETRIES",
