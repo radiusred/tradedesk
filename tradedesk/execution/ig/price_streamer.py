@@ -27,6 +27,7 @@ from tradedesk.settings import (
 from tradedesk.types import Candle
 
 from .metrics import (
+    STREAM_RECONNECT_RECOVERIES,
     STREAM_RECONNECTS,
     STREAM_STALE_SECONDS,
     SUBSCRIPTION_RETRIES,
@@ -542,6 +543,24 @@ class Lightstreamer(Streamer):
                     attempts += 1
                     continue
 
+            # A session started while ``attempts > 0`` is a reconnect session:
+            # if it goes on to receive data we record a recovery so ops can
+            # distinguish reconnects that were merely *attempted* from those
+            # that actually *recovered* a productive stream (td#12).
+            is_reconnect_session = attempts > 0
+
+            if is_reconnect_session:
+                # Reset the staleness baseline before the reconnect session
+                # starts. ``consumer.last_update`` only advances on dispatch,
+                # so it still holds the pre-disconnect timestamp; without this
+                # the new session's heartbeat monitor would see a huge delta
+                # on its first tick and immediately re-raise StaleStreamError
+                # → reconnect → stale → reconnect spin throttled only by
+                # ``reconnect_delay`` (td#2). The initial session needs no
+                # reset — ``last_update`` is freshly set in the consumer's
+                # __init__.
+                consumer.last_update = datetime.now(timezone.utc)
+
             try:
                 await self._run_session(consumer)
                 return
@@ -585,6 +604,16 @@ class Lightstreamer(Streamer):
                     and self._last_session_state.bars_received > 0
                 ):
                     unproductive = 0
+                    # A reconnect session that received data before going
+                    # stale recovered the stream — emit a success signal
+                    # so ops can distinguish attempted vs recovered (td#12).
+                    if is_reconnect_session:
+                        STREAM_RECONNECT_RECOVERIES.inc()
+                        log.info(
+                            "reconnect_recovered attempt=%d bars_received=%d",
+                            attempts,
+                            self._last_session_state.bars_received,
+                        )
                 attempts += 1
                 if not self.auto_reconnect:
                     STREAM_RECONNECTS.labels(reason="stale_no_retry").inc()

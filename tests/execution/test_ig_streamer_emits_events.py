@@ -656,11 +656,14 @@ async def test_stale_stream_reconnects_automatically(
 
     strat, _ = make_strategy()
     strat.last_update = datetime(2020, 1, 1, tzinfo=timezone.utc)
-    strat.watchdog_threshold = 1.0
+    strat.watchdog_threshold = 0.01
 
+    # The initial session stales immediately (ancient last_update). Each
+    # reconnect session resets the staleness baseline (RAD-3730 td#2), so a
+    # short max_stale lets it re-stale promptly without spinning instantly.
     streamer = ig_streamer.Lightstreamer(
         ig_client,
-        max_stale_seconds=2.0,
+        max_stale_seconds=0.02,
         max_reconnect_attempts=3,
         reconnect_delay=0,
     )
@@ -721,11 +724,14 @@ async def test_stale_stream_reconnects_unlimited_when_max_zero(
 
     strat, _ = make_strategy()
     strat.last_update = datetime(2020, 1, 1, tzinfo=timezone.utc)
-    strat.watchdog_threshold = 1.0
+    strat.watchdog_threshold = 0.01
 
+    # Each reconnect session resets the staleness baseline (RAD-3730 td#2);
+    # a short max_stale lets every session re-stale promptly so the unbounded
+    # reconnect loop still produces several reconnects within the time window.
     streamer = ig_streamer.Lightstreamer(
         ig_client,
-        max_stale_seconds=2.0,
+        max_stale_seconds=0.02,
         max_reconnect_attempts=0,
         reconnect_delay=0,
     )
@@ -763,11 +769,13 @@ async def test_reconnect_reestablishes_subscriptions(
 
     strat, _ = make_strategy()
     strat.last_update = datetime(2020, 1, 1, tzinfo=timezone.utc)
-    strat.watchdog_threshold = 1.0
+    strat.watchdog_threshold = 0.01
 
+    # Each reconnect session resets the staleness baseline (RAD-3730 td#2);
+    # a short max_stale lets the reconnect session re-stale promptly.
     streamer = ig_streamer.Lightstreamer(
         ig_client,
-        max_stale_seconds=2.0,
+        max_stale_seconds=0.02,
         max_reconnect_attempts=2,
         reconnect_delay=0,
     )
