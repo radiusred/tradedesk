@@ -505,6 +505,17 @@ class TestRedact:
         result = _redact({"CST": "12345"})
         assert result["CST"] == "<redacted:5>"
 
+    def test_redacts_lowercase_authorization_header(self) -> None:
+        result = _redact({"authorization": "Bearer abc"})
+        assert result["authorization"].startswith("<redacted:")
+        assert "abc" not in result["authorization"]
+
+    def test_redacts_sensitive_keys_inside_list(self) -> None:
+        result = _redact({"headers": [{"authorization": "Bearer secret", "content-type": "application/json"}]})
+        assert result["headers"][0]["authorization"].startswith("<redacted:")
+        assert "secret" not in result["headers"][0]["authorization"]
+        assert result["headers"][0]["content-type"] == "application/json"
+
 
 # ---------------------------------------------------------------------------
 # Token-redaction integration: log messages must not leak secrets
