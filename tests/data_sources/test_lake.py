@@ -5,7 +5,7 @@ from __future__ import annotations
 import csv
 import io
 import zipfile
-from datetime import date
+from datetime import date, timedelta
 from pathlib import Path
 
 import pandas as pd
@@ -224,3 +224,174 @@ def test_materialize_ecb_mocked(monkeypatch, tmp_path: Path):
         series={"EUR_YLD_2Y": ecb.DEFAULT_ECB_SERIES["EUR_YLD_2Y"]}, lake=tmp_path
     )
     assert set(written) == {"EUR_YLD_2Y"}
+
+
+# ---------------------------------------------------------------------------
+# FRED incremental / upsert (RAD-3791)
+# ---------------------------------------------------------------------------
+
+
+def _value_frame(rows: dict[str, float]) -> pd.DataFrame:
+    return pd.DataFrame(
+        {"value": list(rows.values())},
+        index=pd.DatetimeIndex(list(rows.keys()), name="date"),
+    )
+
+
+def _backdate(path: Path, days: int = 2) -> None:
+    """Age a file's mtime so the same-day FRED skip guard does not trip."""
+    import os
+
+    past = (pd.Timestamp.now() - pd.Timedelta(days=days)).timestamp()
+    os.utime(path, (past, past))
+
+
+def test_merge_fred_appends_only_new_rows():
+    existing = _value_frame({"2026-01-03": 1.0, "2026-01-04": 2.0})
+    new = _value_frame({"2026-01-04": 9.9, "2026-01-05": 3.0, "2026-01-06": 4.0})
+    merged, added = lake._merge_fred(existing, new)
+    assert added == 2
+    assert list(merged.index) == [
+        pd.Timestamp(d) for d in ("2026-01-03", "2026-01-04", "2026-01-05", "2026-01-06")
+    ]
+    # Existing 2026-01-04 value is preserved, not overwritten by the new 9.9.
+    assert merged.loc["2026-01-04", "value"] == 2.0
+
+
+def test_merge_fred_first_run_uses_all_new_rows():
+    new = _value_frame({"2026-01-05": 3.0, "2026-01-04": 2.0})
+    merged, added = lake._merge_fred(None, new)
+    assert added == 2
+    assert list(merged.index) == [pd.Timestamp("2026-01-04"), pd.Timestamp("2026-01-05")]
+
+
+def test_merge_fred_no_new_rows_is_idempotent():
+    existing = _value_frame({"2026-01-04": 2.0, "2026-01-05": 3.0})
+    new = _value_frame({"2026-01-05": 3.0})
+    merged, added = lake._merge_fred(existing, new)
+    assert added == 0
+    assert merged is existing
+
+
+def _recording_fetch(returns):
+    """Build a fake fetch_fred_series that records each call's date_from."""
+    calls: list[date | None] = []
+
+    def fake(series_id, *, date_from=None, cache_dir=None, force=False):
+        calls.append(date_from)
+        result = returns[len(calls) - 1] if isinstance(returns, list) else returns
+        if isinstance(result, Exception):
+            raise result
+        return result
+
+    return fake, calls
+
+
+def test_materialize_fred_incremental_fetches_after_max_date(monkeypatch, tmp_path: Path):
+    path = lake.macro_path("FRED", "DGS10", lake=tmp_path)
+    lake._write_parquet(_value_frame({"2026-01-04": 2.0, "2026-01-05": 3.0}), path)
+    _backdate(path)  # simulate a parquet from a previous day
+    fake, calls = _recording_fetch(_value_frame({"2026-01-06": 4.0, "2026-01-07": 5.0}))
+    monkeypatch.setattr(fred, "fetch_fred_series", fake)
+
+    written = lake.materialize_fred(series={"DGS10": "x"}, lake=tmp_path)
+
+    assert set(written) == {"DGS10"}
+    assert calls == [date(2026, 1, 6)]  # max(existing) + 1 day
+    loaded = lake.load_macro_series("FRED", "DGS10", lake=tmp_path)
+    assert list(loaded["value"]) == [2.0, 3.0, 4.0, 5.0]
+
+
+def test_materialize_fred_first_run_uses_trailing_year(monkeypatch, tmp_path: Path):
+    fake, calls = _recording_fetch(_value_frame({"2026-01-06": 4.0}))
+    monkeypatch.setattr(fred, "fetch_fred_series", fake)
+
+    written = lake.materialize_fred(series={"DGS10": "x"}, lake=tmp_path)
+
+    assert set(written) == {"DGS10"}
+    assert calls == [date.today() - timedelta(days=lake.FRED_FIRST_RUN_LOOKBACK_DAYS)]
+
+
+def test_materialize_fred_first_run_falls_back_to_90d_on_timeout(monkeypatch, tmp_path: Path):
+    fake, calls = _recording_fetch(
+        [TimeoutError("body never arrived"), _value_frame({"2026-01-06": 4.0})]
+    )
+    monkeypatch.setattr(fred, "fetch_fred_series", fake)
+
+    written = lake.materialize_fred(series={"DGS10": "x"}, lake=tmp_path)
+
+    assert set(written) == {"DGS10"}
+    assert calls == [
+        date.today() - timedelta(days=lake.FRED_FIRST_RUN_LOOKBACK_DAYS),
+        date.today() - timedelta(days=lake.FRED_FIRST_RUN_FALLBACK_DAYS),
+    ]
+
+
+def test_materialize_fred_rerun_is_idempotent_no_download(monkeypatch, tmp_path: Path):
+    # Parquet already current through today -> no fetch should happen.
+    lake._write_parquet(
+        _value_frame({date.today().isoformat(): 7.0}),
+        lake.macro_path("FRED", "DGS10", lake=tmp_path),
+    )
+    fake, calls = _recording_fetch(_value_frame({}))
+    monkeypatch.setattr(fred, "fetch_fred_series", fake)
+
+    written = lake.materialize_fred(series={"DGS10": "x"}, lake=tmp_path)
+
+    assert set(written) == {"DGS10"}  # still reported as materialized
+    assert calls == []  # nothing downloaded
+    loaded = lake.load_macro_series("FRED", "DGS10", lake=tmp_path)
+    assert list(loaded["value"]) == [7.0]
+
+
+def test_materialize_fred_skips_when_parquet_written_today(monkeypatch, tmp_path: Path):
+    # An old-dated parquet, but written today -> same-day skip, no network.
+    lake._write_parquet(
+        _value_frame({"2025-01-02": 1.0}),
+        lake.macro_path("FRED", "DGS10", lake=tmp_path),
+    )
+    fake, calls = _recording_fetch(_value_frame({"2026-06-01": 9.0}))
+    monkeypatch.setattr(fred, "fetch_fred_series", fake)
+
+    written = lake.materialize_fred(series={"DGS10": "x"}, lake=tmp_path)
+
+    assert set(written) == {"DGS10"}
+    assert calls == []  # fetched-today guard kept it offline
+    loaded = lake.load_macro_series("FRED", "DGS10", lake=tmp_path)
+    assert list(loaded["value"]) == [1.0]  # untouched
+
+
+def test_materialize_fred_explicit_from_overrides_incremental(monkeypatch, tmp_path: Path):
+    path = lake.macro_path("FRED", "DGS10", lake=tmp_path)
+    lake._write_parquet(_value_frame({"2026-01-04": 2.0}), path)
+    # Note: NOT backdated — an explicit --from must fetch even on a same-day re-run.
+    fake, calls = _recording_fetch(_value_frame({"2020-01-02": 1.0, "2026-01-05": 3.0}))
+    monkeypatch.setattr(fred, "fetch_fred_series", fake)
+
+    written = lake.materialize_fred(
+        series={"DGS10": "x"}, date_from=date(2020, 1, 1), lake=tmp_path
+    )
+
+    assert set(written) == {"DGS10"}
+    assert calls == [date(2020, 1, 1)]  # explicit override wins over incremental
+    loaded = lake.load_macro_series("FRED", "DGS10", lake=tmp_path)
+    # Older override rows merge in alongside the preserved existing row.
+    assert list(loaded["value"]) == [1.0, 2.0, 3.0]
+
+
+def test_materialize_fred_keeps_prior_data_when_delta_fetch_fails(monkeypatch, tmp_path: Path):
+    import urllib.error
+
+    path = lake.macro_path("FRED", "DGS10", lake=tmp_path)
+    lake._write_parquet(_value_frame({"2026-01-04": 2.0}), path)
+    _backdate(path)  # force the delta fetch (which then fails)
+
+    def boom(series_id, **kwargs):
+        raise urllib.error.URLError("network down")
+
+    monkeypatch.setattr(fred, "fetch_fred_series", boom)
+    written = lake.materialize_fred(series={"DGS10": "x"}, lake=tmp_path)
+
+    assert set(written) == {"DGS10"}  # prior parquet still counts as materialized
+    loaded = lake.load_macro_series("FRED", "DGS10", lake=tmp_path)
+    assert list(loaded["value"]) == [2.0]
