@@ -1,0 +1,39 @@
+name: Finalize Release
+
+# Tags and publishes the GitHub release once an automated release PR
+# (branch release/*) has merged. This replaces the idle "Wait for Merge" poll
+# loop that used to live in reusable-release.yml's execute job:
+# the release runner now exits immediately after opening the PR, and this
+# merge-triggered workflow does the tag + publish. A workflow_dispatch escape
+# hatch is provided for the rare case where finalize needs a manual re-run.
+
+on:
+  pull_request:
+    types: [closed]
+  workflow_dispatch:
+    inputs:
+      release_branch:
+        description: "Merged release branch, e.g. release/v1.2.3"
+        required: true
+        type: string
+      merge_sha:
+        description: "Merge commit SHA to tag and target the release at"
+        required: true
+        type: string
+
+jobs:
+  finalize:
+    if: >-
+      ${{ github.event_name == 'workflow_dispatch' ||
+          (github.event.pull_request.merged == true &&
+           startsWith(github.event.pull_request.head.ref, 'release/')) }}
+    permissions:
+      contents: write
+      pull-requests: read
+    uses: radiusred/.github/.github/workflows/reusable-finalize-release.yml@main
+    with:
+      release_branch: ${{ github.event.pull_request.head.ref || inputs.release_branch }}
+      merge_sha: ${{ github.event.pull_request.merge_commit_sha || inputs.merge_sha }}
+    secrets:
+      RELEASE_APP_CLIENT_ID: ${{ vars.RELEASE_APP_CLIENT_ID }}
+      RELEASE_APP_PRIVATE_KEY: ${{ secrets.RELEASE_APP_PRIVATE_KEY }}
