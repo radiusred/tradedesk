@@ -506,15 +506,26 @@ class TestRedact:
         assert result["CST"] == "<redacted:5>"
 
     def test_redacts_lowercase_authorization_header(self) -> None:
-        result = _redact({"authorization": "Bearer abc"})
+        result = _redact({"authorization": "Bearer lower-token"})
         assert result["authorization"].startswith("<redacted:")
-        assert "abc" not in result["authorization"]
+        assert "lower-token" not in result["authorization"]
 
-    def test_redacts_sensitive_keys_inside_list(self) -> None:
-        result = _redact({"headers": [{"authorization": "Bearer secret", "content-type": "application/json"}]})
-        assert result["headers"][0]["authorization"].startswith("<redacted:")
-        assert "secret" not in result["headers"][0]["authorization"]
-        assert result["headers"][0]["content-type"] == "application/json"
+    def test_redacts_token_in_list(self) -> None:
+        result = _redact({"outer": [{"access_token": "tok123"}, {"other": "val"}]})
+        assert result["outer"][0]["access_token"].startswith("<redacted:")
+        assert "tok123" not in result["outer"][0]["access_token"]
+        assert result["outer"][1]["other"] == "val"
+
+    def test_redacts_deeply_nested_token(self) -> None:
+        deep: dict = {"access_token": "deep-secret"}
+        for _ in range(10):
+            deep = {"level": deep}
+        result = _redact(deep)
+        inner = result
+        for _ in range(10):
+            inner = inner["level"]
+        assert inner["access_token"].startswith("<redacted:")
+        assert "deep-secret" not in inner["access_token"]
 
 
 # ---------------------------------------------------------------------------
