@@ -21,7 +21,7 @@ if TYPE_CHECKING:
 log = logging.getLogger(__name__)
 
 _SENSITIVE_KEYS: frozenset[str] = frozenset({
-    "CST", "X-SECURITY-TOKEN", "Authorization",
+    "CST", "X-SECURITY-TOKEN", "Authorization", "authorization",
     "cst", "x-security-token", "access_token", "refresh_token",
 })
 
@@ -34,6 +34,8 @@ def _redact(value: Any, *, _depth: int = 0) -> Any:
             else _redact(v, _depth=_depth + 1)
             for k, v in value.items()
         }
+    if isinstance(value, list) and _depth < 5:
+        return [_redact(item, _depth=_depth + 1) for item in value]
     return value
 
 
