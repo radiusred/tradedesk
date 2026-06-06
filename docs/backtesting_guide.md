@@ -195,23 +195,6 @@ def client_factory():
 If you need overnight financing/admin fees, build and configure the
 `BacktestClient` yourself as above before running the session.
 
-### Bid/Ask Replay Ordering Invariant
-
-When you pass ask-side candle series into the backtest streamer, the current
-implementation relies on an internal ordering detail:
-
-- ask candles are inserted before bid candles
-- both streams share a monotonic sequence counter
-- `heapq.merge(...)` lazily pulls from those generators, so the ask update gets
-  the lower sequence number at equal timestamps and runs first
-
-That is the mechanism behind "ask is current before the bid
-`CandleClosedEvent` fires". Treat it as an implementation detail of the current
-`BacktestStreamer`, not as a public contract you should build external logic
-around. If this ordering matters to your strategy or analytics, pin it with a
-test in your own runtime rather than assuming any future merge/refactor keeps
-the same sequencing behaviour.
-
 ---
 
 ## 5. In-Memory Backtest

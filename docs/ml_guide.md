@@ -142,16 +142,6 @@ signals, and emits the same strategy events used elsewhere in the framework.
 Use it when you want ML inference to live inside a standard `BaseStrategy`
 workflow rather than in a separate orchestration layer.
 
-## Model artifact safety
-
-`DirectionClassifier.save(...)` persists model artefacts with `joblib`, and
-`DirectionClassifier.load(...)` restores them with `joblib.load(...)`.
-
-That means model files are effectively pickle payloads. Load only artefacts you
-trust and control. Do not accept untrusted `.joblib` files from users,
-downloads, or shared storage and then load them inside a live or privileged
-runtime.
-
 ## Related docs
 
 - [strategy_guide.md](strategy_guide.md)
