@@ -70,3 +70,4 @@ class ExcursionSampledEvent(DomainEvent):
     mae_points: float  # Maximum Adverse Excursion in points
     mfe_pnl: float  # MFE scaled by position size
     mae_pnl: float  # MAE scaled by position size
+    position_id: str = ""

@@ -109,61 +109,60 @@ class ExcursionComputer:
 
     async def _on_position_opened(self, event: PositionOpenedEvent) -> None:
         """Track newly opened position for excursion computation."""
-        self._open_positions[event.instrument] = event
-        log.debug(f"ExcursionComputer tracking: {event.instrument}")
+        key = event.position_id or event.instrument
+        self._open_positions[key] = event
+        log.debug(f"ExcursionComputer tracking: {key}")
 
     async def _on_position_closed(self, event: PositionClosedEvent) -> None:
         """Stop tracking closed position."""
-        self._open_positions.pop(event.instrument, None)
+        key = event.position_id or event.instrument
+        self._open_positions.pop(key, None)
 
     async def _on_candle_closed(self, event: CandleClosedEvent) -> None:
-        """Compute and publish excursions for open positions on this instrument."""
-        pos_event = self._open_positions.get(event.instrument)
-        if pos_event is None:
-            return  # No open position for this instrument
+        """Compute and publish excursions for all open positions on this instrument."""
+        matching = [p for p in self._open_positions.values() if p.instrument == event.instrument]
+        if not matching:
+            return
 
-        try:
-            # Compute MFE/MAE from entry to current candle
-            entry_ts = pos_event.timestamp
-            current_ts = event.timestamp
+        from bisect import bisect_left, bisect_right
 
-            # Find candles between entry and now
-            from bisect import bisect_left, bisect_right
+        for pos_event in matching:
+            try:
+                entry_ts = pos_event.timestamp
+                current_ts = event.timestamp
 
-            i = bisect_left(self._index.ts, entry_ts)
-            j = bisect_right(self._index.ts, current_ts)
+                i = bisect_left(self._index.ts, entry_ts)
+                j = bisect_right(self._index.ts, current_ts)
 
-            if i >= j:
-                # No candles yet or alignment issue
-                return
+                if i >= j:
+                    continue
 
-            max_high = max(self._index.high[i:j])
-            min_low = min(self._index.low[i:j])
+                max_high = max(self._index.high[i:j])
+                min_low = min(self._index.low[i:j])
 
-            # Compute excursion based on position direction
-            if pos_event.direction == "BUY":
-                mfe_points = max_high - pos_event.entry_price
-                mae_points = min_low - pos_event.entry_price  # negative if adverse
-            else:  # SELL
-                mfe_points = pos_event.entry_price - min_low
-                mae_points = pos_event.entry_price - max_high  # negative if adverse
+                if pos_event.direction == "BUY":
+                    mfe_points = max_high - pos_event.entry_price
+                    mae_points = min_low - pos_event.entry_price
+                else:  # SELL
+                    mfe_points = pos_event.entry_price - min_low
+                    mae_points = pos_event.entry_price - max_high
 
-            mfe_pnl = mfe_points * pos_event.size
-            mae_pnl = mae_points * pos_event.size
+                mfe_pnl = mfe_points * pos_event.size
+                mae_pnl = mae_points * pos_event.size
 
-            # Publish ExcursionSampledEvent
-            await get_dispatcher().publish(
-                ExcursionSampledEvent(
-                    instrument=event.instrument,
-                    mfe_points=float(mfe_points),
-                    mae_points=float(mae_points),
-                    mfe_pnl=float(mfe_pnl),
-                    mae_pnl=float(mae_pnl),
-                    timestamp=event.timestamp,
+                await get_dispatcher().publish(
+                    ExcursionSampledEvent(
+                        instrument=event.instrument,
+                        position_id=pos_event.position_id,
+                        mfe_points=float(mfe_points),
+                        mae_points=float(mae_points),
+                        mfe_pnl=float(mfe_pnl),
+                        mae_pnl=float(mae_pnl),
+                        timestamp=event.timestamp,
+                    )
                 )
-            )
-        except Exception:
-            log.exception(f"Failed to compute excursions for {event.instrument}")
+            except Exception:
+                log.exception(f"Failed to compute excursions for {event.instrument} pos={pos_event.position_id or '(no id)'}")
 
 
 # ---------------------------------------------------------------------------

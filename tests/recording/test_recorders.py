@@ -358,6 +358,55 @@ class TestExcursionComputer:
         assert exc.mae_points == -3.0
 
     @pytest.mark.asyncio
+    async def test_two_concurrent_positions_same_instrument_independent_samples(self, computer):
+        """Two concurrent positions on one instrument each produce their own ExcursionSampledEvent."""
+        published_events: list[ExcursionSampledEvent] = []
+
+        async def capture_event(event: ExcursionSampledEvent) -> None:
+            published_events.append(event)
+
+        dispatcher = get_dispatcher()
+        dispatcher.subscribe(ExcursionSampledEvent, capture_event)
+
+        # Open two concurrent BUY positions on EURUSD with distinct position_ids
+        await dispatcher.publish(
+            PositionOpenedEvent(
+                instrument="EURUSD",
+                direction="BUY",
+                size=1.0,
+                entry_price=100.0,
+                position_id="pos-A",
+                timestamp=_dt("2025-01-15T12:00:00Z"),
+            )
+        )
+        await dispatcher.publish(
+            PositionOpenedEvent(
+                instrument="EURUSD",
+                direction="BUY",
+                size=2.0,
+                entry_price=101.0,
+                position_id="pos-B",
+                timestamp=_dt("2025-01-15T12:00:00Z"),
+            )
+        )
+
+        # Single candle close should produce two distinct ExcursionSampledEvents
+        await dispatcher.publish(
+            CandleClosedEvent(
+                instrument="EURUSD",
+                timeframe="15MINUTE",
+                candle=_candle("2025-01-15T12:30:00Z"),
+            )
+        )
+
+        assert len(published_events) == 2
+        ids = {e.position_id for e in published_events}
+        assert ids == {"pos-A", "pos-B"}
+        # Each event is independently computed (different entry prices → different MFE)
+        by_id = {e.position_id: e for e in published_events}
+        assert by_id["pos-A"].mfe_pnl != by_id["pos-B"].mfe_pnl
+
+    @pytest.mark.asyncio
     async def test_ignores_candle_without_open_position(self, computer):
         """Should not compute excursions if no position is open for instrument."""
         published_events = []
