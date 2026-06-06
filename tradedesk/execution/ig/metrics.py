@@ -81,6 +81,13 @@ try:
         "IG Lightstreamer subscription retry attempts",
         ["kind"],
     )
+    SUBSCRIPTION_REJECTED: Any = Counter(
+        "tradedesk_ig_subscription_rejected_total",
+        "IG Lightstreamer subscriptions rejected with a structural error "
+        "(e.g. code 21 'Invalid group') that retries cannot fix; the item "
+        "is abandoned and the affected sleeve stays dark until corrected",
+        ["kind", "code"],
+    )
     AUTH_REFRESHES: Any = Counter(
         "tradedesk_ig_auth_refreshes_total",
         "IG OAuth/session refreshes",
@@ -110,6 +117,7 @@ except ImportError:  # pragma: no cover - exercised only when dep missing
     AUTH_REFRESH_INFLIGHT = _noop
     REQUEST_ERRORS = _noop
     REQUEST_AUTH_RETRIES = _noop
+    SUBSCRIPTION_REJECTED = _noop
 
 
 __all__ = [
@@ -120,5 +128,6 @@ __all__ = [
     "STREAM_RECONNECTS",
     "STREAM_RECONNECT_RECOVERIES",
     "STREAM_STALE_SECONDS",
+    "SUBSCRIPTION_REJECTED",
     "SUBSCRIPTION_RETRIES",
 ]

@@ -30,10 +30,28 @@ from .metrics import (
     STREAM_RECONNECT_RECOVERIES,
     STREAM_RECONNECTS,
     STREAM_STALE_SECONDS,
+    SUBSCRIPTION_REJECTED,
     SUBSCRIPTION_RETRIES,
 )
 
 log = logging.getLogger(__name__)
+
+# IG Lightstreamer subscription error codes that are *structural* — the item
+# or group is malformed / does not exist, so retrying the identical
+# subscription can never succeed.  Code 21 ("Invalid group") is raised, for
+# example, when a CHART item names an unsupported candle scale (IG CHART
+# scales are SECOND / 1MINUTE / 5MINUTE / HOUR — there is no DAY scale).
+# Retrying such an item just produces an indefinite ERROR loop that leaves the
+# affected sleeve dark while the process otherwise reports healthy, so we
+# abandon it immediately and surface a dedicated metric for alerting instead.
+_STRUCTURAL_SUB_ERROR_CODES: frozenset[str] = frozenset({"21"})
+
+
+def _is_structural_sub_error(code: Any, message: Any) -> bool:
+    """Return True for subscription errors that retrying cannot fix."""
+    if str(code).strip() in _STRUCTURAL_SUB_ERROR_CODES:
+        return True
+    return isinstance(message, str) and "invalid group" in message.lower()
 
 
 def _subscription_retry_delay(retry: int) -> float:
@@ -256,6 +274,20 @@ class _MarketListener:
             log.exception("Error processing market update: %s", e)
 
     def onSubscriptionError(self, code: Any, message: Any) -> None:
+        if _is_structural_sub_error(code, message):
+            SUBSCRIPTION_REJECTED.labels(
+                kind="market", code=str(code).strip()
+            ).inc()
+            log.error(
+                "Market subscription STRUCTURAL error (items=%s): %s - %s "
+                "— will NOT retry (items are structurally invalid); "
+                "these instruments will receive no ticks until corrected. "
+                "Manual intervention required.",
+                self._items,
+                code,
+                message,
+            )
+            return
         self._retries += 1
         if self._retries <= STREAM_SUB_MAX_RETRIES:
             delay = _subscription_retry_delay(self._retries - 1)
@@ -373,6 +405,21 @@ class _ChartListener:
             log.exception("Error processing chart update: %s", e)
 
     def onSubscriptionError(self, code: Any, message: Any) -> None:
+        if _is_structural_sub_error(code, message):
+            SUBSCRIPTION_REJECTED.labels(
+                kind="chart", code=str(code).strip()
+            ).inc()
+            log.error(
+                "Chart subscription STRUCTURAL error for %s (item=%s): "
+                "%s - %s — will NOT retry (item is structurally invalid); "
+                "sleeve will receive no bars until corrected. "
+                "Manual intervention required.",
+                self._sub.instrument,
+                self._sub.get_item_name(),
+                code,
+                message,
+            )
+            return
         self._retries += 1
         if self._retries <= STREAM_SUB_MAX_RETRIES:
             delay = _subscription_retry_delay(self._retries - 1)

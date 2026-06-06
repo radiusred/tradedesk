@@ -147,7 +147,9 @@ async def test_disconnect_cancels_pending_subscription_retries(
     ).args[0]
 
     # Use a long retry delay so the retry stays pending until we cancel.
-    market_sub._listener.onSubscriptionError(21, "transient")
+    # Code 503 is transient (retryable); code 21 "Invalid group" is now
+    # structural and abandoned without scheduling a retry.
+    market_sub._listener.onSubscriptionError(503, "transient")
     await asyncio.sleep(0.01)
     assert streamer._scheduler is not None
     assert len(streamer._scheduler._tasks) == 1

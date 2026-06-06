@@ -245,7 +245,10 @@ def test_subscription_retry_action_calls_ls_subscribe() -> None:
     )
 
     listener = _make_market_listener(scheduler=sched, ls_client=ls_client)
-    listener.onSubscriptionError(21, "Invalid group")
+    # Use a transient code — code 21 ("Invalid group") is now treated as a
+    # structural error that is abandoned without retry (see structural-guard
+    # tests below).
+    listener.onSubscriptionError(503, "unavailable")
 
     assert len(schedule_calls) == 1
     _, retry_fn = schedule_calls[0]
@@ -253,6 +256,99 @@ def test_subscription_retry_action_calls_ls_subscribe() -> None:
     ls_client.subscribe.reset_mock()
     retry_fn()
     ls_client.subscribe.assert_called_once()
+
+
+# ──────────────────────────────────────────────────────────────────────────────
+# Structural subscription errors (code 21 "Invalid group") — abandon, no retry
+# ──────────────────────────────────────────────────────────────────────────────
+
+
+def _make_chart_listener(
+    sub: ChartSubscription | None = None,
+    scheduler: Any = None,
+    ls_client: Any = None,
+) -> _ChartListener:
+    if sub is None:
+        sub = ChartSubscription("CS.D.GBPJPY.TODAY.IP", "5MINUTE")
+    queue: asyncio.Queue[dict[str, Any]] = asyncio.Queue()
+    return _ChartListener(
+        loop=MagicMock(),
+        queue=queue,
+        sub=sub,
+        ls_client=ls_client if ls_client is not None else MagicMock(),
+        ls_subscription=MagicMock(),
+        scheduler=scheduler if scheduler is not None else MagicMock(),
+    )
+
+
+@pytest.mark.parametrize(
+    ("code", "message"),
+    [
+        (21, "Invalid group"),
+        ("21", "anything"),
+        (999, "Group is INVALID GROUP for item"),
+    ],
+)
+def test_chart_structural_error_abandoned_without_retry(
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+    code: Any,
+    message: str,
+) -> None:
+    """A structural chart error (code 21 / 'Invalid group') is not retried."""
+    rejected: list[tuple[str, str]] = []
+    monkeypatch.setattr(
+        streamer_mod.SUBSCRIPTION_REJECTED,
+        "labels",
+        lambda **kw: type(
+            "_C", (), {"inc": lambda _self: rejected.append((kw["kind"], kw["code"]))}
+        )(),
+    )
+
+    sched = MagicMock()
+    listener = _make_chart_listener(scheduler=sched)
+
+    with caplog.at_level(logging.ERROR, logger="tradedesk.execution.ig.price_streamer"):
+        # Fire several times — must never schedule a retry.
+        listener.onSubscriptionError(code, message)
+        listener.onSubscriptionError(code, message)
+
+    sched.schedule.assert_not_called()
+    assert rejected and rejected[0][0] == "chart"
+    assert any("STRUCTURAL" in r.message for r in caplog.records)
+
+
+def test_market_structural_error_abandoned_without_retry(
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """A structural market error (code 21) is not retried and is counted."""
+    rejected: list[tuple[str, str]] = []
+    monkeypatch.setattr(
+        streamer_mod.SUBSCRIPTION_REJECTED,
+        "labels",
+        lambda **kw: type(
+            "_C", (), {"inc": lambda _self: rejected.append((kw["kind"], kw["code"]))}
+        )(),
+    )
+
+    sched = MagicMock()
+    listener = _make_market_listener(scheduler=sched)
+
+    with caplog.at_level(logging.ERROR, logger="tradedesk.execution.ig.price_streamer"):
+        listener.onSubscriptionError(21, "Invalid group")
+
+    sched.schedule.assert_not_called()
+    assert rejected == [("market", "21")]
+    assert any("STRUCTURAL" in r.message for r in caplog.records)
+
+
+def test_transient_error_still_retries_after_structural_guard() -> None:
+    """Non-structural errors (e.g. 503) keep their existing retry behaviour."""
+    sched = MagicMock()
+    listener = _make_chart_listener(scheduler=sched)
+    listener.onSubscriptionError(503, "temporarily unavailable")
+    sched.schedule.assert_called_once()
 
 
 # ──────────────────────────────────────────────────────────────────────────────

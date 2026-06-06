@@ -446,8 +446,8 @@ async def test_subscription_error_retries_then_resubscribes(
     market_sub = next(s for s in subscribed if s.items[0].startswith("PRICE:"))
     chart_sub = next(s for s in subscribed if s.items[0].startswith("CHART:"))
 
-    market_sub._listener.onSubscriptionError(21, "Invalid group")
-    chart_sub._listener.onSubscriptionError(21, "Invalid group")
+    market_sub._listener.onSubscriptionError(503, "Service unavailable")
+    chart_sub._listener.onSubscriptionError(503, "Service unavailable")
 
     assert len(schedule_calls) == 2
     assert schedule_calls[0][0] == ig_streamer.STREAM_SUB_RETRY_BASE_DELAY_S
@@ -496,12 +496,12 @@ async def test_subscription_error_gives_up_after_max_retries(
 
     with caplog.at_level(logging.WARNING, logger="tradedesk.execution.ig.price_streamer"):
         for _ in range(ig_streamer.STREAM_SUB_MAX_RETRIES):
-            chart_sub._listener.onSubscriptionError(21, "Invalid group")
+            chart_sub._listener.onSubscriptionError(503, "Service unavailable")
 
         assert len(schedule_calls) == ig_streamer.STREAM_SUB_MAX_RETRIES
 
         schedule_calls.clear()
-        chart_sub._listener.onSubscriptionError(21, "Invalid group")
+        chart_sub._listener.onSubscriptionError(503, "Service unavailable")
         assert len(schedule_calls) == 0
 
     assert any("retries exhausted" in r.message for r in caplog.records)
@@ -539,13 +539,13 @@ async def test_successful_subscription_resets_retry_counter(
 
     # Exhaust retries
     for _ in range(ig_streamer.STREAM_SUB_MAX_RETRIES):
-        chart_sub._listener.onSubscriptionError(21, "Invalid group")
+        chart_sub._listener.onSubscriptionError(503, "Service unavailable")
 
     # Successful subscription resets counter
     chart_sub._listener.onSubscription()
 
     schedule_calls.clear()
-    chart_sub._listener.onSubscriptionError(21, "Invalid group")
+    chart_sub._listener.onSubscriptionError(503, "Service unavailable")
     assert len(schedule_calls) == 1  # retry is available again
 
     task.cancel()
