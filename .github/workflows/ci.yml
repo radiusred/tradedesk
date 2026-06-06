@@ -7,6 +7,10 @@ on:
 jobs:
   lint-commits:
     name: Lint commit messages
+    # Skip on automated release version-bump PRs (release/*): they only change
+    # the __version__ string against code that already passed CI on its feature
+    # PRs, so re-running the full matrix there just burns GHA minutes.
+    if: ${{ !startsWith(github.head_ref, 'release/') }}
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6
@@ -36,6 +40,7 @@ jobs:
 
   typecheck:
     name: Type check
+    if: ${{ !startsWith(github.head_ref, 'release/') }}
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6
@@ -58,6 +63,7 @@ jobs:
   test:
     name: Test Python ${{ matrix.python-version }}
     needs: typecheck
+    if: ${{ !startsWith(github.head_ref, 'release/') }}
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
