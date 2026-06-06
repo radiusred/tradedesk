@@ -98,6 +98,9 @@ class ExcursionComputer:
             candle_index: Pre-built index of historical candles for excursion lookup
         """
         self._index = candle_index
+        # Keyed by position_id so concurrent positions on the same epic (e.g.
+        # dual AUDCAD sleeves) are tracked independently rather than the second
+        # open overwriting the first (RAD-3756 / RAD-3727).
         self._open_positions: dict[str, PositionOpenedEvent] = {}
 
         # Subscribe to position lifecycle and candle events
@@ -109,61 +112,81 @@ class ExcursionComputer:
 
     async def _on_position_opened(self, event: PositionOpenedEvent) -> None:
         """Track newly opened position for excursion computation."""
-        self._open_positions[event.instrument] = event
-        log.debug(f"ExcursionComputer tracking: {event.instrument}")
+        self._open_positions[event.position_id] = event
+        log.debug(
+            f"ExcursionComputer tracking: {event.instrument} ({event.position_id})"
+        )
 
     async def _on_position_closed(self, event: PositionClosedEvent) -> None:
         """Stop tracking closed position."""
-        self._open_positions.pop(event.instrument, None)
+        self._open_positions.pop(event.position_id, None)
 
     async def _on_candle_closed(self, event: CandleClosedEvent) -> None:
-        """Compute and publish excursions for open positions on this instrument."""
-        pos_event = self._open_positions.get(event.instrument)
-        if pos_event is None:
-            return  # No open position for this instrument
+        """Compute and publish excursions for every open position on this instrument.
 
-        try:
-            # Compute MFE/MAE from entry to current candle
-            entry_ts = pos_event.timestamp
-            current_ts = event.timestamp
-
-            # Find candles between entry and now
-            from bisect import bisect_left, bisect_right
-
-            i = bisect_left(self._index.ts, entry_ts)
-            j = bisect_right(self._index.ts, current_ts)
-
-            if i >= j:
-                # No candles yet or alignment issue
-                return
-
-            max_high = max(self._index.high[i:j])
-            min_low = min(self._index.low[i:j])
-
-            # Compute excursion based on position direction
-            if pos_event.direction == "BUY":
-                mfe_points = max_high - pos_event.entry_price
-                mae_points = min_low - pos_event.entry_price  # negative if adverse
-            else:  # SELL
-                mfe_points = pos_event.entry_price - min_low
-                mae_points = pos_event.entry_price - max_high  # negative if adverse
-
-            mfe_pnl = mfe_points * pos_event.size
-            mae_pnl = mae_points * pos_event.size
-
-            # Publish ExcursionSampledEvent
-            await get_dispatcher().publish(
-                ExcursionSampledEvent(
-                    instrument=event.instrument,
-                    mfe_points=float(mfe_points),
-                    mae_points=float(mae_points),
-                    mfe_pnl=float(mfe_pnl),
-                    mae_pnl=float(mae_pnl),
-                    timestamp=event.timestamp,
+        Each position gets its own ExcursionSampledEvent stamped with its
+        position_id, so two concurrent positions on the same epic do not
+        collide downstream.
+        """
+        # Snapshot to a list: publishing may mutate the dict via close handlers.
+        positions = [
+            pos
+            for pos in self._open_positions.values()
+            if pos.instrument == event.instrument
+        ]
+        for pos_event in positions:
+            try:
+                await self._sample_position(pos_event, event)
+            except Exception:
+                log.exception(
+                    f"Failed to compute excursions for {event.instrument} "
+                    f"({pos_event.position_id})"
                 )
+
+    async def _sample_position(
+        self, pos_event: PositionOpenedEvent, event: CandleClosedEvent
+    ) -> None:
+        """Compute and publish a single position's MFE/MAE up to this candle."""
+        # Compute MFE/MAE from entry to current candle
+        entry_ts = pos_event.timestamp
+        current_ts = event.timestamp
+
+        # Find candles between entry and now
+        from bisect import bisect_left, bisect_right
+
+        i = bisect_left(self._index.ts, entry_ts)
+        j = bisect_right(self._index.ts, current_ts)
+
+        if i >= j:
+            # No candles yet or alignment issue
+            return
+
+        max_high = max(self._index.high[i:j])
+        min_low = min(self._index.low[i:j])
+
+        # Compute excursion based on position direction
+        if pos_event.direction == "BUY":
+            mfe_points = max_high - pos_event.entry_price
+            mae_points = min_low - pos_event.entry_price  # negative if adverse
+        else:  # SELL
+            mfe_points = pos_event.entry_price - min_low
+            mae_points = pos_event.entry_price - max_high  # negative if adverse
+
+        mfe_pnl = mfe_points * pos_event.size
+        mae_pnl = mae_points * pos_event.size
+
+        # Publish ExcursionSampledEvent
+        await get_dispatcher().publish(
+            ExcursionSampledEvent(
+                instrument=event.instrument,
+                mfe_points=float(mfe_points),
+                mae_points=float(mae_points),
+                mfe_pnl=float(mfe_pnl),
+                mae_pnl=float(mae_pnl),
+                position_id=pos_event.position_id,
+                timestamp=event.timestamp,
             )
-        except Exception:
-            log.exception(f"Failed to compute excursions for {event.instrument}")
+        )
 
 
 # ---------------------------------------------------------------------------
