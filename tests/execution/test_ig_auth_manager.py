@@ -7,7 +7,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import aiohttp
 import pytest
 
-from tradedesk.execution.ig.auth import IGAuthManager
+from tradedesk.execution.ig.auth import IGAuthManager, _redact
 from tradedesk.execution.ig.settings import Settings
 
 
@@ -450,3 +450,114 @@ class TestStoreOauthToken:
 
         assert auth.oauth_refresh_token == "r"
         assert auth.client_id == "C1"
+
+
+# ---------------------------------------------------------------------------
+# _redact helper tests
+# ---------------------------------------------------------------------------
+
+
+class TestRedact:
+    def test_redacts_cst_header(self) -> None:
+        result = _redact({"CST": "super-secret-token", "Other": "visible"})
+        assert result["CST"].startswith("<redacted:")
+        assert "super-secret-token" not in result["CST"]
+        assert result["Other"] == "visible"
+
+    def test_redacts_x_security_token_header(self) -> None:
+        result = _redact({"X-SECURITY-TOKEN": "abc123xyz"})
+        assert result["X-SECURITY-TOKEN"] == "<redacted:9>"
+
+    def test_redacts_authorization_header(self) -> None:
+        result = _redact({"Authorization": "Bearer my-oauth-token"})
+        assert result["Authorization"].startswith("<redacted:")
+        assert "my-oauth-token" not in result["Authorization"]
+
+    def test_redacts_access_token_in_body(self) -> None:
+        result = _redact({"access_token": "tok123", "accountId": "A1"})
+        assert result["access_token"].startswith("<redacted:")
+        assert result["accountId"] == "A1"
+
+    def test_redacts_refresh_token_in_body(self) -> None:
+        result = _redact({"refresh_token": "ref456"})
+        assert result["refresh_token"].startswith("<redacted:")
+
+    def test_redacts_nested_access_token(self) -> None:
+        result = _redact({
+            "oauthToken": {"access_token": "nested-tok", "expires_in": "60"},
+            "accountId": "A1",
+        })
+        assert result["oauthToken"]["access_token"].startswith("<redacted:")
+        assert result["oauthToken"]["expires_in"] == "60"
+        assert result["accountId"] == "A1"
+
+    def test_passthrough_non_sensitive_dict(self) -> None:
+        data = {"status": "ok", "accountId": "A1", "clientId": "C1"}
+        assert _redact(data) == data
+
+    def test_passthrough_string_body(self) -> None:
+        assert _redact("plain error text") == "plain error text"
+
+    def test_passthrough_none(self) -> None:
+        assert _redact(None) is None
+
+    def test_redact_length_reflects_value(self) -> None:
+        result = _redact({"CST": "12345"})
+        assert result["CST"] == "<redacted:5>"
+
+
+# ---------------------------------------------------------------------------
+# Token-redaction integration: log messages must not leak secrets
+# ---------------------------------------------------------------------------
+
+
+class TestAuthErrorLogsRedacted:
+    async def test_handle_auth_error_does_not_log_cst_in_body(
+        self, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        client = _make_client()
+        auth = IGAuthManager(client, _make_settings())
+
+        resp = MagicMock()
+        resp.status = 401
+        resp.json = AsyncMock(return_value={"cst": "SECRET_CST", "errorCode": "bad"})
+
+        import logging
+
+        with caplog.at_level(logging.ERROR):
+            with pytest.raises(RuntimeError):
+                await auth._handle_auth_error(resp)
+
+        assert "SECRET_CST" not in caplog.text
+
+    def test_handle_v2_auth_does_not_log_cst_on_missing_tokens(
+        self, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        client = _make_client()
+        auth = IGAuthManager(client, _make_settings())
+
+        import logging
+
+        with caplog.at_level(logging.ERROR):
+            with pytest.raises(RuntimeError):
+                auth._handle_v2_auth({"CST": "HEADER_SECRET"}, {"cst": "BODY_SECRET"})
+
+        assert "HEADER_SECRET" not in caplog.text
+        assert "BODY_SECRET" not in caplog.text
+
+    async def test_handle_v3_auth_does_not_log_access_token(
+        self, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        client = _make_client("3")
+        auth = IGAuthManager(client, _make_settings())
+
+        import logging
+
+        with caplog.at_level(logging.ERROR):
+            with pytest.raises(RuntimeError):
+                await auth._handle_v3_auth({
+                    "oauthToken": {"refresh_token": "REFRESH_SECRET"},
+                    "accountId": "A1",
+                })
+
+        assert "REFRESH_SECRET" not in caplog.text
