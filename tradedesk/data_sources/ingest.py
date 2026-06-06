@@ -2,17 +2,20 @@
 
 Runs on demand or on a weekly schedule (see ``docs/data_sources_guide.md``)::
 
-    # Ingest everything (FRED + ECB + CFTC) since 2010 into the default lake
+    # Ingest everything (FRED + ECB + CFTC) into the default lake.  FRED is
+    # incremental (delta on top of the existing parquet); CFTC/ECB use 2010.
     python -m tradedesk.data_sources.ingest
 
     # Just refresh CFTC positioning into a custom lake
     python -m tradedesk.data_sources.ingest --source cftc --lake /data/marketdata
 
-    # Limit the history window
+    # Force a wider history window (overrides the incremental FRED default)
     python -m tradedesk.data_sources.ingest --from 2018-01-01
 
-Ingestion is idempotent: re-running refreshes each series in place (and
-re-downloads the current-year CFTC zip so the latest Friday release appears).
+Ingestion is idempotent: re-running refreshes each series in place.  FRED only
+downloads rows newer than what is already on disk (Akamai blocks multi-year
+history fetches from data-centre IPs, RAD-3791); CFTC re-downloads the
+current-year zip so the latest Friday release appears.
 A failure on a single series is logged and skipped, never fatal, so a weekly
 cron job stays green even if one upstream endpoint is briefly unavailable.
 """
@@ -59,8 +62,11 @@ def _parse_args(argv: list[str] | None) -> argparse.Namespace:
         "--from",
         dest="date_from",
         type=date.fromisoformat,
-        default=DEFAULT_HISTORY_START,
-        help=f"History start date YYYY-MM-DD (default: {DEFAULT_HISTORY_START}).",
+        default=None,
+        help="History start date YYYY-MM-DD (override). Default is incremental: "
+        "FRED fetches only rows newer than the existing parquet (trailing 1y on "
+        "first run); CFTC/ECB fall back to "
+        f"{DEFAULT_HISTORY_START} when no override is given.",
     )
     p.add_argument(
         "--log-level",
