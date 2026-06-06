@@ -326,7 +326,7 @@ def _fetch_fred_window(
             cache_dir=cache_dir,
             force=True,
         )
-    except (urllib.error.URLError, TimeoutError) as exc:
+    except OSError as exc:
         log.warning(
             "FRED %s first-run %d-day window failed (%s); retrying %d-day window",
             series_id,
@@ -465,15 +465,21 @@ def materialize_all(
     date_from: date | None = None,
     lake: Path | str | None = None,
 ) -> dict[str, dict[str, Path]]:
-    """Materialize every default series across all three macro sources."""
+    """Materialize every default series across all three macro sources.
+
+    Each source is isolated: an unexpected failure in one source is logged and
+    yields an empty result for that source so the others still materialize. The
+    per-series guards inside each ``materialize_*`` handle within-source failures;
+    this is belt-and-suspenders for anything they don't catch.
+    """
     result: dict[str, dict[str, Path]] = {}
     for name, fn in (
-        (MacroSource.FRED.value, lambda: materialize_fred(date_from=date_from, lake=lake)),
-        (MacroSource.ECB.value, lambda: materialize_ecb(date_from=date_from, lake=lake)),
-        (MacroSource.CFTC.value, lambda: materialize_cftc(date_from=date_from, lake=lake)),
+        (MacroSource.FRED.value, materialize_fred),
+        (MacroSource.ECB.value, materialize_ecb),
+        (MacroSource.CFTC.value, materialize_cftc),
     ):
         try:
-            result[name] = fn()
+            result[name] = fn(date_from=date_from, lake=lake)
         except Exception as exc:
             log.error("macro ingest: %s source failed: %s", name, exc)
             result[name] = {}
