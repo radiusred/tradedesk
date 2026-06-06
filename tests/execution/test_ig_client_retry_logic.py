@@ -6,12 +6,18 @@ from tradedesk.execution.ig.client import IGClient
 
 
 class FakeResp:
-    def __init__(self, status: int, body):
+    def __init__(self, status: int, body, *, text: str | None = None):
         self.status = status
         self._body = body
+        self._text = text
 
     async def json(self):
+        if self._body is _NO_JSON:
+            raise ValueError("no json body")
         return self._body
+
+    async def text(self):
+        return self._text if self._text is not None else ""
 
     async def __aenter__(self):
         return self
@@ -20,11 +26,23 @@ class FakeResp:
         pass
 
 
+# Sentinel marking a response whose json() should raise (non-JSON body).
+_NO_JSON = object()
+
+
 def _make_session(resp: FakeResp) -> MagicMock:
     """Return a minimal mock ClientSession whose request() is a CM yielding resp."""
     session = MagicMock()
     session.headers = {}
     session.request = MagicMock(return_value=resp)
+    return session
+
+
+def _make_sequence_session(*resps: FakeResp) -> MagicMock:
+    """Mock ClientSession whose request() yields each resp in turn (one per call)."""
+    session = MagicMock()
+    session.headers = {}
+    session.request = MagicMock(side_effect=list(resps))
     return session
 
 
@@ -161,3 +179,86 @@ async def test_quantise_size_null_dealing_rules_truncates_long_float():
 
     result = await c.quantise_size("CS.D.USDJPY.TODAY.IP", 9.544888884913714)
     assert result == 9.54
+
+
+# ---------------------------------------------------------------------------
+# _request: bounded re-auth retry (RAD-3729)
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_request_reissues_with_refreshed_token_after_401():
+    """A 401 triggers one re-auth and the request is re-issued; the 200 wins.
+
+    Regression: before the fix _request raised on the consumed 401 response even
+    after _handle_retry_logic re-authenticated — the refreshed token was never
+    used.
+    """
+    c = IGClient()
+    c._authenticate = AsyncMock()  # type: ignore[attr-defined]
+    c._session = _make_sequence_session(
+        FakeResp(status=401, body={"errorCode": "error.security.client-token-invalid"}),
+        FakeResp(status=200, body={"ok": True}),
+    )
+
+    result = await c._request("GET", "/positions")
+
+    assert result == {"ok": True}
+    c._authenticate.assert_awaited_once()
+    assert c._session.request.call_count == 2
+
+
+@pytest.mark.asyncio
+async def test_request_reauth_retry_is_bounded_to_single_attempt():
+    """A persistently-401 endpoint re-auths exactly once, then surfaces the error.
+
+    Guards against an infinite re-auth/retry loop when the credential is
+    genuinely rejected.
+    """
+    c = IGClient()
+    c._authenticate = AsyncMock()  # type: ignore[attr-defined]
+    c._session = _make_sequence_session(
+        FakeResp(status=401, body={"errorCode": "error.security.client-token-invalid"}),
+        FakeResp(status=401, body={"errorCode": "error.security.client-token-invalid"}),
+    )
+
+    with pytest.raises(RuntimeError, match="HTTP 401"):
+        await c._request("GET", "/positions")
+
+    c._authenticate.assert_awaited_once()  # bounded: not called twice
+    assert c._session.request.call_count == 2
+
+
+@pytest.mark.asyncio
+async def test_request_surfaces_errorcode_on_non_auth_failure():
+    """A 400 with a JSON errorCode surfaces that code in the raised message."""
+    c = IGClient()
+    c._session = _make_session(
+        FakeResp(
+            status=400,
+            body={"errorCode": "validation.null-not-allowed.request.epic"},
+        )
+    )
+
+    with pytest.raises(RuntimeError) as excinfo:
+        await c._request("POST", "/positions/otc")
+
+    msg = str(excinfo.value)
+    assert "HTTP 400" in msg
+    assert "errorCode=validation.null-not-allowed.request.epic" in msg
+
+
+@pytest.mark.asyncio
+async def test_request_non_json_error_body_is_stripped_and_truncated():
+    """A non-JSON/HTML error body is still stripped, with no spurious errorCode."""
+    c = IGClient()
+    html = "<html><body><h1>Gateway Timeout</h1></body></html>"
+    c._session = _make_session(FakeResp(status=504, body=_NO_JSON, text=html))
+
+    with pytest.raises(RuntimeError) as excinfo:
+        await c._request("GET", "/positions")
+
+    msg = str(excinfo.value)
+    assert "HTTP 504" in msg
+    assert "Gateway Timeout" in msg
+    assert "errorCode=" not in msg  # no JSON errorCode to surface
