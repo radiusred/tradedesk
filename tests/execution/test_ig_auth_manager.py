@@ -510,6 +510,21 @@ class TestRedact:
         assert result["authorization"].startswith("<redacted:")
         assert "lower-token" not in result["authorization"]
 
+    def test_redacts_title_cased_headers(self) -> None:
+        # IG / proxies may return headers in title or mixed case; matching
+        # must be case-insensitive so none of these casings leak.
+        result = _redact({
+            "Cst": "secret-cst",
+            "X-Security-Token": "secret-xsec",
+            "Authorization": "Bearer secret-bearer",
+        })
+        assert result["Cst"].startswith("<redacted:")
+        assert result["X-Security-Token"].startswith("<redacted:")
+        assert result["Authorization"].startswith("<redacted:")
+        assert "secret-cst" not in str(result)
+        assert "secret-xsec" not in str(result)
+        assert "secret-bearer" not in str(result)
+
     def test_redacts_token_in_list(self) -> None:
         result = _redact({"outer": [{"access_token": "tok123"}, {"other": "val"}]})
         assert result["outer"][0]["access_token"].startswith("<redacted:")

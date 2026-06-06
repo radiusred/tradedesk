@@ -20,9 +20,11 @@ if TYPE_CHECKING:
 
 log = logging.getLogger(__name__)
 
+# Compared case-insensitively so any header casing (CST / Cst / cst,
+# X-SECURITY-TOKEN / X-Security-Token, …) is redacted.
 _SENSITIVE_KEYS: frozenset[str] = frozenset({
-    "CST", "X-SECURITY-TOKEN", "Authorization", "authorization",
-    "cst", "x-security-token", "access_token", "refresh_token",
+    "cst", "x-security-token", "authorization",
+    "access_token", "refresh_token",
 })
 
 
@@ -30,7 +32,8 @@ def _redact(value: Any) -> Any:
     """Return a copy of *value* with known token fields replaced by '<redacted:N>'."""
     if isinstance(value, dict):
         return {
-            k: f"<redacted:{len(str(v))}>" if k in _SENSITIVE_KEYS
+            k: f"<redacted:{len(str(v))}>"
+            if isinstance(k, str) and k.lower() in _SENSITIVE_KEYS
             else _redact(v)
             for k, v in value.items()
         }
