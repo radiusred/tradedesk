@@ -125,6 +125,52 @@ described above, so if you need `strategy`, `position_id`, or `trade_id` today,
 consume the events or `TradeRecord` instances directly rather than expecting
 those identifiers in `trades.csv`.
 
+### Sleeve-Level Consumer Contract
+
+Monitors that evaluate per-sleeve behaviour from `tradedesk` events depend on a
+small contract that is not visible in the CSV outputs:
+
+- `PositionOpenedEvent.strategy` and `PositionClosedEvent.strategy` carry the
+  strategy or sleeve key supplied by the caller.
+- `PositionOpenedEvent.position_id` and `PositionClosedEvent.position_id` are
+  the open/close correlation key for one live position lifecycle inside a
+  session.
+- `TradeRecord.strategy`, `TradeRecord.position_id`, and
+  `TradeRecord.trade_id` preserve those identifiers in memory when you consume
+  `RecordingSubscriber.ledger.trades` directly.
+
+Practical implications:
+
+- Treat `strategy` as an opaque, stable sleeve identifier. If you want per-sleeve
+  metrics, emit the same value on every order for that sleeve.
+- Treat `position_id` as session-local lifecycle identity, not as a portable
+  analytics key. Backtests generate UUIDs, while the live IG path uses the
+  broker `dealId` when `OrderHandler` synthesizes a `PositionOpenedEvent`.
+- The built-in metrics helpers (`round_trips_from_fills`, `compute_metrics`,
+  `trades.csv`, `round_trips.csv`) intentionally ignore `strategy`,
+  `position_id`, and `trade_id`. They operate on normalized fills only.
+
+If you need per-sleeve health, drift, or attribution metrics, consume the
+domain events or in-memory `TradeRecord` objects rather than the exported CSV
+files.
+
+### Recorder Pairing Invariant
+
+The built-in `RecordingSubscriber` tracks open positions by `instrument` when
+it reconstructs entry and exit fills. That makes one assumption explicit:
+
+- at most one net open position per instrument can be paired correctly by the
+  built-in recorder at a time.
+
+This is compatible with the default backtest/live execution paths, which net
+positions per instrument. It is not a safe fit for higher-level runtimes that
+allow overlapping independent positions on the same instrument and then expect
+the stock recorder to preserve sleeve-level entry/exit pairing automatically.
+
+When you need multiple concurrent same-instrument lifecycles, use a custom
+subscriber or analytics pipeline keyed by `position_id` and `strategy` instead
+of relying on the normalized `trades.csv` reconstruction path.
+
 ## Performance Metrics
 
 The `Metrics` dataclass contains comprehensive performance statistics:

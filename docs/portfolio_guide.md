@@ -81,20 +81,23 @@ class MyStrategy:
 
 ### Equal Split Policy
 
-The `EqualSplitRiskPolicy` divides a fixed portfolio risk budget equally across all instruments with active regimes:
+The `EqualSplitRiskPolicy` divides a fixed portfolio risk budget equally across all active sleeves:
 
 ```python
 from tradedesk.portfolio import EqualSplitRiskPolicy, Instrument
 
 policy = EqualSplitRiskPolicy(portfolio_risk_budget=100.0)
 
-# If 2 instruments are active, each gets 50.0
-active = [Instrument("EURUSD"), Instrument("GBPUSD")]
+# If 2 sleeves are active, each gets 50.0
+active = {
+    "Momentum_EURUSD": Instrument("EURUSD"),
+    "Reversion_GBPUSD": Instrument("GBPUSD"),
+}
 allocation = policy.allocate(active)
-# Returns: {Instrument("EURUSD"): 50.0, Instrument("GBPUSD"): 50.0}
+# Returns: {"Momentum_EURUSD": 50.0, "Reversion_GBPUSD": 50.0}
 
-# If 0 instruments are active, returns empty dict
-allocation = policy.allocate([])
+# If 0 sleeves are active, returns empty dict
+allocation = policy.allocate({})
 # Returns: {}
 ```
 
@@ -113,18 +116,21 @@ class VolatilityWeightedPolicy:
     portfolio_risk_budget: float
     volatilities: dict[Instrument, float]
 
-    def allocate(self, active_instruments: list[Instrument]) -> Mapping[Instrument, float]:
-        if not active_instruments:
+    def allocate(self, active_sleeves: Mapping[str, Instrument]) -> Mapping[str, float]:
+        if not active_sleeves:
             return {}
 
         # Calculate inverse volatility weights
-        inv_vols = {inst: 1.0 / self.volatilities[inst] for inst in active_instruments}
+        inv_vols = {
+            sleeve: 1.0 / self.volatilities[instrument]
+            for sleeve, instrument in active_sleeves.items()
+        }
         total_weight = sum(inv_vols.values())
 
         # Allocate proportionally
         return {
-            inst: (inv_vols[inst] / total_weight) * self.portfolio_risk_budget
-            for inst in active_instruments
+            sleeve: (inv_vols[sleeve] / total_weight) * self.portfolio_risk_budget
+            for sleeve in active_sleeves
         }
 ```
 
@@ -145,7 +151,7 @@ await strategy.update_state(event)
 self._apply_risk_budgets()
 ```
 - Check which strategies have active regimes (`is_regime_active()`)
-- Apply policy to allocate risk across active instruments
+- Apply policy to allocate risk across active sleeves
 - Call `set_risk_per_trade()` on each strategy
 - **Inactive strategies** receive `default_risk_per_trade`
 
@@ -166,6 +172,7 @@ from tradedesk.portfolio import (
     PortfolioRunner,
     EqualSplitRiskPolicy,
     Instrument,
+    SleeveId,
 )
 from tradedesk import Candle
 from tradedesk.marketdata.events import CandleClosedEvent
@@ -205,8 +212,8 @@ class SimpleStrategy:
 
 # Create strategies
 strategies = {
-    Instrument("EURUSD"): SimpleStrategy("EURUSD", threshold=0.001),
-    Instrument("GBPUSD"): SimpleStrategy("GBPUSD", threshold=0.002),
+    SleeveId("Simple_EURUSD"): SimpleStrategy("EURUSD", threshold=0.001),
+    SleeveId("Simple_GBPUSD"): SimpleStrategy("GBPUSD", threshold=0.002),
 }
 
 # Create runner
@@ -232,13 +239,43 @@ await runner.on_candle_close(
 
 1. **Set appropriate default risk**: The `default_risk_per_trade` should be large enough for strategies to operate if they activate independently.
 
-2. **Monitor active count**: Track how many instruments are typically active to size your `portfolio_risk_budget` appropriately.
+2. **Monitor active count**: Track how many sleeves are typically active to size your `portfolio_risk_budget` appropriately.
 
 3. **Implement clear regime logic**: The `is_regime_active()` method should have clear, testable conditions.
 
-4. **Test policies**: Write tests for your custom policies to ensure they behave correctly with 0, 1, or many active instruments.
+4. **Test policies**: Write tests for your custom policies to ensure they behave correctly with 0, 1, or many active sleeves.
 
 5. **Handle edge cases**: Consider what happens when all strategies are inactive, or when one strategy dominates.
+
+## Load-Bearing Invariants
+
+`PortfolioRunner` supports multiple sleeves on the same instrument, but a few
+important assumptions sit just below that surface:
+
+- Risk allocation is keyed by `SleeveId`, not by instrument. Two AUDCAD sleeves
+  with active regimes each receive their own budget slice.
+- Event fan-out is instrument-based. When an AUDCAD candle closes, every AUDCAD
+  sleeve runs `update_state()`, then the portfolio re-allocates risk, then
+  every AUDCAD sleeve runs `evaluate_signals()`.
+- The ordering is intentional and fragile: regime changes discovered during
+  `update_state()` affect the very next `evaluate_signals()` call on that same
+  candle because risk allocation happens between the two phases.
+
+## Interaction With Execution And Recording
+
+The portfolio layer is sleeve-aware, but the default execution and recording
+paths are still instrument-netted:
+
+- `PortfolioRunner` can host two sleeves on one instrument.
+- The stock backtest client keeps one netted position per instrument.
+- The built-in `RecordingSubscriber` pairs opens and closes by instrument when
+  reconstructing fills.
+
+That combination is safe when same-instrument sleeves do not maintain
+overlapping independent live positions. If your runtime needs true parallel
+same-instrument position lifecycles, you need custom execution and recording
+plumbing keyed by `position_id` and `strategy`; the default recorder and CSV
+metrics path are not a sleeve-aware trade-matching engine.
 
 ## See Also
 
