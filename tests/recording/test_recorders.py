@@ -211,12 +211,14 @@ class TestExcursionComputer:
             direction="BUY",
             size=1.0,
             entry_price=100.0,
+            position_id="pos-1",
             timestamp=_dt("2025-01-15T12:00:00Z"),
         )
         await dispatcher.publish(open_event)
 
-        assert "EURUSD" in computer._open_positions
-        assert computer._open_positions["EURUSD"] == open_event
+        # Tracked by position_id, not instrument (RAD-3756).
+        assert "pos-1" in computer._open_positions
+        assert computer._open_positions["pos-1"] == open_event
 
     @pytest.mark.asyncio
     async def test_stops_tracking_closed_position(self, computer):
@@ -229,10 +231,11 @@ class TestExcursionComputer:
             direction="BUY",
             size=1.0,
             entry_price=100.0,
+            position_id="pos-1",
             timestamp=_dt("2025-01-15T12:00:00Z"),
         )
         await dispatcher.publish(open_event)
-        assert "EURUSD" in computer._open_positions
+        assert "pos-1" in computer._open_positions
 
         # Close position
         close_event = PositionClosedEvent(
@@ -243,11 +246,12 @@ class TestExcursionComputer:
             exit_price=105.0,
             pnl=50.0,
             exit_reason="target",
+            position_id="pos-1",
             timestamp=_dt("2025-01-15T12:45:00Z"),
         )
         await dispatcher.publish(close_event)
 
-        assert "EURUSD" not in computer._open_positions
+        assert "pos-1" not in computer._open_positions
 
     @pytest.mark.asyncio
     async def test_computes_excursion_for_buy_position(self, computer):
@@ -356,6 +360,74 @@ class TestExcursionComputer:
         assert exc.mfe_points == 3.0
         # MAE for SELL: entry - max_high = 102.0 - 105.0 = -3.0 points
         assert exc.mae_points == -3.0
+
+    @pytest.mark.asyncio
+    async def test_concurrent_positions_on_one_instrument_do_not_collide(
+        self, computer
+    ):
+        """Two concurrent positions on one epic each get their own excursion.
+
+        Regression for RAD-3756 / RAD-3727: dual sleeves can hold separate
+        positions on the same instrument. The computer must track each by
+        position_id and publish a distinct ExcursionSampledEvent per position
+        rather than letting the second open overwrite the first.
+        """
+        published_events = []
+
+        async def capture_event(event):
+            published_events.append(event)
+
+        dispatcher = get_dispatcher()
+        dispatcher.subscribe(ExcursionSampledEvent, capture_event)
+
+        # Two concurrent positions on EURUSD, opposite directions, distinct ids.
+        long_pos = PositionOpenedEvent(
+            instrument="EURUSD",
+            direction="BUY",
+            size=1.0,
+            entry_price=100.0,
+            position_id="pos-long",
+            timestamp=_dt("2025-01-15T12:00:00Z"),
+        )
+        short_pos = PositionOpenedEvent(
+            instrument="EURUSD",
+            direction="SELL",
+            size=2.0,
+            entry_price=102.0,
+            position_id="pos-short",
+            timestamp=_dt("2025-01-15T12:00:00Z"),
+        )
+        await dispatcher.publish(long_pos)
+        await dispatcher.publish(short_pos)
+
+        # Both positions remain tracked — neither overwrote the other.
+        assert set(computer._open_positions) == {"pos-long", "pos-short"}
+
+        candle_event = CandleClosedEvent(
+            instrument="EURUSD",
+            timeframe="15MINUTE",
+            candle=_candle("2025-01-15T12:30:00Z"),
+        )
+        await dispatcher.publish(candle_event)
+
+        # One excursion per open position, each carrying its own position_id.
+        by_id = {e.position_id: e for e in published_events}
+        assert set(by_id) == {"pos-long", "pos-short"}
+        assert len(published_events) == 2
+
+        # BUY entry 100.0: MFE = 105 - 100 = 5, MAE = 99 - 100 = -1, size 1.0
+        long_exc = by_id["pos-long"]
+        assert long_exc.mfe_points == 5.0
+        assert long_exc.mae_points == -1.0
+        assert long_exc.mfe_pnl == 5.0
+        assert long_exc.mae_pnl == -1.0
+
+        # SELL entry 102.0: MFE = 102 - 99 = 3, MAE = 102 - 105 = -3, size 2.0
+        short_exc = by_id["pos-short"]
+        assert short_exc.mfe_points == 3.0
+        assert short_exc.mae_points == -3.0
+        assert short_exc.mfe_pnl == 6.0
+        assert short_exc.mae_pnl == -6.0
 
     @pytest.mark.asyncio
     async def test_ignores_candle_without_open_position(self, computer):
