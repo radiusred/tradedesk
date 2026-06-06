@@ -20,6 +20,22 @@ if TYPE_CHECKING:
 
 log = logging.getLogger(__name__)
 
+_SENSITIVE_KEYS: frozenset[str] = frozenset({
+    "CST", "X-SECURITY-TOKEN", "Authorization",
+    "cst", "x-security-token", "access_token", "refresh_token",
+})
+
+
+def _redact(value: Any, *, _depth: int = 0) -> Any:
+    """Return a copy of *value* with known token fields replaced by '<redacted:N>'."""
+    if isinstance(value, dict) and _depth < 5:
+        return {
+            k: f"<redacted:{len(str(v))}>" if k in _SENSITIVE_KEYS
+            else _redact(v, _depth=_depth + 1)
+            for k, v in value.items()
+        }
+    return value
+
 
 class TokenState(str, Enum):
     """Explicit lifecycle states for the IG OAuth token."""
@@ -152,7 +168,7 @@ class IGAuthManager:
                 log.error(msg)
                 raise RuntimeError(msg)
 
-        log.error("IG authentication failed (HTTP %s). Body: %s", resp.status, body)
+        log.error("IG authentication failed (HTTP %s). Body: %s", resp.status, _redact(body))
         raise RuntimeError(
             f"IG authentication failed – HTTP {resp.status}. "
             "Check credentials, API key, and endpoint configuration."
@@ -163,7 +179,7 @@ class IGAuthManager:
         x_sec = headers.get("X-SECURITY-TOKEN") or body.get("x-security-token")
 
         if not cst or not x_sec:
-            log.error("Missing V2 tokens. Headers: %s, Body: %s", headers, body)
+            log.error("Missing V2 tokens. Headers: %s, Body: %s", _redact(headers), _redact(body))
             raise RuntimeError("CST and X-SECURITY-TOKEN not found in IG response.")
 
         self.ls_cst = cst
@@ -173,7 +189,7 @@ class IGAuthManager:
         self.uses_oauth = False
 
         if not self.account_id:
-            log.error("Missing account id in V2 auth body: %s", body)
+            log.error("Missing account id in V2 auth body: %s", _redact(body))
             raise RuntimeError("IG account id not found in IG response.")
 
         self._client._apply_session_headers(
@@ -190,7 +206,7 @@ class IGAuthManager:
         access_token = oauth_token.get("access_token")
 
         if not access_token:
-            log.error("Missing OAuth token in V3 response: %s", body)
+            log.error("Missing OAuth token in V3 response: %s", _redact(body))
             raise RuntimeError("OAuth access_token not found in IG response.")
 
         await self._store_oauth_token(
