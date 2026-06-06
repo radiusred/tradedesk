@@ -66,6 +66,11 @@ try:
         "IG Lightstreamer reconnect attempts",
         ["reason"],
     )
+    STREAM_RECONNECT_RECOVERIES: Any = Counter(
+        "tradedesk_ig_stream_reconnect_recoveries_total",
+        "IG Lightstreamer reconnects that recovered a productive stream "
+        "(reconnect session received at least one update before going stale)",
+    )
     STREAM_STALE_SECONDS: Any = Histogram(
         "tradedesk_ig_stream_stale_seconds",
         "Observed stale-stream durations before reconnect (seconds)",
@@ -88,6 +93,7 @@ try:
 except ImportError:  # pragma: no cover - exercised only when dep missing
     _noop = _NoopMetric()
     STREAM_RECONNECTS = _noop
+    STREAM_RECONNECT_RECOVERIES = _noop
     STREAM_STALE_SECONDS = _noop
     SUBSCRIPTION_RETRIES = _noop
     AUTH_REFRESHES = _noop
@@ -98,6 +104,7 @@ __all__ = [
     "AUTH_REFRESHES",
     "AUTH_REFRESH_INFLIGHT",
     "STREAM_RECONNECTS",
+    "STREAM_RECONNECT_RECOVERIES",
     "STREAM_STALE_SECONDS",
     "SUBSCRIPTION_RETRIES",
 ]

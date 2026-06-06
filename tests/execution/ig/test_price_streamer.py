@@ -814,3 +814,180 @@ async def test_run_unproductive_counter_resets_on_productive_session(
     await s.run(MagicMock())  # Must exit cleanly — no surrender
 
     assert session_count == len(pattern)
+
+
+# ──────────────────────────────────────────────────────────────────────────────
+# run() — reconnect baseline reset (td#2) + recovery success signal (td#12)
+# ──────────────────────────────────────────────────────────────────────────────
+
+
+async def test_run_resets_stale_baseline_before_reconnect_session(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The reconnect session starts with a refreshed staleness baseline (td#2).
+
+    ``consumer.last_update`` only advances on dispatch, so after a disconnect
+    it still holds the ancient pre-disconnect timestamp. Without the reset the
+    reconnect session's heartbeat monitor would see a huge delta on its first
+    tick and immediately re-raise StaleStreamError → reconnect spin. The
+    initial session keeps its baseline (freshly set in the consumer __init__).
+    """
+    from datetime import datetime, timezone
+
+    _stub_ls_client(monkeypatch)
+
+    ig_client = MagicMock()
+    ig_client.ls_cst = "CST"
+
+    async def fake_authenticate() -> None:
+        return None
+
+    ig_client.auth.authenticate = fake_authenticate
+
+    s = streamer_mod.Lightstreamer(
+        ig_client,
+        max_reconnect_attempts=2,
+        unproductive_reconnect_cap=10,
+    )
+    s.reconnect_delay = 0
+
+    ancient = datetime(2020, 1, 1, tzinfo=timezone.utc)
+    consumer = MagicMock()
+    consumer.last_update = ancient
+
+    seen_last_update: list[datetime] = []
+
+    async def fake_run_session(c: Any) -> None:
+        seen_last_update.append(c.last_update)
+        s._last_session_state = streamer_mod._SessionState()
+        s._last_session_state.bars_received = 1
+        raise streamer_mod.StaleStreamError("forced")
+
+    monkeypatch.setattr(s, "_run_session", fake_run_session)
+
+    with pytest.raises(streamer_mod.StaleStreamError):
+        await s.run(consumer)
+
+    # Initial session keeps the ancient baseline; the reconnect session sees a
+    # freshly-reset (recent) baseline so it does not instantly re-stale.
+    assert seen_last_update[0] == ancient
+    assert seen_last_update[1] > ancient
+    assert (
+        datetime.now(timezone.utc) - seen_last_update[1]
+    ).total_seconds() < 5
+
+
+async def test_run_reconnect_recovery_emits_success_signal(
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """Acceptance (td#9): stale → reconnect → productive session emits recovery.
+
+    Drives run() through StaleStreamError → reconnect → a second (productive)
+    session and asserts a single clean reconnect with refreshed tokens, a reset
+    staleness baseline, and exactly one reconnect-recovery success signal so ops
+    can distinguish reconnects merely *attempted* from those that *recovered*.
+    """
+    from datetime import datetime, timezone
+
+    _stub_ls_client(monkeypatch)
+
+    recoveries = MagicMock()
+    monkeypatch.setattr(streamer_mod, "STREAM_RECONNECT_RECOVERIES", recoveries)
+
+    ig_client = MagicMock()
+    ig_client.ls_cst = "OLD_CST"
+
+    reauth_calls: list[bool] = []
+
+    async def fake_authenticate() -> None:
+        reauth_calls.append(True)
+        ig_client.ls_cst = "NEW_CST"
+
+    ig_client.auth.authenticate = fake_authenticate
+
+    s = streamer_mod.Lightstreamer(
+        ig_client,
+        max_reconnect_attempts=0,
+        unproductive_reconnect_cap=10,
+    )
+    s.reconnect_delay = 0
+
+    ancient = datetime(2020, 1, 1, tzinfo=timezone.utc)
+    consumer = MagicMock()
+    consumer.last_update = ancient
+
+    sessions: list[tuple[str, Any]] = []
+    call = {"n": 0}
+
+    async def fake_run_session(c: Any) -> None:
+        call["n"] += 1
+        sessions.append((ig_client.ls_cst, c.last_update))
+        if call["n"] <= 2:
+            # Session 1 (initial) and session 2 (reconnect) are both
+            # productive, then go stale → drive the reconnect path.
+            s._last_session_state = streamer_mod._SessionState()
+            s._last_session_state.bars_received = 7
+            raise streamer_mod.StaleStreamError("rollover")
+        return  # Third session exits cleanly to terminate run().
+
+    monkeypatch.setattr(s, "_run_session", fake_run_session)
+
+    with caplog.at_level(
+        logging.INFO, logger="tradedesk.execution.ig.price_streamer"
+    ):
+        await s.run(consumer)
+
+    # Initial session uses the original tokens + ancient baseline; the
+    # reconnect session sees refreshed tokens and a reset baseline.
+    assert sessions[0][0] == "OLD_CST"
+    assert sessions[0][1] == ancient
+    assert sessions[1][0] == "NEW_CST"
+    assert sessions[1][1] > ancient
+
+    # Exactly one recovery: only session 2 was a productive *reconnect*.
+    recoveries.inc.assert_called_once()
+    assert any(
+        "reconnect_recovered" in r.message for r in caplog.records
+    )
+
+
+async def test_run_initial_session_stale_not_counted_as_recovery(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A productive INITIAL session going stale is rollover, not a recovery (td#12)."""
+    _stub_ls_client(monkeypatch)
+
+    recoveries = MagicMock()
+    monkeypatch.setattr(streamer_mod, "STREAM_RECONNECT_RECOVERIES", recoveries)
+
+    ig_client = MagicMock()
+    ig_client.ls_cst = "CST"
+
+    async def fake_authenticate() -> None:
+        return None
+
+    ig_client.auth.authenticate = fake_authenticate
+
+    s = streamer_mod.Lightstreamer(
+        ig_client,
+        max_reconnect_attempts=0,
+        unproductive_reconnect_cap=10,
+    )
+    s.reconnect_delay = 0
+
+    call = {"n": 0}
+
+    async def fake_run_session(c: Any) -> None:
+        call["n"] += 1
+        if call["n"] == 1:
+            s._last_session_state = streamer_mod._SessionState()
+            s._last_session_state.bars_received = 5
+            raise streamer_mod.StaleStreamError("rollover")
+        return  # Reconnect session exits cleanly.
+
+    monkeypatch.setattr(s, "_run_session", fake_run_session)
+
+    await s.run(MagicMock())
+
+    recoveries.inc.assert_not_called()
