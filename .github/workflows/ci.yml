@@ -1,8 +1,10 @@
 name: CI
+# CI runs on pull_request only. The post-merge `push: branches: [main]` trigger
+# was removed: every feature/release PR already runs the full
+# matrix as the merge gate, and rebase-merge means no semantic-merge surprises,
+# so re-running on the push to main only doubled GHA spend.
 on:
   pull_request:
-  push:
-    branches: [ main ]
 
 jobs:
   lint-commits:
