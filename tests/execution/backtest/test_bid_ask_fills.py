@@ -268,3 +268,70 @@ async def test_normal_spread_not_rejected() -> None:
     result = await client.place_market_order("INST", "BUY", size=1.0)
 
     assert result["price"] == 100.5  # fills at ask, not fallback
+
+
+@pytest.mark.asyncio
+async def test_partial_close_emits_event_and_single_round_trip_commission() -> None:
+    """Open 2 / close 1 / close 1 emits a PositionClosedEvent on each exit and
+    charges exactly one round-trip commission in total (RAD-3731)."""
+    from tradedesk.events import get_dispatcher
+    from tradedesk.recording import PositionClosedEvent, PositionOpenedEvent
+
+    dispatcher = get_dispatcher()
+    opened: list[PositionOpenedEvent] = []
+    closed: list[PositionClosedEvent] = []
+
+    async def on_open(ev: PositionOpenedEvent) -> None:
+        opened.append(ev)
+
+    async def on_close(ev: PositionClosedEvent) -> None:
+        closed.append(ev)
+
+    dispatcher.subscribe(PositionOpenedEvent, on_open)
+    dispatcher.subscribe(PositionClosedEvent, on_close)
+    try:
+        tc = TransactionCosts(commission_per_round_trip=5.0)
+        client = _client_with_bid_ask(bid_close=100.0, ask_close=100.0)
+        client.set_transaction_costs(tc)
+        await client.start()
+
+        # Open a LONG of size 2 at 100.
+        await client.place_market_order("INST", "BUY", size=2.0)
+        assert len(opened) == 1
+        assert opened[0].size == pytest.approx(2.0)
+        assert client.realised_pnl == pytest.approx(0.0)  # no commission at entry
+
+        # Mark up to 110 and scale out half (close 1 of 2): partial close.
+        client._mark_price["INST"] = 110.0
+        client._ask_price["INST"] = 110.0
+        client._current_timestamp = "2025-01-01T01:00:00Z"
+        await client.place_market_order("INST", "SELL", size=1.0)
+
+        # Partial close MUST emit a PositionClosedEvent for the closed portion.
+        assert len(closed) == 1
+        first = closed[0]
+        assert first.size == pytest.approx(1.0)
+        # gross = (110-100)*1 = 10, half round-trip = 2.5 → net pnl = 7.5
+        assert first.pnl == pytest.approx(7.5)
+        # Position still open with the remaining size 1.
+        assert client.positions["INST"].size == pytest.approx(1.0)
+
+        # Close the remaining 1: full close.
+        client._current_timestamp = "2025-01-01T02:00:00Z"
+        await client.place_market_order("INST", "SELL", size=1.0)
+
+        assert len(closed) == 2
+        second = closed[1]
+        assert second.size == pytest.approx(1.0)
+        assert second.pnl == pytest.approx(7.5)  # gross 10 - half round-trip 2.5
+        # Position fully closed and removed.
+        assert "INST" not in client.positions
+
+        # Exactly one round-trip commission (5.0) charged across both exits:
+        # gross PnL = 20, total realised = 20 - 5 = 15.
+        assert client.realised_pnl == pytest.approx(15.0)
+        # Only the initial open emitted a PositionOpenedEvent (no residual flip).
+        assert len(opened) == 1
+    finally:
+        dispatcher.unsubscribe(PositionOpenedEvent, on_open)
+        dispatcher.unsubscribe(PositionClosedEvent, on_close)

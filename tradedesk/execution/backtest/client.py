@@ -80,6 +80,10 @@ class Position:
     direction: Direction
     size: float
     entry_price: float
+    # Cumulative size opened over the position's lifetime (initial open plus any
+    # increases). Used to pro-rate the per-round-trip commission so a position
+    # scaled out in N partial closes is charged exactly one round trip, not N.
+    opened_size: float = 0.0
     raw_entry_price: float = 0.0
     entry_spread_cost: float = 0.0
     entry_slippage_cost: float = 0.0
@@ -484,6 +488,122 @@ class BacktestClient(Client):
 
         return exec_price, raw_price, spread_cost, slippage, tc.commission_per_fill
 
+    async def _open_position(
+        self,
+        *,
+        instrument: str,
+        direction: Direction,
+        size: float,
+        price: float,
+        raw_price: float,
+        spread_cost: float,
+        slippage_cost: float,
+        commission_cost: float,
+        strategy: str,
+    ) -> Position:
+        """Register a new position and emit its PositionOpenedEvent.
+
+        Returns the created :class:`Position`.
+        """
+        pid = str(uuid.uuid4())
+        pos = Position(
+            instrument=instrument,
+            direction=direction,
+            size=size,
+            opened_size=size,
+            entry_price=price,
+            raw_entry_price=raw_price,
+            entry_spread_cost=spread_cost,
+            entry_slippage_cost=slippage_cost,
+            entry_commission_cost=commission_cost,
+            strategy=strategy,
+            position_id=pid,
+        )
+        self.positions[instrument] = pos
+        await get_dispatcher().publish(
+            PositionOpenedEvent(
+                instrument=instrument,
+                direction="BUY" if direction == Direction.LONG else "SELL",
+                size=size,
+                entry_price=price,
+                timestamp=parse_timestamp(self._current_timestamp or ""),
+                strategy=strategy,
+                position_id=pid,
+                raw_entry_price=raw_price,
+                entry_spread_cost=spread_cost,
+                entry_slippage_cost=slippage_cost,
+                entry_commission_cost=commission_cost,
+            )
+        )
+        return pos
+
+    async def _close_position(
+        self,
+        *,
+        pos: Position,
+        close_size: float,
+        price: float,
+        raw_price: float,
+        spread_cost: float,
+        slippage_cost: float,
+        commission_cost: float,
+        exit_reason: str,
+    ) -> None:
+        """Reduce ``pos`` by ``close_size``, realise PnL, and emit a
+        PositionClosedEvent.
+
+        Emits the event for both partial reductions and full closes so ledgers
+        and recorders always observe realised PnL on every exit. The
+        per-round-trip commission is pro-rated by ``close_size / opened_size``
+        so a position scaled out in several partial closes is charged exactly
+        one round trip in total, not one per fill. Accrued financing/admin are
+        reported only on the final (fully-closing) exit to avoid double counting.
+        """
+        # Realised PnL for the closed portion.
+        if pos.direction == Direction.LONG:
+            closed_pnl = (price - pos.entry_price) * close_size
+        else:
+            closed_pnl = (pos.entry_price - price) * close_size
+
+        # Pro-rata per-round-trip commission across partial closes.
+        round_trip = self._transaction_costs.commission_per_round_trip
+        if pos.opened_size > 0:
+            round_trip *= close_size / pos.opened_size
+        closed_pnl -= round_trip
+
+        self.realised_pnl += closed_pnl
+
+        pos.size -= close_size
+        fully_closed = pos.size <= 0
+
+        await get_dispatcher().publish(
+            PositionClosedEvent(
+                instrument=pos.instrument,
+                direction="BUY" if pos.direction == Direction.LONG else "SELL",
+                size=close_size,
+                entry_price=pos.entry_price,
+                exit_price=price,
+                pnl=closed_pnl,
+                exit_reason=exit_reason or "market_order",
+                timestamp=parse_timestamp(self._current_timestamp or ""),
+                strategy=pos.strategy,
+                position_id=pos.position_id,
+                raw_entry_price=pos.raw_entry_price,
+                raw_exit_price=raw_price,
+                entry_spread_cost=pos.entry_spread_cost,
+                exit_spread_cost=spread_cost,
+                entry_slippage_cost=pos.entry_slippage_cost,
+                exit_slippage_cost=slippage_cost,
+                entry_commission_cost=pos.entry_commission_cost,
+                exit_commission_cost=commission_cost,
+                financing_cost=pos.financing_cost_accrued if fully_closed else 0.0,
+                admin_cost=pos.admin_cost_accrued if fully_closed else 0.0,
+            )
+        )
+
+        if fully_closed:
+            self.positions.pop(pos.instrument, None)
+
     async def place_market_order(
         self,
         instrument: str,
@@ -525,120 +645,56 @@ class BacktestClient(Client):
 
         # Very simple netting model:
         # - BUY opens/increases LONG, SELL opens/increases SHORT
-        # - If opposite direction order arrives, close the entire position if sizes match.
+        # - An opposite-direction order reduces (partial) or closes the position;
+        #   any size beyond the existing position flips to a new opposite position.
         pos = self.positions.get(instrument)
 
         if pos is None:
-            pid = str(uuid.uuid4())
-            self.positions[instrument] = Position(
+            await self._open_position(
                 instrument=instrument,
                 direction=_direction,
                 size=float(size),
-                entry_price=price,
-                raw_entry_price=raw_price,
-                entry_spread_cost=spread_cost,
-                entry_slippage_cost=slippage_cost,
-                entry_commission_cost=commission_cost,
+                price=price,
+                raw_price=raw_price,
+                spread_cost=spread_cost,
+                slippage_cost=slippage_cost,
+                commission_cost=commission_cost,
                 strategy=strategy,
-                position_id=pid,
             )
-            # Emit PositionOpenedEvent
-            await get_dispatcher().publish(
-                PositionOpenedEvent(
-                    instrument=instrument,
-                    direction="BUY" if _direction == Direction.LONG else "SELL",
-                    size=float(size),
-                    entry_price=price,
-                    timestamp=parse_timestamp(self._current_timestamp or ""),
-                    strategy=strategy,
-                    position_id=pid,
-                    raw_entry_price=raw_price,
-                    entry_spread_cost=spread_cost,
-                    entry_slippage_cost=slippage_cost,
-                    entry_commission_cost=commission_cost,
-                )
-            )
+        elif pos.direction == _direction:
+            # Increase position: weighted avg entry (costs tracked from initial open only)
+            new_size = pos.size + float(size)
+            pos.entry_price = (pos.entry_price * pos.size + price * float(size)) / new_size
+            pos.size = new_size
+            pos.opened_size += float(size)
         else:
-            if pos.direction == _direction:
-                # Increase position: weighted avg entry (costs tracked from initial open only)
-                new_size = pos.size + float(size)
-                pos.entry_price = (pos.entry_price * pos.size + price * float(size)) / new_size
-                pos.size = new_size
-            else:
-                # Opposite direction: close (only supports full close or reduce)
-                close_size = min(pos.size, float(size))
-
-                # Compute PnL for the closed portion
-                if pos.direction == Direction.LONG:
-                    closed_pnl = (price - pos.entry_price) * close_size
-                else:
-                    closed_pnl = (pos.entry_price - price) * close_size
-
-                # Deduct per-round-trip commission at close
-                closed_pnl -= self._transaction_costs.commission_per_round_trip
-
-                self.realised_pnl += closed_pnl
-
-                pos.size -= close_size
-                if pos.size <= 0:
-                    # Position fully closed - emit event with full cost decomposition
-                    await get_dispatcher().publish(
-                        PositionClosedEvent(
-                            instrument=instrument,
-                            direction="BUY" if pos.direction == Direction.LONG else "SELL",
-                            size=close_size,
-                            entry_price=pos.entry_price,
-                            exit_price=price,
-                            pnl=closed_pnl,
-                            exit_reason=exit_reason or "market_order",
-                            timestamp=parse_timestamp(self._current_timestamp or ""),
-                            strategy=pos.strategy,
-                            position_id=pos.position_id,
-                            raw_entry_price=pos.raw_entry_price,
-                            raw_exit_price=raw_price,
-                            entry_spread_cost=pos.entry_spread_cost,
-                            exit_spread_cost=spread_cost,
-                            entry_slippage_cost=pos.entry_slippage_cost,
-                            exit_slippage_cost=slippage_cost,
-                            entry_commission_cost=pos.entry_commission_cost,
-                            exit_commission_cost=commission_cost,
-                            financing_cost=pos.financing_cost_accrued,
-                            admin_cost=pos.admin_cost_accrued,
-                        )
-                    )
-                    self.positions.pop(instrument, None)
-                # If order size > position size, open residual opposite position
-                residual = float(size) - close_size
-                if residual > 0:
-                    residual_pid = str(uuid.uuid4())
-                    self.positions[instrument] = Position(
-                        instrument=instrument,
-                        direction=_direction,
-                        size=residual,
-                        entry_price=price,
-                        raw_entry_price=raw_price,
-                        entry_spread_cost=spread_cost,
-                        entry_slippage_cost=slippage_cost,
-                        entry_commission_cost=commission_cost,
-                        strategy=strategy,
-                        position_id=residual_pid,
-                    )
-                    # Emit PositionOpenedEvent for the new residual position
-                    await get_dispatcher().publish(
-                        PositionOpenedEvent(
-                            instrument=instrument,
-                            direction="BUY" if _direction == Direction.LONG else "SELL",
-                            size=residual,
-                            entry_price=price,
-                            timestamp=parse_timestamp(self._current_timestamp or ""),
-                            strategy=strategy,
-                            position_id=residual_pid,
-                            raw_entry_price=raw_price,
-                            entry_spread_cost=spread_cost,
-                            entry_slippage_cost=slippage_cost,
-                            entry_commission_cost=commission_cost,
-                        )
-                    )
+            # Opposite direction: reduce (partial) or fully close the position.
+            close_size = min(pos.size, float(size))
+            await self._close_position(
+                pos=pos,
+                close_size=close_size,
+                price=price,
+                raw_price=raw_price,
+                spread_cost=spread_cost,
+                slippage_cost=slippage_cost,
+                commission_cost=commission_cost,
+                exit_reason=exit_reason,
+            )
+            # If order size exceeds the position size, open the residual as a new
+            # opposite-direction position.
+            residual = float(size) - close_size
+            if residual > 0:
+                await self._open_position(
+                    instrument=instrument,
+                    direction=_direction,
+                    size=residual,
+                    price=price,
+                    raw_price=raw_price,
+                    spread_cost=spread_cost,
+                    slippage_cost=slippage_cost,
+                    commission_cost=commission_cost,
+                    strategy=strategy,
+                )
 
         return {
             "dealReference": f"BACKTEST-{next(self._deal_counter)}",
