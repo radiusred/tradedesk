@@ -224,3 +224,40 @@ def test_materialize_ecb_mocked(monkeypatch, tmp_path: Path):
         series={"EUR_YLD_2Y": ecb.DEFAULT_ECB_SERIES["EUR_YLD_2Y"]}, lake=tmp_path
     )
     assert set(written) == {"EUR_YLD_2Y"}
+
+
+def test_materialize_fred_timeout_skips_one_series(monkeypatch, tmp_path: Path):
+    """TimeoutError on one FRED series is non-fatal; the other series still materializes."""
+
+    def fetch(series_id, **kwargs):
+        if series_id == "DGS10":
+            raise TimeoutError("read timed out")
+        return pd.DataFrame(
+            {"value": [4.41]},
+            index=pd.DatetimeIndex(["2026-05-03"], name="date"),
+        )
+
+    monkeypatch.setattr(fred, "fetch_fred_series", fetch)
+    written = lake.materialize_fred(series={"DGS10": "x", "DGS2": "x"}, lake=tmp_path)
+    assert "DGS10" not in written
+    assert "DGS2" in written
+
+
+def test_materialize_all_survives_dead_source(monkeypatch, tmp_path: Path):
+    """When all FRED series raise TimeoutError, ECB results still appear in materialize_all."""
+
+    def fred_timeout(series_id, **kwargs):
+        raise TimeoutError("read timed out")
+
+    def ecb_ok(series, **kwargs):
+        return pd.DataFrame(
+            {"value": [2.6]},
+            index=pd.DatetimeIndex(["2026-05-04"], name="date"),
+        )
+
+    monkeypatch.setattr(fred, "fetch_fred_series", fred_timeout)
+    monkeypatch.setattr(ecb, "fetch_ecb_series", ecb_ok)
+    monkeypatch.setattr(lake, "materialize_cftc", lambda **kw: {})
+    result = lake.materialize_all(lake=tmp_path)
+    assert result[lake.MacroSource.FRED.value] == {}
+    assert result[lake.MacroSource.ECB.value] != {}

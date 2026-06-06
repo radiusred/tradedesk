@@ -32,7 +32,6 @@ from __future__ import annotations
 
 import logging
 import os
-import urllib.error
 from datetime import date
 from enum import Enum
 from pathlib import Path
@@ -251,7 +250,7 @@ def materialize_fred(
             df = _fred.fetch_fred_series(
                 series_id, date_from=date_from, cache_dir=lake_root, force=force
             )
-        except (urllib.error.URLError, ValueError) as exc:
+        except (OSError, ValueError) as exc:
             log.warning("FRED %s ingest failed: %s", series_id, exc)
             continue
         if df.empty:
@@ -279,7 +278,7 @@ def materialize_ecb(
             df = _ecb.fetch_ecb_series(
                 ser, date_from=date_from, cache_dir=lake_root, force=force
             )
-        except (urllib.error.URLError, ValueError) as exc:
+        except (OSError, ValueError) as exc:
             log.warning("ECB %s ingest failed: %s", label, exc)
             continue
         if df.empty:
@@ -309,7 +308,7 @@ def materialize_cftc(
             df = cot_history_frame(
                 contract, date_from=start, date_to=end, cache_dir=lake_root
             )
-        except (urllib.error.URLError, ValueError) as exc:
+        except (OSError, ValueError) as exc:
             log.warning("CFTC %s ingest failed: %s", label, exc)
             continue
         if df.empty:
@@ -327,8 +326,15 @@ def materialize_all(
     lake: Path | str | None = None,
 ) -> dict[str, dict[str, Path]]:
     """Materialize every default series across all three macro sources."""
-    return {
-        MacroSource.FRED.value: materialize_fred(date_from=date_from, lake=lake),
-        MacroSource.ECB.value: materialize_ecb(date_from=date_from, lake=lake),
-        MacroSource.CFTC.value: materialize_cftc(date_from=date_from, lake=lake),
-    }
+    result: dict[str, dict[str, Path]] = {}
+    for name, fn in (
+        (MacroSource.FRED.value, lambda: materialize_fred(date_from=date_from, lake=lake)),
+        (MacroSource.ECB.value, lambda: materialize_ecb(date_from=date_from, lake=lake)),
+        (MacroSource.CFTC.value, lambda: materialize_cftc(date_from=date_from, lake=lake)),
+    ):
+        try:
+            result[name] = fn()
+        except Exception as exc:
+            log.error("macro ingest: %s source failed: %s", name, exc)
+            result[name] = {}
+    return result
