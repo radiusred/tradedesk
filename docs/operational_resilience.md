@@ -16,6 +16,18 @@ Subscription retries (price stream reconnects) use an asyncio-based `RetrySchedu
 
 **Configuration**: See `docs/settings.md` for `STREAM_SUB_*` environment variables.
 
+### Structural Subscription Errors — Abandon Without Retry
+
+Not every subscription error is transient. IG Lightstreamer error **code 21 ("Invalid group")** is raised when a subscription *item* is malformed or names a non-existent group — for example a CHART item that requests an unsupported candle scale (IG CHART scales are `SECOND` / `1MINUTE` / `5MINUTE` / `HOUR`; there is no `DAY` scale). Retrying the identical item can never succeed, so the jittered-backoff retry above would loop indefinitely (`retrying (1/3)...(3/3) retries exhausted`, then again on every reconnect) and leave the affected sleeve permanently dark while the process otherwise reported healthy.
+
+Both the market and chart subscription listeners now detect these **structural** errors and:
+
+- **Abandon the item immediately** — no retry is scheduled. Transient errors (e.g. code 503) keep their normal jittered-backoff retry.
+- Log a distinct `STRUCTURAL error ... will NOT retry ... Manual intervention required` marker at `ERROR` level, naming the affected items/instrument so ops can identify and correct the offending subscription.
+- Increment the dedicated `tradedesk_ig_subscription_rejected_total{kind,code}` counter (see [Operational Metrics](#operational-metrics)), so alerting can surface a dark sleeve instead of it hiding behind an otherwise-healthy process.
+
+Detection matches the numeric code (`21`) or an `"invalid group"` substring in the error message, so it is robust to IG returning the code as an int or a string.
+
 ### Single-Flight OAuth Refresh
 
 When multiple concurrent callers need to refresh an expired session token, they share a single `/session` authentication request instead of racing and creating duplicate tokens. This avoids:
@@ -89,6 +101,9 @@ Number of in-flight authentication refresh requests. Tracks single-flight OAuth 
 
 #### Counter: `tradedesk_ig_subscription_retries_total`
 Incremented for each subscription retry attempt on the price stream. Tracks unreliable subscription requests. Labels: `kind` (retry type).
+
+#### Counter: `tradedesk_ig_subscription_rejected_total`
+Incremented when a subscription is rejected with a **structural** error (e.g. code 21 "Invalid group") that retries cannot fix; the item is abandoned and the affected sleeve stays dark until corrected. Unlike `tradedesk_ig_subscription_retries_total`, any non-zero value here demands manual intervention. Labels: `kind` (`market` / `chart`), `code` (the IG error code, e.g. `21`).
 
 #### Counter: `tradedesk_ig_stream_reconnects_total`
 Incremented each time the price stream reconnects. High counts may indicate network issues. Labels: `reason` (why reconnect was triggered).
