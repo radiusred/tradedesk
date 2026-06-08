@@ -191,6 +191,13 @@ def client_factory():
     return c
 ```
 
+`TransactionCosts` exposes two commission models, which can be combined:
+
+- `commission_per_fill` — a fixed charge applied to **every** fill (open, increase, or close).
+- `commission_per_round_trip` — a fixed charge applied **once per closed round trip**. When a position is scaled out across several partial closes, the round-trip commission is pro-rated by `close_size / opened_size`, so a position closed in N steps is charged exactly one round trip in total — not N. Accrued financing/admin fees are likewise reported only on the final, fully-closing exit to avoid double counting across partial closes.
+
+Partial closes (where `close_size < position_size`) emit a `PositionClosedEvent` of their own, so ledgers and recorders capture realised PnL on every scale-out rather than only on the final exit.
+
 `run_backtest(...)` currently exposes `transaction_costs` via `BacktestSpec`.
 If you need overnight financing/admin fees, build and configure the
 `BacktestClient` yourself as above before running the session.
