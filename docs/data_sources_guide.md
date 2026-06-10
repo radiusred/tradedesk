@@ -40,10 +40,14 @@ python -m tradedesk.data_sources.ingest --source cftc --lake /data/marketdata --
 ```
 
 Ingestion is idempotent — re-running refreshes each series in place and
-re-downloads the current-year CFTC zip so the latest Friday release appears. A
-failure on a single series is logged and skipped (never fatal), so a weekly
-cron stays green if one upstream endpoint is briefly unavailable. Run it weekly
-(CFTC publishes Fridays 15:30 ET; a Saturday run captures the new week).
+re-downloads the current-year CFTC zip so the latest Friday release appears.
+Failures are isolated at two levels so a weekly cron stays green when an
+upstream endpoint is briefly unavailable. A failure on a single series — including
+read timeouts and dropped connections — is logged and skipped (never fatal), and
+the prior parquet for that series is left in place. On top of that, an entirely
+dead source is isolated: if FRED is down, ECB and CFTC still materialize, and the
+run returns the surviving sources rather than aborting. Run it weekly (CFTC
+publishes Fridays 15:30 ET; a Saturday run captures the new week).
 
 ### Load (the backtest access pattern)
 
