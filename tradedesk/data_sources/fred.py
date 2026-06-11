@@ -17,6 +17,7 @@ Series id         Description                                           Frequenc
 ``DGS10``         10-Year Treasury constant-maturity yield              daily
 ``T10Y2Y``        10Y-2Y Treasury yield spread                          daily
 ``VIXCLS``        CBOE Volatility Index (VIX) close                     daily
+``VXVCLS``        CBOE S&P 500 3-Month Volatility Index (VIX3M) close    daily
 ================  ====================================================  =========
 
 Output of :func:`fetch_fred_series` / :func:`parse_fred_csv` is a tidy
@@ -50,6 +51,7 @@ DEFAULT_FRED_SERIES: dict[str, str] = {
     "DGS10": "10-Year Treasury constant-maturity yield (daily)",
     "T10Y2Y": "10Y-2Y Treasury yield spread (daily)",
     "VIXCLS": "CBOE Volatility Index (VIX) close (daily)",
+    "VXVCLS": "CBOE S&P 500 3-Month Volatility Index (VIX3M) close (daily)",
 }
 
 
