@@ -70,7 +70,7 @@ eur_cot = load_macro_series("CFTC", "EURUSD")
 
 | Source | Labels | Frequency | Notes |
 | ------ | ------ | --------- | ----- |
-| FRED | `DFF`, `DGS3MO`, `DGS2`, `DGS10`, `T10Y2Y`, `VIXCLS` | daily | Effective fed funds, Treasury yields, 10Y-2Y spread, VIX |
+| FRED | `DFF`, `DGS3MO`, `DGS2`, `DGS10`, `T10Y2Y`, `VIXCLS`, `VXVCLS` | daily | Effective fed funds, Treasury yields, 10Y-2Y spread, VIX, and VIX3M (3-month) for VIX term-structure work |
 | ECB | `EUR_ESTR` | daily | €STR — the EUR OIS reference (overnight) rate |
 | ECB | `EUR_YLD_3M/6M/1Y/2Y/5Y/10Y` | daily | AAA government yield-curve spot rates |
 | ECB | `EUR_EURIBOR_1M`, `EUR_EURIBOR_3M` | monthly | Euribor term money-market rates |
