@@ -109,6 +109,23 @@ DEFAULT_ECB_SERIES: dict[str, ECBSeries] = {
         "M.U2.EUR.RT.MM.EURIBOR3MD_.HSTA",
         "Euribor 3-month, period average (monthly)",
     ),
+    # ECB daily reference exchange rates (EXR dataflow, ~16:00 CET fixing,
+    # EUR base). Added for RAD-4033 FX surrogate: one robust, full-history
+    # (1999->present) daily-close source for all four USD pairs via EUR
+    # triangulation, sidestepping the FX-tick lake gap (GBPUSD/AUDUSD only
+    # 2018+) and the fredgraph CSV 504 on daily series.
+    "EUR_USD_REF": ECBSeries(
+        "EUR_USD_REF", "EXR", "D.USD.EUR.SP00.A", "ECB reference rate USD per EUR (daily)"
+    ),
+    "EUR_GBP_REF": ECBSeries(
+        "EUR_GBP_REF", "EXR", "D.GBP.EUR.SP00.A", "ECB reference rate GBP per EUR (daily)"
+    ),
+    "EUR_AUD_REF": ECBSeries(
+        "EUR_AUD_REF", "EXR", "D.AUD.EUR.SP00.A", "ECB reference rate AUD per EUR (daily)"
+    ),
+    "EUR_JPY_REF": ECBSeries(
+        "EUR_JPY_REF", "EXR", "D.JPY.EUR.SP00.A", "ECB reference rate JPY per EUR (daily)"
+    ),
 }
 
 

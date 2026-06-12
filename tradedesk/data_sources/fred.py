@@ -50,6 +50,17 @@ DEFAULT_FRED_SERIES: dict[str, str] = {
     "DGS10": "10-Year Treasury constant-maturity yield (daily)",
     "T10Y2Y": "10Y-2Y Treasury yield spread (daily)",
     "VIXCLS": "CBOE Volatility Index (VIX) close (daily)",
+    # OECD MEI call money / interbank overnight policy proxies (monthly, %).
+    # Added for RAD-4033 monetary-policy relative-tightening FX surrogate: a
+    # single-source, single-frequency, single-lag cross-section over EUR/GBP/
+    # AUD/JPY vs USD. The daily fredgraph CSV endpoint 504s on large daily
+    # series (IUDSOIA/DFF) and EUR_ESTR only starts 2019-10, so the monthly
+    # IRSTCI01 family is the consistent overnight-rate cross-section back to 2009.
+    "IRSTCI01USM156N": "US call money/interbank rate, OECD MEI (monthly, %)",
+    "IRSTCI01EZM156N": "Euro-area call money/interbank rate, OECD MEI (monthly, %)",
+    "IRSTCI01GBM156N": "UK call money/interbank rate, OECD MEI (monthly, %)",
+    "IRSTCI01AUM156N": "Australia call money/interbank rate, OECD MEI (monthly, %)",
+    "IRSTCI01JPM156N": "Japan call money/interbank rate, OECD MEI (monthly, %)",
 }
 
 
