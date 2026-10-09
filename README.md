@@ -55,7 +55,8 @@ The public package is organized into a small set of domains:
 - `tradedesk.strategy` for strategy base classes and strategy-facing events
 - `tradedesk.portfolio` for portfolio state, sizing, and risk policies
 - `tradedesk.execution` for live execution adapters and order handling
-- `tradedesk.execution.backtest` for simulated execution and replay
+- `tradedesk.execution.backtest` for simulated execution and replay (deprecated in
+  favour of the Rust backtester; see "Rust crates")
 - `tradedesk.recording` for lifecycle events, trade records, and metrics
 - `tradedesk.research` for walk-forward and correlation-gate helpers
 - `tradedesk.ml` for optional feature engineering, labels, and walk-forward tooling
@@ -86,6 +87,32 @@ Backtests use the same event model as live sessions.
 
 See [docs/backtesting_guide.md](docs/backtesting_guide.md) for the current
 cache-backed workflow.
+
+`tradedesk.execution.backtest` is deprecated in favour of the Rust backtester
+below. It keeps working and still ships, and importing it emits a
+`DeprecationWarning`.
+
+## Rust crates
+
+Beside the Python package, `crates/` holds a Cargo workspace with two Rust crates:
+
+- `tradedesk-data`, the market-data layer: the `Reader` trait, the trading
+  calendar, aggregation of 1-minute bars to 5m / 15m / 1h / 1d, gap detection, an
+  Arrow IPC bar cache, and a reader for the
+  `<root>/<SYMBOL>/<YYYY>/<MM 00-indexed>/<DD>_<bid|ask>.csv.zst` cache layout.
+- `tradedesk-backtest`, the backtester: venue costs and financing, the ledger,
+  metrics, indicators, the `Strategy` trait, parameter sweeps with an append-only
+  trial registry, the deflated Sharpe, PBO and walk-forward, and a command line.
+  It ships no strategy: a strategy implements the trait and registers itself in a
+  `StrategyRegistry`. See its [README](crates/tradedesk-backtest/README.md).
+
+The Rust backtester supersedes `tradedesk.execution.backtest`, and nothing else in
+the Python package
+([Decision](https://github.com/radiusred/trading-hub/issues/2#issuecomment-6078839403)).
+The Python package's API and version are unchanged. The crates are not published to
+crates.io; build and test them from the repository root with `cargo build
+--workspace` and `cargo test --workspace` (the toolchain is pinned in
+`rust-toolchain.toml`).
 
 ## Live trading with IG
 
