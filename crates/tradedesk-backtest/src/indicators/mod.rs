@@ -11,8 +11,8 @@
 //! exactly, including its quirks. Each type documents its choice. The arithmetic is
 //! written in the same order as the Python: windows are re-summed on every update
 //! rather than kept as running sums, and every Python `sum()` is reproduced with
-//! `CPython`'s Neumaier-compensated float summation (`CPython` >= 3.12; `ig_trader`
-//! requires >= 3.13). The golden fixtures in `tests/fixtures/indicators/` therefore
+//! `CPython`'s Neumaier-compensated float summation (`CPython` >= 3.12, on which the
+//! goldens were computed). The golden fixtures in `tests/fixtures/indicators/` therefore
 //! match to the last bit in practice; the tests hold them to a `1e-9` relative
 //! tolerance.
 //!
@@ -235,7 +235,7 @@ pub(crate) fn period(name: &'static str, value: usize) -> Result<(usize, f64), I
 /// Python's built-in `sum()` over floats, bit for bit.
 ///
 /// Since `CPython` 3.12, `sum()` of floats is Neumaier-compensated (an improved
-/// Kahan–Babuška summation), and `ig_trader` requires Python >= 3.13, so every
+/// Kahan–Babuška summation), and the goldens were computed on 3.12+, so every
 /// `sum(window) / n` in the reference is compensated. This mirrors `CPython`'s
 /// `builtin_sum_impl` float path: start from `0 + x0`, accumulate the compensation
 /// term, and add it once at the end when it is non-zero and finite. A naive fold

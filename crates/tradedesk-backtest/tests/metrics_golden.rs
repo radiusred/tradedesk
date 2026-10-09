@@ -1,7 +1,7 @@
 //! Sharpe, the other return statistics and the maximum drawdowns against pandas/numpy on
-//! fixed equity series. `tests/fixtures/metrics_golden.json` was written by a Python
-//! generator (not carried here); its `provenance` records the command and the library
-//! versions.
+//! fixed equity series. The expected values in `tests/fixtures/metrics_golden.json` are
+//! pandas/numpy's (versions in its `provenance`), and the repository's Python suite
+//! recomputes them on every run (`tests/test_rust_crate_goldens.py`).
 
 use std::path::PathBuf;
 

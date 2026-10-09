@@ -1,6 +1,7 @@
 {
  "provenance": {
-  "command": "cd <ig_trader> && UV_PROJECT_ENVIRONMENT=<venv> uv run --frozen python <tradedesk-miner>/crates/miner-backtest/tests/fixtures/generate_metrics_golden.py --out <tradedesk-miner>/crates/miner-backtest/tests/fixtures/metrics_golden.json",
+  "reference": "pandas and numpy (the versions below) over each case's equity series, with the definitions of the crate README's \"Metrics\" section",
+  "checked_by": "tests/test_rust_crate_goldens.py (pytest, repository root) recomputes every expected value from the cases' inputs",
   "python": "3.14.7",
   "pandas": "3.0.1",
   "numpy": "2.4.2",
