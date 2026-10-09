@@ -1,0 +1,46 @@
+# tradedesk-data: the market-data layer shared by the backtester and the miner.
+#
+# The `Reader` trait and its bar types, the trading calendar, aggregation from 1-minute
+# bars to higher timeframes, gap detection, the Arrow IPC bar cache, and the reader for
+# the `<root>/<SYMBOL>/<YYYY>/<MM 00-indexed>/<DD>_<bid|ask>.csv.zst` cache layout
+# (`dukascopy`). Cut from tradedesk-miner's `miner-core` and `miner-reader-dukascopy`.
+#
+# Dep discipline:
+# - `.workspace = true` for every dep the workspace declares; no inline versions.
+# - NO async runtime: no tokio, async-std, smol or async-trait. The crate is sync only.
+# - NO `unsafe`: `BufReader<File>`, no memory-mapped reads (workspace lint).
+
+[package]
+name = "tradedesk-data"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+# Not published to crates.io. `publish = false` also lets `[bans] allow-wildcard-paths`
+# in deny.toml exempt the intra-workspace `{ path = "../foo" }` dependencies.
+publish = false
+
+[lib]
+
+[dependencies]
+serde.workspace     = true
+serde_json.workspace = true
+schemars.workspace  = true
+chrono.workspace    = true
+thiserror.workspace = true
+tracing.workspace   = true
+blake3.workspace    = true
+arrow.workspace     = true
+tempfile.workspace  = true
+csv.workspace       = true
+zstd.workspace      = true
+walkdir.workspace   = true
+
+[dev-dependencies]
+# Aggregator and path-layout property tests.
+proptest = "1.11"
+# Gap-manifest and Arrow IPC schema snapshot tests; `json` exposes `assert_json_snapshot!`.
+insta    = { version = "1.47", features = ["json"] }
+
+[lints]
+workspace = true

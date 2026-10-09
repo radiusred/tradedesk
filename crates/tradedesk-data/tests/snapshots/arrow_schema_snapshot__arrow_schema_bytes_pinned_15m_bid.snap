@@ -1,0 +1,20 @@
+---
+source: crates/miner-core/tests/arrow_schema_snapshot.rs
+expression: render_schema(&schema)
+---
+fields:
+  ts_open_utc: Timestamp(Nanosecond, Some("UTC")) nullable=false
+  ts_close_utc: Timestamp(Nanosecond, Some("UTC")) nullable=false
+  open: Float64 nullable=false
+  high: Float64 nullable=false
+  low: Float64 nullable=false
+  close: Float64 nullable=false
+  tick_volume: Float64 nullable=false
+metadata (sorted):
+  aggregator_version: 1.0.0
+  arrow_schema_version: 1.0.0
+  code_revision: <redacted-code-revision>
+  side: bid
+  source_id: dukascopy
+  symbol: EURUSD
+  timeframe: 15m

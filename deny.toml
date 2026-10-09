@@ -1,0 +1,62 @@
+# SPDX-License-Identifier: Apache-2.0
+# Copyright 2026 Radius Red Ltd.
+#
+# cargo-deny configuration for the tradedesk Rust workspace (taken from tradedesk-miner).
+#
+# This file targets the cargo-deny 0.19.6+ schema. Several `[advisories]`
+# keys that older docs and example configs still reference have been REMOVED
+# from this schema and MUST NOT be reintroduced — adding them now causes
+# cargo-deny to fail with "unknown key" before it ever reads Cargo.lock.
+#
+# Removed keys (all advisories now emit errors by default):
+#   * `vulnerability`        — REMOVED
+#   * `unsound`              — REMOVED
+#   * `notice`               — REMOVED
+#   * `severity-threshold`   — REMOVED
+#
+# Reference: upstream docs (current valid keyset):
+#     https://embarkstudios.github.io/cargo-deny/checks/advisories/cfg.html
+#
+# The `version` field is no longer required; cargo-deny detects the v2 schema
+# implicitly when the removed keys are absent.
+
+[advisories]
+yanked       = "deny"
+unmaintained = "all"
+ignore = []
+# Temporary advisory ignores belong in `ignore = [...]` above with an inline
+# comment of the form:
+#   "RUSTSEC-YYYY-NNNN",  # <one-line reason> — review by YYYY-MM-DD
+# (allowlist by exception).
+
+[licenses]
+confidence-threshold = 0.93
+allow = [
+    "Apache-2.0",
+    "MIT",
+    "BSD-2-Clause",
+    "BSD-3-Clause",
+    "ISC",
+    "Unicode-DFS-2016",
+    "Unicode-3.0",
+    "Zlib",
+    "MPL-2.0",
+    "CC0-1.0",  # allowed-for: tiny-keccak@2.0.2 — FSF Free/Libre public-domain dedication, transitive via ahash → const-random
+]
+# Out-of-allowlist licenses require a separate commit that adds the license
+# here with an inline `# allowed-for: <crate>@<version> — <license> — <reason>`
+# comment (allowlist by exception).
+
+[bans]
+multiple-versions    = "warn"
+wildcards            = "deny"
+allow-wildcard-paths = true
+# `allow-wildcard-paths = true` exempts intra-workspace path dependencies
+# (`{ path = "../foo" }`) from the wildcard ban — these are not real version
+# wildcards, only the natural form of workspace member references.
+# `deny = []` / `allow = []` / `skip = []` left at their defaults; can be
+# tightened in v1.x once the dependency surface stabilises.
+
+[sources]
+unknown-registry = "deny"
+unknown-git      = "deny"

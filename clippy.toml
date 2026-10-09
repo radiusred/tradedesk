@@ -1,0 +1,23 @@
+# Workspace clippy configuration: stdout/stderr discipline.
+#
+# `disallowed-macros` bans the convenience macros that write to stdout or stderr behind
+# the program's back. Results go to stdout through explicit writers (the backtester's
+# command line builds each line whole, then writes and flushes it), and diagnostics go to
+# stderr through `tracing` (`tracing_subscriber::fmt().with_writer(std::io::stderr)`,
+# initialised in each binary's `main`). A stray `println!` would interleave with a JSON
+# Lines result stream.
+#
+# Exemption: `crates/tradedesk-data/build.rs`. Cargo's `println!("cargo:...")` directives
+# ARE the build-script protocol; the crate-level `#![allow(clippy::disallowed_macros)]`
+# at the head of `build.rs` makes the exemption explicit.
+#
+# Anything else using one of these macros fails CI on
+# `cargo clippy --workspace --all-targets --locked -- -D warnings`.
+
+disallowed-macros = [
+    { path = "std::println",   reason = "stdout is reserved for results; write lines through an explicit writer or use tracing::info!" },
+    { path = "std::print",     reason = "stdout is reserved for results" },
+    { path = "std::eprintln",  reason = "use tracing::warn!/error! routed to stderr by the subscriber" },
+    { path = "std::eprint",    reason = "use tracing::warn!/error!" },
+    { path = "std::dbg",       reason = "do not leave dbg! in production code" },
+]

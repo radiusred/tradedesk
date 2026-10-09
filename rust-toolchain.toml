@@ -1,0 +1,7 @@
+# Pin the toolchain so contributors, CI, and the build host all agree on the compiler
+# version. Channel matches workspace.package.rust-version in Cargo.toml. Minimal profile
+# keeps installation lean; clippy + rustfmt are explicit because we gate on both in CI.
+[toolchain]
+channel = "1.85"
+components = ["clippy", "rustfmt"]
+profile = "minimal"
