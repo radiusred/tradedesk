@@ -1,19 +1,18 @@
-"""``tradedesk.execution.backtest`` is deprecated in favour of the Rust backtester.
+"""``tradedesk.execution.backtest`` is not deprecated, and it is loaded lazily.
 
-Importing it warns; importing ``tradedesk`` (or ``tradedesk.execution``) does not load
-it, so only code that uses the Python backtester sees the warning. Its exports still
-resolve from ``tradedesk.execution``.
+Importing it emits no ``DeprecationWarning``. Importing ``tradedesk`` (or
+``tradedesk.execution``) does not load it, so live users do not import the
+backtester; its exports still resolve from ``tradedesk.execution`` on first use.
 """
 
 import importlib
 import subprocess
 import sys
+import warnings
 
 import pytest
 
 import tradedesk.execution as execution
-
-MESSAGE = "tradedesk.execution.backtest is deprecated"
 
 
 def _run(code: str) -> None:
@@ -21,34 +20,34 @@ def _run(code: str) -> None:
     subprocess.run([sys.executable, "-c", code], check=True)
 
 
-def test_importing_the_backtest_module_warns_and_names_the_rust_backtester() -> None:
+def test_importing_the_backtest_module_does_not_warn() -> None:
     import tradedesk.execution.backtest as backtest
 
-    with pytest.warns(DeprecationWarning, match="Rust backtester") as record:
+    with warnings.catch_warnings():
+        warnings.simplefilter("error", DeprecationWarning)
         importlib.reload(backtest)
-    assert any(MESSAGE in str(w.message) for w in record)
     assert backtest.__doc__ is not None
-    assert "Rust backtester" in backtest.__doc__
-    assert "tradedesk-backtest" in backtest.__doc__
+    doc = " ".join(backtest.__doc__.split())
+    assert "run byte-identically in backtest and live" in doc
+    assert "tradedesk-backtest" in doc
+    assert "research engine for parameter sweeps" in doc
+    assert "deprecated" not in doc.lower()
 
 
-def test_importing_tradedesk_does_not_load_the_deprecated_module() -> None:
+def test_importing_tradedesk_does_not_load_the_backtester() -> None:
     _run(
-        "import sys, warnings\n"
-        f"warnings.filterwarnings('error', message={MESSAGE!r})\n"
+        "import sys\n"
         "import tradedesk, tradedesk.execution\n"
         "assert 'tradedesk.execution.backtest' not in sys.modules\n"
     )
 
 
-def test_the_execution_exports_resolve_on_first_use_and_warn() -> None:
+def test_the_execution_exports_resolve_on_first_use_without_a_warning() -> None:
     _run(
         "import warnings\n"
+        "warnings.simplefilter('error', DeprecationWarning)\n"
         "import tradedesk.execution as ex\n"
-        "with warnings.catch_warnings(record=True) as caught:\n"
-        "    warnings.simplefilter('always')\n"
-        "    client = ex.BacktestClient\n"
-        f"assert any({MESSAGE!r} in str(w.message) for w in caught)\n"
+        "client = ex.BacktestClient\n"
         "from tradedesk.execution.backtest import BacktestClient\n"
         "assert client is BacktestClient\n"
         "assert ex.backtest.BacktestClient is BacktestClient\n"

@@ -1,12 +1,13 @@
 """Backtesting provider implementation.
 
-Deprecated: the Rust backtester replaces this module. It is the ``tradedesk-backtest``
-crate (``crates/tradedesk-backtest`` in this repository), with the market-data layer
-in ``tradedesk-data``. This module keeps working and is still shipped, but new
-backtests should use the Rust backtester. Importing it emits a ``DeprecationWarning``.
+This backtester is the path on which a strategy and its portfolio run byte-identically
+in backtest and live: the same strategy and portfolio code drives
+:func:`run_backtest` and the live runner. The Rust backtester, the
+``tradedesk-backtest`` crate (``crates/tradedesk-backtest`` in this repository), is the
+research engine for parameter sweeps. A later milestone joins the two, by moving the
+live runtime to Rust, once a strategy has proved itself in backtesting
+(Decision: https://github.com/radiusred/trading-hub/issues/2#issuecomment-6083458251).
 """
-
-import warnings
 
 from .client import BacktestClient, FinancingCosts, TransactionCosts
 from .dukascopy import iter_dukascopy_candles, read_dukascopy_candles
@@ -25,11 +26,3 @@ __all__ = [
     "read_dukascopy_candles",
     "run_backtest",
 ]
-
-warnings.warn(
-    "tradedesk.execution.backtest is deprecated: the Rust backtester (the "
-    "tradedesk-backtest crate in the tradedesk repository) replaces it. It keeps "
-    "working, but new backtests should use the Rust backtester.",
-    DeprecationWarning,
-    stacklevel=2,
-)

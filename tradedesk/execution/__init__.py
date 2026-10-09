@@ -42,10 +42,10 @@ __all__ = [
 def __getattr__(name: str) -> Any:
     """Load ``BacktestClient`` and the ``backtest`` subpackage on first use.
 
-    ``tradedesk.execution.backtest`` is deprecated and warns when imported, so it is
-    not imported with this package (``import tradedesk`` would otherwise warn every
-    user). ``tradedesk.execution.BacktestClient`` and ``tradedesk.execution.backtest``
-    still resolve, importing the module (and warning) at that point.
+    ``tradedesk.execution.backtest`` is not imported with this package, so live users
+    (and ``import tradedesk``) do not load the backtester.
+    ``tradedesk.execution.BacktestClient`` and ``tradedesk.execution.backtest`` still
+    resolve, importing the module at that point.
     """
     if name == "BacktestClient":
         from .backtest.client import BacktestClient
