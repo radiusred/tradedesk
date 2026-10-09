@@ -13,12 +13,19 @@ registries, results, verdicts) and no venue- or deployment-specific configuratio
 (accounts, credentials, live sizing, portfolio or strategy configs). Those belong
 elsewhere, and a pull request that carries them is declined.
 
-Two things are framework, not strategy or configuration, and belong here: the
+"Trading strategies" means the venture's strategies: the ideas, parameters and
+configurations that trade its capital, which live in the private strategy
+repository. Four things that look like strategies are framework and belong here:
+the generic strategy base and runtime glue in `tradedesk/strategy/` (the
+`MLDirectionStrategy` runs any `predict_proba` model through the portfolio's
+risk controls and carries no model, instrument or parameters of its own); the
+documentation examples in `docs/examples/`, which exist to show the API; the
 backtester's test strategy (`crates/tradedesk-backtest/tests/toy/`), which exists
-only to drive its tests, and its builtin cost table
+only to drive its tests; and its builtin cost table
 (`crates/tradedesk-backtest/config/costs.toml`), which is reference data: the
 venues' published fees, each with its source, that any run can replace with its
-own file.
+own file. The test of any of them is that it names no instrument, parameter set or
+result that is the venture's.
 
 Review enforces this boundary for now; tooling to check it is still to come. The
 pre-commit guard below catches the most common path-based cases.
