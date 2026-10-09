@@ -55,8 +55,7 @@ The public package is organized into a small set of domains:
 - `tradedesk.strategy` for strategy base classes and strategy-facing events
 - `tradedesk.portfolio` for portfolio state, sizing, and risk policies
 - `tradedesk.execution` for live execution adapters and order handling
-- `tradedesk.execution.backtest` for simulated execution and replay (deprecated in
-  favour of the Rust backtester; see "Rust crates")
+- `tradedesk.execution.backtest` for simulated execution and replay
 - `tradedesk.recording` for lifecycle events, trade records, and metrics
 - `tradedesk.research` for walk-forward and correlation-gate helpers
 - `tradedesk.ml` for optional feature engineering, labels, and walk-forward tooling
@@ -88,10 +87,6 @@ Backtests use the same event model as live sessions.
 See [docs/backtesting_guide.md](docs/backtesting_guide.md) for the current
 cache-backed workflow.
 
-`tradedesk.execution.backtest` is deprecated in favour of the Rust backtester
-below. It keeps working and still ships, and importing it emits a
-`DeprecationWarning`.
-
 ## Rust crates
 
 Beside the Python package, `crates/` holds a Cargo workspace with two Rust crates:
@@ -106,13 +101,16 @@ Beside the Python package, `crates/` holds a Cargo workspace with two Rust crate
   It ships no strategy: a strategy implements the trait and registers itself in a
   `StrategyRegistry`. See its [README](crates/tradedesk-backtest/README.md).
 
-The Rust backtester supersedes `tradedesk.execution.backtest`, and nothing else in
-the Python package
-([Decision](https://github.com/radiusred/trading-hub/issues/2#issuecomment-6078839403)).
-The Python package's API and version are unchanged. The crates are not published to
-crates.io; build and test them from the repository root with `cargo build
---workspace` and `cargo test --workspace` (the toolchain is pinned in
-`rust-toolchain.toml`).
+The Python backtester, `tradedesk.execution.backtest`, remains the path on which a
+strategy and its portfolio run byte-identically in backtest and live.
+`tradedesk-backtest` is the research engine for parameter sweeps. A later milestone
+joins the two, by moving the live runtime to Rust, once a strategy has proved itself
+in backtesting
+([Decision](https://github.com/radiusred/trading-hub/issues/2#issuecomment-6083458251)).
+
+The crates are not published to crates.io; build and test them from the repository
+root with `cargo build --workspace` and `cargo test --workspace` (the toolchain is
+pinned in `rust-toolchain.toml`).
 
 ## Live trading with IG
 
