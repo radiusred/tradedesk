@@ -132,8 +132,8 @@ class FeatureConfig:
             log returns and forward-filled onto the minute index, so they
             never use information from ``t`` itself. Designed to give the
             model an explicit signal that the deployment regime differs
-            from the training regime — a Sharpe -43 fold showed the model
-            overfitting absolute price levels with no regime context.
+            from the training regime; without it a fold can overfit absolute
+            price levels with no regime context.
         include_calendar_features: Off by default. When ``True``, emit
             ``month_sin`` / ``month_cos`` (cyclical month-of-year),
             ``week_of_month`` (1–5), and ``is_first_friday`` (a
