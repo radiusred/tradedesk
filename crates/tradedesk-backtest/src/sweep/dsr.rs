@@ -15,12 +15,10 @@
 //! `T` is the number of daily observations, `γ₃` the skewness and `γ₄` the Pearson
 //! (non-excess) kurtosis of the trial's returns, `N` the number of trials, `σ_SR` the
 //! standard deviation of the trials' Sharpes, and `γ` the Euler–Mascheroni constant.
-//! This follows the Python reference implementation the goldens in
-//! `tests/fixtures/overfit_golden.json` were generated from (`dsr.py`), which follows the
-//! paper; the two points the paper leaves open are settled as the Python does: the variance term is
-//! floored at `1e-12` (an extreme skew/kurtosis then degrades to a near-certain answer
-//! rather than an error), and with `N ≤ 1` or `σ_SR ≤ 0` there is no multiple-testing
-//! burden and `SR₀ = 0`.
+//! This follows the paper. The two points it leaves open are settled as follows: the
+//! variance term is floored at `1e-12` (an extreme skew/kurtosis then degrades to a
+//! near-certain answer rather than an error), and with `N ≤ 1` or `σ_SR ≤ 0` there is
+//! no multiple-testing burden and `SR₀ = 0`.
 
 use statrs::distribution::{ContinuousCDF, Normal};
 

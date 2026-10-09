@@ -399,7 +399,7 @@ on a weekend adds its one weekend-close observation.
 
 For the sweep's deflated Sharpe, `ReturnStats` also has the per-observation
 Sharpe (`sharpe_daily`), the mean, the std, the biased skewness and the Pearson
-(non-excess) kurtosis. These match the Python reference's `dsr.py::summarise_returns`.
+(non-excess) kurtosis.
 **Secondary:** annualised volatility `std × sqrt(252)`, and Sortino
 `sqrt(252) × mean(excess) / sqrt(mean(min(excess, 0)²))` with the downside taken
 over every observation.
@@ -795,8 +795,7 @@ DSR      = PSR(SR₀)
   cells are not trials.
 - `σ_SR` is the sample std (ddof 1) of the defined daily Sharpes.
 
-The assumptions follow the Python reference implementation (`dsr.py`) the
-goldens were generated from:
+The assumptions:
 - trials are treated as independent, so `N` is not reduced for correlated
   trials;
 - the variance term is floored at 1e-12;
@@ -824,10 +823,9 @@ Sharpe), it gives:
 4. **PBO is the share of `λ ≤ 0`.** The report gives it with the logit
    distribution: count, mean, std, min, quartiles, median and max.
 
-This mirrors the Python reference's `cscv.py::pbo_cscv`, except that the purge
-(`label_horizon`) and the embargo default to 0, which is the paper's plain CSCV.
-Daily returns do not overlap, so there is nothing to purge. The Python default
-(`label_horizon = 1`) is available through `CscvConfig`.
+The purge (`label_horizon`) and the embargo default to 0, which is the paper's
+plain CSCV. Daily returns do not overlap, so there is nothing to purge; a purge
+(for example `label_horizon = 1`) is available through `CscvConfig`.
 
 ### Walk-forward (`WalkForwardReport`)
 
@@ -959,12 +957,15 @@ None of them needs market data on disk: synthetic caches are written under
   claim to be a trading idea. The crate's unit tests include the same file under
   `cfg(test)`.
 - **Goldens.** `tests/fixtures/indicators/` pins every indicator against
-  tradedesk's Python indicators; `tests/fixtures/metrics_golden.json` pins the
+  tradedesk's Python indicators, and `tests/fixtures/metrics_golden.json` pins the
   Sharpe, volatility, Sortino, skewness, kurtosis and both maximum drawdowns
-  against pandas/numpy; `tests/fixtures/overfit_golden.json` pins the deflated
-  Sharpe and the PBO against the Python reference implementation. Each fixture
-  records its provenance (the generating command and library versions); the
-  generators ran in a private checkout and are not part of this repository.
+  against pandas/numpy; the repository's Python suite recomputes both from their
+  inputs on every run (`tests/test_rust_crate_goldens.py`).
+  `tests/fixtures/overfit_golden.json` is a regression golden for the deflated
+  Sharpe and the PBO: fixed returns matrices, and expected values computed by this
+  crate's own `sweep::dsr` and `sweep::cscv`. The ignored test
+  `overfit_goldens::regenerate_the_golden` rewrites them, and the file's
+  `provenance` names it.
 - **Command line.** The shipped binary registers no strategy, so the sweep paths
   run in-process through `cli::run` with the test strategy registered; `report`,
   `walkforward`, usage errors, SIGINT and the empty-registry refusal run the

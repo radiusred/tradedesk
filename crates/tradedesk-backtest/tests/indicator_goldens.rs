@@ -1,8 +1,8 @@
 //! Indicator goldens: every indicator against tradedesk's Python output (M1-R6).
 //!
-//! The fixtures under `tests/fixtures/indicators/` were produced by a Python generator
-//! run against tradedesk's indicators (provenance and command in each file's header; the
-//! generator itself stayed with the private checkout it ran in):
+//! The fixtures under `tests/fixtures/indicators/` hold the outputs of tradedesk's Python
+//! indicators, which the repository's Python suite reproduces from the same bars on
+//! every run (`tests/test_rust_crate_goldens.py`; each file's header says so):
 //! two real days of XAUUSD 15m, six months of USA500 daily, and two synthetic series
 //! that reach the edge branches (RSI 0 and 100, ADX zero-TR seed, zero-volume VWAP
 //! sessions). Each file carries its own input bars, so no market data is needed.

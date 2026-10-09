@@ -17,14 +17,12 @@
 //! **PBO is the share of logits `λ ≤ 0`**: how often the in-sample winner ranks at or
 //! below the out-of-sample median.
 //!
-//! This is the Python reference implementation's `cscv.py::pbo_cscv` (the source of the
-//! goldens in `tests/fixtures/overfit_golden.json`) step for step (block
-//! sizes as `np.array_split`, combinations in `itertools.combinations` order, the
-//! sums in row order as numpy reduces along axis 0), with one default changed: the
-//! Python purges by default (`label_horizon = 1`), while here both the purge and the
-//! embargo default to 0, which is the paper's plain CSCV. Daily returns on the equity
-//! curve do not overlap, so there is nothing to purge; the Python rule is available
-//! through [`CscvConfig`].
+//! The computation follows numpy conventions step for step: block sizes as
+//! `np.array_split`, combinations in `itertools.combinations` order, and sums in row
+//! order as numpy reduces along axis 0. Both the purge and the embargo default to 0,
+//! which is the paper's plain CSCV: daily returns on the equity curve do not overlap,
+//! so there is nothing to purge. A purge (`label_horizon`, for example 1) and an
+//! embargo are available through [`CscvConfig`].
 
 use rayon::prelude::*;
 use serde::{Deserialize, Serialize};
