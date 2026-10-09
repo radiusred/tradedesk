@@ -3,6 +3,26 @@
 We welcome contributions to `tradedesk`. This guide covers the standards and
 workflow you need to contribute successfully.
 
+## What this repository holds
+
+This repository holds the tradedesk framework: the Python package (`tradedesk/`)
+with its tests, docs and examples, and the Rust crates (`crates/tradedesk-data` and
+`crates/tradedesk-backtest`) with theirs, plus the CI and release workflows. It
+holds no trading strategies, no research artefacts (hypotheses, registrations,
+registries, results, verdicts) and no venue- or deployment-specific configuration
+(accounts, credentials, live sizing, portfolio or strategy configs). Those belong
+elsewhere, and a pull request that carries them is declined.
+
+Two things are framework, not strategy or configuration, and belong here: the
+backtester's test strategy (`crates/tradedesk-backtest/tests/toy/`), which exists
+only to drive its tests, and its builtin cost table
+(`crates/tradedesk-backtest/config/costs.toml`), which is reference data: the
+venues' published fees, each with its source, that any run can replace with its
+own file.
+
+Review enforces this boundary for now; tooling to check it is still to come. The
+pre-commit guard below catches the most common path-based cases.
+
 ## Getting Started
 
 1. Fork the repository and create a feature branch from `main`.
@@ -74,6 +94,17 @@ We use [pytest](https://docs.pytest.org/):
 
 ```bash
 pytest
+```
+
+The Rust crates have their own gates, run from the repository root with the
+toolchain pinned in `rust-toolchain.toml`; CI runs them when a Rust path changes:
+
+```bash
+cargo build --workspace --all-targets --locked
+cargo clippy --workspace --all-targets --locked -- -D warnings
+cargo test --workspace --locked
+cargo fmt --check
+cargo deny check
 ```
 
 - All new and existing tests must pass following any code change.
