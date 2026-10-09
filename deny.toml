@@ -23,7 +23,9 @@
 [advisories]
 yanked       = "deny"
 unmaintained = "all"
-ignore = []
+ignore = [
+    "RUSTSEC-2024-0436",  # paste@1.0.15 unmaintained — pulled transitively via statrs→nalgebra→simba→paste (the backtester's deflated Sharpe); no safe upgrade available until nalgebra/simba migrate (likely to `pastey`) — review by 2026-08-22 (carried from the miner)
+]
 # Temporary advisory ignores belong in `ignore = [...]` above with an inline
 # comment of the form:
 #   "RUSTSEC-YYYY-NNNN",  # <one-line reason> — review by YYYY-MM-DD

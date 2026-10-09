@@ -1,0 +1,72 @@
+# tradedesk-backtest: the backtester (research only; no live trading).
+#
+# Venue costs and financing, the ledger, metrics, the single-run engine, parameter
+# sweeps with an append-only trial registry, the deflated Sharpe and PBO, walk-forward,
+# and the `Strategy` trait strategies implement. No strategy ships here: a strategy crate
+# implements the trait and registers itself in a `sweep::StrategyRegistry`. Cut from
+# tradedesk-miner's `miner-backtest`.
+#
+# Dep discipline:
+# - `.workspace = true` for every dep that the workspace declares; no inline versions.
+# - NO async runtime: no tokio, async-std, smol or async-trait.
+# - The library is generic over `tradedesk_data::Reader`. The command line reads the
+#   Dukascopy cache layout through `tradedesk_data::dukascopy`; library code never
+#   names it.
+
+[package]
+name = "tradedesk-backtest"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish = false  # same posture as tradedesk-data; see its manifest
+
+[lib]
+
+[dependencies]
+tradedesk-data = { path = "../tradedesk-data" }
+chrono.workspace = true
+chrono-tz.workspace = true
+serde.workspace = true
+thiserror.workspace = true
+toml.workspace = true
+rayon.workspace = true
+tracing.workspace = true
+# Sweeps: trial ids are blake3 over canonical JSON; the registry is JSON Lines; the
+# deflated Sharpe needs the normal CDF and its inverse. serde_json stays featureless:
+# `float_roundtrip` would move pinned goldens, so the registry reader parses numbers
+# itself (`sweep::registry`) to load back exactly.
+blake3.workspace = true
+serde_json.workspace = true
+statrs.workspace = true
+
+# The command line uses three crates the library never needs: the argument parser, the
+# stderr log subscriber and the SIGINT handler. They are optional and enabled only by the
+# default-on `cli` feature, which the `cli` module and the binary require; a library
+# consumer can build without them (`default-features = false`).
+clap = { workspace = true, optional = true }
+tracing-subscriber = { workspace = true, optional = true }
+ctrlc = { workspace = true, optional = true }
+
+[features]
+default = ["cli"]
+cli = ["dep:clap", "dep:tracing-subscriber", "dep:ctrlc"]
+
+[[bin]]
+# `tradedesk-backtest sweep|report|walkforward` (README "Command line"). It registers no
+# strategy; a strategy crate builds its own binary on `tradedesk_backtest::cli::main`.
+name = "tradedesk-backtest"
+path = "src/bin/tradedesk-backtest.rs"
+required-features = ["cli"]
+
+[dev-dependencies]
+proptest = "1.11"
+# Writes the synthetic .csv.zst cache the CLI tests read (under CARGO_TARGET_TMPDIR).
+zstd.workspace = true
+tempfile.workspace = true
+# The CLI's end-to-end tests run the built binary.
+assert_cmd = "2"
+predicates = "3"
+
+[lints]
+workspace = true
