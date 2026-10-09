@@ -1,0 +1,2 @@
+codecrew: "2.1" # protocol version (SPEC.md §5): a different major is refused; not the CLI release
+hub: radiusred/trading-hub
