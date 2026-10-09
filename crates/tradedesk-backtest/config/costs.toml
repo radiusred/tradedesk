@@ -1,0 +1,347 @@
+# tradedesk-backtest venue cost configuration (task #30, M1-R2 / M1-R3; figures sourced in task #58,
+# M2-R1).
+#
+# Loaded by `CostConfig::builtin()`; a run may load its own file with the same schema via
+# `CostConfig::from_path`. Unknown fields are a load error. See the crate README,
+# "Costs and financing", for the arithmetic.
+#
+# Units:
+#   raw price   = the number on disk in the market-data cache
+#   quote price = raw price x raw_scale
+#   pip / point = pip_size in quote price; spread.pips, slippage.points and
+#                 divergence_tolerance are in pips/points
+#   commission  = account currency (GBP)
+#   rates       = annual fractions, positive = charged to the trader, negative = credited
+#
+# Provenance: each cost component (spread, slippage, commission, financing, carry) carries
+# its own `source` and a status:
+#   verified     placeholder = false: a published venue figure; the source names the
+#                page, its URL and the date it was read.
+#   placeholder  placeholder = true: an assumption or stand-in. A run with one is never
+#                costed. None remains below.
+#   excluded     excluded = true + reason: the venue publishes no figure, so the component
+#                charges nothing. An excluded spread or commission makes the venue x
+#                instrument uncosted; excluded slippage, financing or carry leaves results
+#                costed and lists what they omit.
+# Every run records its venue's placeholders, exclusions, minimum spreads and a per-
+# instrument `costed` flag in its metadata.
+#
+# Spreads: `basis` is "average" (the venue's average over a stated period) or "minimum"
+# (a minimum, "from" or standard figure: results are a lower bound on spread cost). An
+# optional `schedule` of local [from, to) windows in `tz` sets the spread by time of day;
+# `pips` applies outside every window (issue #52).
+#
+# Carry: the benchmark-rate or tom-next part of overnight funding. It is not modelled (no
+# rate history), so it is excluded everywhere: costed results charge each venue's annual
+# admin fee to longs and shorts alike. Against the venue, a long is under-charged by the
+# benchmark rate, a short is over-charged by it (an index short is normally credited
+# benchmark minus fee), and the FX/gold interest differential (a credit or a debit) is
+# missing.
+#
+# Venue cost is never the Dukascopy ask - bid (Decision on issue #28): the fill is the
+# configured price side +/- half the `spread` below, +/- slippage, then commission.
+
+# ---------------------------------------------------------------------------------------
+# Instruments: venue-independent units.
+#
+# raw_scale verified against the cache on 2026-10-06: EURUSD 11036.6 = 1.10366,
+# GBPJPY 17960.1 = 179.601, XAUUSD 206362.5 = $2063.625 (cents), USA500IDXUSD 4774.361
+# points, DEUIDXEUR 17901.597 points.
+#
+# divergence_tolerance: largest bar |ask - bid| (pips/points) a fill accepts. Set at
+# about 2-3x the largest open/close spread measured in the cache 2020-2026 (EURUSD 33.1,
+# GBPJPY 99.5, XAUUSD 1492.7, USA500IDXUSD 7.3, DEUIDXEUR 30.0), so real rollover and
+# news spikes pass and a scale or side corruption (orders of magnitude) fails.
+# ---------------------------------------------------------------------------------------
+
+[instruments.EURUSD]
+asset_class = "fx"
+quote_currency = "USD"
+raw_scale = 0.0001
+pip_size = 0.0001
+divergence_tolerance = 100.0
+
+[instruments.GBPJPY]
+asset_class = "fx"
+quote_currency = "JPY"
+raw_scale = 0.01
+pip_size = 0.01
+divergence_tolerance = 300.0
+
+[instruments.XAUUSD]
+asset_class = "metal"
+quote_currency = "USD"
+raw_scale = 0.01
+pip_size = 0.01          # $0.01: IG and Pepperstone quote gold spreads in dollars (0.3 = 30 pips)
+divergence_tolerance = 3000.0
+
+[instruments.USA500IDXUSD]
+asset_class = "index"
+quote_currency = "USD"
+raw_scale = 1.0
+pip_size = 1.0
+divergence_tolerance = 20.0
+
+[instruments.DEUIDXEUR]
+asset_class = "index"
+quote_currency = "EUR"
+raw_scale = 1.0
+pip_size = 1.0
+divergence_tolerance = 60.0
+
+# ---------------------------------------------------------------------------------------
+# IG, UK spread bet. Every page read 2026-10-07.
+#
+# Rollover 22:00 Europe/London (moves with BST). IG "What is overnight funding, how is it
+# charged and how is it calculated?",
+# https://www.ig.com/uk/help-and-support/articles/681712-what-is-overnight-funding-how-is-it-charged-and-how-is-it-calculated
+#   "For forex and spot metals deals, we charge the tom-next rate plus an admin fee of
+#    1.5%." Index spread bet: "Bet size x price x (3.4% admin fee +/- SONIA%) / 365",
+#   "365-day divisor used for the FTSE 100 and other GBP, SGD and ZAR denominated markets.
+#    360-day divisor used for all other markets." Weekend: Wednesday for forex (T+2),
+#   Friday otherwise (Decision on #30, unchanged).
+#   The page states no divisor for the FX/metals admin fee; its own rule for non-GBP
+#   markets (360) is applied, the larger daily charge.
+#   Two IG product-details notes disagree with the 1.5% for spot gold (commodities page
+#   note 3: "admin fee of 1% per annum"; note 5a: "0.8% per annum") and the forex page
+#   note 6 gives "0.0022% per day" (about 0.8% a year). The dedicated funding page, the
+#   highest figure, is used (Decision on #58).
+#
+# Spreads (Decision on #58 resolving #52):
+#   FX: IG "Forex spread betting product details",
+#   https://www.ig.com/uk/help-and-support/articles/681881-forex-spread-betting-product-details
+#   gives per pair a minimum spread, an average 00:00-21:00 GMT and an average "Monday
+#   00:00 - Friday 22:00 GMT for the 12 weeks ending 8th January 2021". The all-hours
+#   average is used. (The same table, with the same figures, is IG's forex CFD product
+#   details, where it sits under "Major" spot pairs.)
+#   Indices: IG "Spread bet Indices product details",
+#   https://www.ig.com/uk/help-and-support/articles/682128-spread-bet-indices-product-details
+#   publishes the DFB spread by time period (London time); used as a schedule.
+#   Spot gold: IG "Commodities spread bet product details",
+#   https://www.ig.com/uk/help-and-support/articles/681833-commodities-spread-bet-product-details
+#   "Standard spread" 0.3 (one point = $1/oz), with no average or time periods.
+#
+# Commission: IG "What are the fees and costs of spread betting and CFD trading?",
+# https://www.ig.com/uk/help-and-support/articles/681705-what-are-the-fees-and-costs-of-spread-betting-and-cfd-trading
+#   "Our spread charges apply to trades for all markets except CFD share trading, where a
+#    commission is charged instead"; "Commissions are charged when trading shares using a
+#    CFD account".
+# Slippage: neither page above, nor IG "Costs and Charges on Spread Bets, CFDs, and US
+# Options and Futures" (https://www.ig.com/uk/charges), publishes a
+# slippage figure.
+# ---------------------------------------------------------------------------------------
+
+[venues.ig_spread_bet]
+name = "IG spread bet"
+product = "spread_bet"
+rollover = { tz = "Europe/London", time = "22:00" }
+weekend.fx = { triple_day = "wednesday", days_on_triple = 3 }
+weekend.metal = { triple_day = "friday", days_on_triple = 3 }
+weekend.index = { triple_day = "friday", days_on_triple = 3 }
+
+[venues.ig_spread_bet.instruments.EURUSD]
+price_side = "mid"
+spread = { pips = 1.04, basis = "average", placeholder = false, source = "IG Forex spread betting product details, https://www.ig.com/uk/help-and-support/articles/681881-forex-spread-betting-product-details, read 2026-10-07: EUR/USD average spread 1.04 (Mon 00:00-Fri 22:00 GMT, 12 weeks to 2021-01-08); minimum 0.6, 00:00-21:00 GMT average 0.85" }
+slippage = { placeholder = false, excluded = true, reason = "no venue-published slippage figure: no slippage is charged, so costed results omit it", source = "IG What are the fees and costs of spread betting and CFD trading?, https://www.ig.com/uk/help-and-support/articles/681705-what-are-the-fees-and-costs-of-spread-betting-and-cfd-trading, read 2026-10-07: spreads, commission and funding only" }
+commission = { placeholder = false, source = "IG What are the fees and costs of spread betting and CFD trading?, https://www.ig.com/uk/help-and-support/articles/681705-what-are-the-fees-and-costs-of-spread-betting-and-cfd-trading, read 2026-10-07: commission only on CFD share trading" }
+financing = { long_rate = 0.015, short_rate = 0.015, day_count = 360, placeholder = false, source = "IG What is overnight funding, how is it charged and how is it calculated?, https://www.ig.com/uk/help-and-support/articles/681712-what-is-overnight-funding-how-is-it-charged-and-how-is-it-calculated, read 2026-10-07: forex admin fee 1.5%; divisor 360 per the page's non-GBP rule" }
+carry = { placeholder = false, excluded = true, reason = "the tom-next rate has no history in the config: costed results omit the EUR/USD interest differential (a credit or a debit)", source = "IG What is overnight funding, how is it charged and how is it calculated?, https://www.ig.com/uk/help-and-support/articles/681712-what-is-overnight-funding-how-is-it-charged-and-how-is-it-calculated, read 2026-10-07: 'the tom-next rate plus an admin fee of 1.5%'" }
+
+[venues.ig_spread_bet.instruments.GBPJPY]
+price_side = "mid"
+spread = { pips = 3.86, basis = "average", placeholder = false, source = "IG Forex spread betting product details, https://www.ig.com/uk/help-and-support/articles/681881-forex-spread-betting-product-details, read 2026-10-07: GBP/JPY average spread 3.86 (Mon 00:00-Fri 22:00 GMT, 12 weeks to 2021-01-08); minimum 2.5, 00:00-21:00 GMT average 3.17" }
+slippage = { placeholder = false, excluded = true, reason = "no venue-published slippage figure: no slippage is charged, so costed results omit it", source = "IG What are the fees and costs of spread betting and CFD trading?, https://www.ig.com/uk/help-and-support/articles/681705-what-are-the-fees-and-costs-of-spread-betting-and-cfd-trading, read 2026-10-07: spreads, commission and funding only" }
+commission = { placeholder = false, source = "IG What are the fees and costs of spread betting and CFD trading?, https://www.ig.com/uk/help-and-support/articles/681705-what-are-the-fees-and-costs-of-spread-betting-and-cfd-trading, read 2026-10-07: commission only on CFD share trading" }
+financing = { long_rate = 0.015, short_rate = 0.015, day_count = 360, placeholder = false, source = "IG What is overnight funding, how is it charged and how is it calculated?, https://www.ig.com/uk/help-and-support/articles/681712-what-is-overnight-funding-how-is-it-charged-and-how-is-it-calculated, read 2026-10-07: forex admin fee 1.5%; divisor 360 per the page's non-GBP rule" }
+carry = { placeholder = false, excluded = true, reason = "the tom-next rate has no history in the config: costed results omit the GBP/JPY interest differential (a credit or a debit)", source = "IG What is overnight funding, how is it charged and how is it calculated?, https://www.ig.com/uk/help-and-support/articles/681712-what-is-overnight-funding-how-is-it-charged-and-how-is-it-calculated, read 2026-10-07: 'the tom-next rate plus an admin fee of 1.5%'" }
+
+[venues.ig_spread_bet.instruments.XAUUSD]
+price_side = "mid"
+spread = { pips = 30.0, basis = "minimum", placeholder = false, source = "IG Commodities spread bet product details, https://www.ig.com/uk/help-and-support/articles/681833-commodities-spread-bet-product-details, read 2026-10-07: Spot Gold standard spread 0.3 ($0.30 = 30 x $0.01); no average or time periods published; IG's charges page calls 0.3 the minimum" }
+slippage = { placeholder = false, excluded = true, reason = "no venue-published slippage figure: no slippage is charged, so costed results omit it", source = "IG What are the fees and costs of spread betting and CFD trading?, https://www.ig.com/uk/help-and-support/articles/681705-what-are-the-fees-and-costs-of-spread-betting-and-cfd-trading, read 2026-10-07: spreads, commission and funding only" }
+commission = { placeholder = false, source = "IG What are the fees and costs of spread betting and CFD trading?, https://www.ig.com/uk/help-and-support/articles/681705-what-are-the-fees-and-costs-of-spread-betting-and-cfd-trading, read 2026-10-07: commission only on CFD share trading" }
+financing = { long_rate = 0.015, short_rate = 0.015, day_count = 360, placeholder = false, source = "IG What is overnight funding, how is it charged and how is it calculated?, https://www.ig.com/uk/help-and-support/articles/681712-what-is-overnight-funding-how-is-it-charged-and-how-is-it-calculated, read 2026-10-07: spot metals admin fee 1.5% (product-details notes give 1% and 0.8%; the higher is used); divisor 360" }
+carry = { placeholder = false, excluded = true, reason = "the tom-next rate has no history in the config: costed results omit the gold/USD carry (a credit or a debit)", source = "IG What is overnight funding, how is it charged and how is it calculated?, https://www.ig.com/uk/help-and-support/articles/681712-what-is-overnight-funding-how-is-it-charged-and-how-is-it-calculated, read 2026-10-07: 'the tom-next rate plus an admin fee of 1.5%'" }
+
+[venues.ig_spread_bet.instruments.USA500IDXUSD]
+price_side = "mid"
+slippage = { placeholder = false, excluded = true, reason = "no venue-published slippage figure: no slippage is charged, so costed results omit it", source = "IG What are the fees and costs of spread betting and CFD trading?, https://www.ig.com/uk/help-and-support/articles/681705-what-are-the-fees-and-costs-of-spread-betting-and-cfd-trading, read 2026-10-07: spreads, commission and funding only" }
+commission = { placeholder = false, source = "IG What are the fees and costs of spread betting and CFD trading?, https://www.ig.com/uk/help-and-support/articles/681705-what-are-the-fees-and-costs-of-spread-betting-and-cfd-trading, read 2026-10-07: commission only on CFD share trading" }
+financing = { long_rate = 0.034, short_rate = 0.034, day_count = 360, placeholder = false, source = "IG What is overnight funding, how is it charged and how is it calculated?, https://www.ig.com/uk/help-and-support/articles/681712-what-is-overnight-funding-how-is-it-charged-and-how-is-it-calculated, read 2026-10-07: index spread bet admin fee 3.4%, 360-day divisor for non-GBP markets" }
+carry = { placeholder = false, excluded = true, reason = "the benchmark rate has no history in the config: costed results charge the 3.4% fee alone, so longs miss the benchmark charge and shorts miss its credit", source = "IG What is overnight funding, how is it charged and how is it calculated?, https://www.ig.com/uk/help-and-support/articles/681712-what-is-overnight-funding-how-is-it-charged-and-how-is-it-calculated, read 2026-10-07: '(3.4% admin fee +/- SONIA%)'" }
+
+[venues.ig_spread_bet.instruments.USA500IDXUSD.spread]
+# US 500 DFB, London time: 14.30-21.00 0.4; 22.00-23.00 1.5; otherwise ("21.00-14.30") 0.6.
+pips = 0.6
+basis = "minimum"
+tz = "Europe/London"
+schedule = [
+    { from = "14:30", to = "21:00", pips = 0.4 },
+    { from = "22:00", to = "23:00", pips = 1.5 },
+]
+placeholder = false
+source = "IG Spread bet Indices product details, https://www.ig.com/uk/help-and-support/articles/682128-spread-bet-indices-product-details, read 2026-10-07: US 500 DFB available spread by time period (London); IG's charges page gives the 0.4 as the minimum"
+
+[venues.ig_spread_bet.instruments.DEUIDXEUR]
+price_side = "mid"
+slippage = { placeholder = false, excluded = true, reason = "no venue-published slippage figure: no slippage is charged, so costed results omit it", source = "IG What are the fees and costs of spread betting and CFD trading?, https://www.ig.com/uk/help-and-support/articles/681705-what-are-the-fees-and-costs-of-spread-betting-and-cfd-trading, read 2026-10-07: spreads, commission and funding only" }
+commission = { placeholder = false, source = "IG What are the fees and costs of spread betting and CFD trading?, https://www.ig.com/uk/help-and-support/articles/681705-what-are-the-fees-and-costs-of-spread-betting-and-cfd-trading, read 2026-10-07: commission only on CFD share trading" }
+financing = { long_rate = 0.034, short_rate = 0.034, day_count = 360, placeholder = false, source = "IG What is overnight funding, how is it charged and how is it calculated?, https://www.ig.com/uk/help-and-support/articles/681712-what-is-overnight-funding-how-is-it-charged-and-how-is-it-calculated, read 2026-10-07: index spread bet admin fee 3.4%, 360-day divisor for non-GBP markets" }
+carry = { placeholder = false, excluded = true, reason = "the benchmark rate has no history in the config: costed results charge the 3.4% fee alone, so longs miss the benchmark charge and shorts miss its credit", source = "IG What is overnight funding, how is it charged and how is it calculated?, https://www.ig.com/uk/help-and-support/articles/681712-what-is-overnight-funding-how-is-it-charged-and-how-is-it-calculated, read 2026-10-07: '(3.4% admin fee +/- SONIA%)'" }
+
+[venues.ig_spread_bet.instruments.DEUIDXEUR.spread]
+# Germany 40 DFB, London time: 00.15-07.00 4; 07.00-08.00 2; 08.00-16.30 1.2 on the
+# product-details page but 1.4 on IG's charges page (the wider is used, Decision on #58);
+# 16.30-21.00 2; 21.00-00.15 5. The windows cover the whole day, so `pips` is never used.
+pips = 5.0
+basis = "minimum"
+tz = "Europe/London"
+schedule = [
+    { from = "00:15", to = "07:00", pips = 4.0 },
+    { from = "07:00", to = "08:00", pips = 2.0 },
+    { from = "08:00", to = "16:30", pips = 1.4 },
+    { from = "16:30", to = "21:00", pips = 2.0 },
+    { from = "21:00", to = "00:15", pips = 5.0 },
+]
+placeholder = false
+source = "IG Spread bet Indices product details, https://www.ig.com/uk/help-and-support/articles/682128-spread-bet-indices-product-details, read 2026-10-07: Germany 40 DFB available spread by time period (London); peak 1.4 from IG Costs and Charges on Spread Bets, CFDs, and US Options and Futures, https://www.ig.com/uk/charges, read 2026-10-07 (Germany 40 minimum spread 1.4)"
+
+# ---------------------------------------------------------------------------------------
+# Pepperstone (UK, Pepperstone Limited). Rollover 17:00 America/New_York (moves with EDT).
+# Every page read 2026-10-07.
+#
+# Pepperstone "Trading costs and fees: spreads, commissions, swaps",
+# https://pepperstone.com/en-gb/trading/costs-and-fees
+#   Spread tables with "Razor min spread", "Standard min spread" and "Spread bet min
+#   spread" columns (minimums only). Spread betting: "There's no commission to pay." Swaps
+#   apply "on positions held past 5pm New York time (server time)"; the Wednesday triple
+#   for T+2 pairs; "Indices and stocks typically factor in weekend financing on a Friday".
+# Pepperstone "Costs and Charges Information & Examples", Pepperstone Ltd, version 9.0,
+# September 2026,
+# https://eu-assets.contentstack.com/v3/assets/bltd74737b907a31bbb/bltc19314db598b7ab0/UK_Legal_Costs_and_Charges.pdf
+#   Razor and Standard minimum and average spreads (EURUSD, GER40, Spot Gold); Razor
+#   commission on MT4/MT5 "GBP 2.25 (GBP 4.50 round turn)" per 1 lot (100 000 units),
+#   Spot Gold "100 ounces" per lot; "commissions on index ... markets are reflected in the
+#   spread, with no separate commission charge applied". Funding: FX and metals
+#   "calculated by using the TomNext rate ... with an admin fee", where the "Funding Fee is
+#   the TomNext rate annualised in points marked-up by up to 3%"; indices "(ARR +/- admin
+#   fee)/360", "Admin fee is 2.5%". Server time: "5pm New York (23:59 Server Time)".
+# Pepperstone "Costs and charges", Pepperstone Limited, March 2020,
+# https://files.pepperstone.com/Pepperstone-Limited-Cost-and-Charges.pdf
+#   Razor minimum and average spreads for every FX pair (GBPJPY), and index minimum
+#   spreads by session in server time (US500).
+# The two documents cover the Razor and Standard CFD accounts; the spread-bet product has
+# only the costs-and-fees page's minimums. The funding formulas are applied to both.
+#
+# Weekend: FX Wednesday, metals Wednesday (T+2), indices Friday (Decision on #30).
+# ---------------------------------------------------------------------------------------
+
+[venues.pepperstone_spread_bet]
+name = "Pepperstone spread bet"
+product = "spread_bet"
+rollover = { tz = "America/New_York", time = "17:00" }
+weekend.fx = { triple_day = "wednesday", days_on_triple = 3 }
+weekend.metal = { triple_day = "wednesday", days_on_triple = 3 }
+weekend.index = { triple_day = "friday", days_on_triple = 3 }
+
+[venues.pepperstone_spread_bet.instruments.EURUSD]
+price_side = "mid"
+spread = { pips = 0.5, basis = "minimum", placeholder = false, source = "Pepperstone Trading costs and fees, https://pepperstone.com/en-gb/trading/costs-and-fees, read 2026-10-07: EURUSD spread bet min spread 0.5; no spread-bet average is published" }
+slippage = { placeholder = false, excluded = true, reason = "no venue-published slippage figure: no slippage is charged, so costed results omit it", source = "Pepperstone Costs and Charges Information & Examples (Sept 2026), https://eu-assets.contentstack.com/v3/assets/bltd74737b907a31bbb/bltc19314db598b7ab0/UK_Legal_Costs_and_Charges.pdf, read 2026-10-07: spreads, commissions and funding only" }
+commission = { placeholder = false, source = "Pepperstone Trading costs and fees, https://pepperstone.com/en-gb/trading/costs-and-fees, read 2026-10-07: spread betting 'There's no commission to pay'" }
+financing = { long_rate = 0.0, short_rate = 0.0, day_count = 360, placeholder = false, excluded = true, reason = "Pepperstone's FX funding fee is a mark-up of up to 3% on the tom-next points, not an annual rate, so it cannot be charged without the tom-next rate: costed results omit it", source = "Pepperstone Costs and Charges Information & Examples (Sept 2026), https://eu-assets.contentstack.com/v3/assets/bltd74737b907a31bbb/bltc19314db598b7ab0/UK_Legal_Costs_and_Charges.pdf, read 2026-10-07: 'Funding Fee is the TomNext rate annualised in points marked-up by up to 3%'" }
+carry = { placeholder = false, excluded = true, reason = "the tom-next rate has no history in the config: costed results omit the EUR/USD interest differential (a credit or a debit)", source = "Pepperstone Costs and Charges Information & Examples (Sept 2026), https://eu-assets.contentstack.com/v3/assets/bltd74737b907a31bbb/bltc19314db598b7ab0/UK_Legal_Costs_and_Charges.pdf, read 2026-10-07: swap 'calculated by using the TomNext rate'" }
+
+[venues.pepperstone_spread_bet.instruments.GBPJPY]
+price_side = "mid"
+spread = { pips = 0.0, placeholder = false, excluded = true, reason = "Pepperstone publishes no GBPJPY spread-bet spread (the costs-and-fees table lists six other pairs; the GBP/JPY market page shows only a live quote): runs charge no spread and are never reported as costed", source = "Pepperstone Trading costs and fees, https://pepperstone.com/en-gb/trading/costs-and-fees, read 2026-10-07; Pepperstone GBP/JPY market page, https://pepperstone.com/en-gb/markets/forex/gbp-jpy, read 2026-10-07" }
+slippage = { placeholder = false, excluded = true, reason = "no venue-published slippage figure: no slippage is charged, so costed results omit it", source = "Pepperstone Costs and Charges Information & Examples (Sept 2026), https://eu-assets.contentstack.com/v3/assets/bltd74737b907a31bbb/bltc19314db598b7ab0/UK_Legal_Costs_and_Charges.pdf, read 2026-10-07: spreads, commissions and funding only" }
+commission = { placeholder = false, source = "Pepperstone Trading costs and fees, https://pepperstone.com/en-gb/trading/costs-and-fees, read 2026-10-07: spread betting 'There's no commission to pay'" }
+financing = { long_rate = 0.0, short_rate = 0.0, day_count = 360, placeholder = false, excluded = true, reason = "Pepperstone's FX funding fee is a mark-up of up to 3% on the tom-next points, not an annual rate, so it cannot be charged without the tom-next rate: costed results omit it", source = "Pepperstone Costs and Charges Information & Examples (Sept 2026), https://eu-assets.contentstack.com/v3/assets/bltd74737b907a31bbb/bltc19314db598b7ab0/UK_Legal_Costs_and_Charges.pdf, read 2026-10-07: 'Funding Fee is the TomNext rate annualised in points marked-up by up to 3%'" }
+carry = { placeholder = false, excluded = true, reason = "the tom-next rate has no history in the config: costed results omit the GBP/JPY interest differential (a credit or a debit)", source = "Pepperstone Costs and Charges Information & Examples (Sept 2026), https://eu-assets.contentstack.com/v3/assets/bltd74737b907a31bbb/bltc19314db598b7ab0/UK_Legal_Costs_and_Charges.pdf, read 2026-10-07: swap 'calculated by using the TomNext rate'" }
+
+[venues.pepperstone_spread_bet.instruments.XAUUSD]
+price_side = "mid"
+spread = { pips = 10.0, basis = "minimum", placeholder = false, source = "Pepperstone Trading costs and fees, https://pepperstone.com/en-gb/trading/costs-and-fees, read 2026-10-07: Spot Gold spread bet min spread 0.1 ($0.10 = 10 x $0.01); no spread-bet average is published" }
+slippage = { placeholder = false, excluded = true, reason = "no venue-published slippage figure: no slippage is charged, so costed results omit it", source = "Pepperstone Costs and Charges Information & Examples (Sept 2026), https://eu-assets.contentstack.com/v3/assets/bltd74737b907a31bbb/bltc19314db598b7ab0/UK_Legal_Costs_and_Charges.pdf, read 2026-10-07: spreads, commissions and funding only" }
+commission = { placeholder = false, source = "Pepperstone Trading costs and fees, https://pepperstone.com/en-gb/trading/costs-and-fees, read 2026-10-07: spread betting 'There's no commission to pay'" }
+financing = { long_rate = 0.0, short_rate = 0.0, day_count = 360, placeholder = false, excluded = true, reason = "Pepperstone's metals funding fee is a mark-up of up to 3% on the tom-next points, not an annual rate, so it cannot be charged without the tom-next rate: costed results omit it", source = "Pepperstone Costs and Charges Information & Examples (Sept 2026), https://eu-assets.contentstack.com/v3/assets/bltd74737b907a31bbb/bltc19314db598b7ab0/UK_Legal_Costs_and_Charges.pdf, read 2026-10-07: 'Forex and Metals' funding; 'Funding Fee is the TomNext rate annualised in points marked-up by up to 3%'" }
+carry = { placeholder = false, excluded = true, reason = "the tom-next rate has no history in the config: costed results omit the gold/USD carry (a credit or a debit)", source = "Pepperstone Costs and Charges Information & Examples (Sept 2026), https://eu-assets.contentstack.com/v3/assets/bltd74737b907a31bbb/bltc19314db598b7ab0/UK_Legal_Costs_and_Charges.pdf, read 2026-10-07: swap 'calculated by using the TomNext rate'" }
+
+[venues.pepperstone_spread_bet.instruments.USA500IDXUSD]
+price_side = "mid"
+spread = { pips = 0.4, basis = "minimum", placeholder = false, source = "Pepperstone Trading costs and fees, https://pepperstone.com/en-gb/trading/costs-and-fees, read 2026-10-07: US500 spread bet min spread 0.4; no spread-bet average is published" }
+slippage = { placeholder = false, excluded = true, reason = "no venue-published slippage figure: no slippage is charged, so costed results omit it", source = "Pepperstone Costs and Charges Information & Examples (Sept 2026), https://eu-assets.contentstack.com/v3/assets/bltd74737b907a31bbb/bltc19314db598b7ab0/UK_Legal_Costs_and_Charges.pdf, read 2026-10-07: spreads, commissions and funding only" }
+commission = { placeholder = false, source = "Pepperstone Trading costs and fees, https://pepperstone.com/en-gb/trading/costs-and-fees, read 2026-10-07: spread betting 'There's no commission to pay'" }
+financing = { long_rate = 0.025, short_rate = 0.025, day_count = 360, placeholder = false, source = "Pepperstone Costs and Charges Information & Examples (Sept 2026), https://eu-assets.contentstack.com/v3/assets/bltd74737b907a31bbb/bltc19314db598b7ab0/UK_Legal_Costs_and_Charges.pdf, read 2026-10-07: indices '(ARR +/- admin fee)/360', 'Admin fee is 2.5%'" }
+carry = { placeholder = false, excluded = true, reason = "the benchmark (ARR) has no history in the config: costed results charge the 2.5% fee alone, so longs miss the ARR charge and shorts miss its credit", source = "Pepperstone Costs and Charges Information & Examples (Sept 2026), https://eu-assets.contentstack.com/v3/assets/bltd74737b907a31bbb/bltc19314db598b7ab0/UK_Legal_Costs_and_Charges.pdf, read 2026-10-07: indices funding 'based on Alternative Reference Rate (ARR)'" }
+
+[venues.pepperstone_spread_bet.instruments.DEUIDXEUR]
+price_side = "mid"
+spread = { pips = 0.9, basis = "minimum", placeholder = false, source = "Pepperstone Trading costs and fees, https://pepperstone.com/en-gb/trading/costs-and-fees, read 2026-10-07: GER40 spread bet min spread 0.9; no spread-bet average is published" }
+slippage = { placeholder = false, excluded = true, reason = "no venue-published slippage figure: no slippage is charged, so costed results omit it", source = "Pepperstone Costs and Charges Information & Examples (Sept 2026), https://eu-assets.contentstack.com/v3/assets/bltd74737b907a31bbb/bltc19314db598b7ab0/UK_Legal_Costs_and_Charges.pdf, read 2026-10-07: spreads, commissions and funding only" }
+commission = { placeholder = false, source = "Pepperstone Trading costs and fees, https://pepperstone.com/en-gb/trading/costs-and-fees, read 2026-10-07: spread betting 'There's no commission to pay'" }
+financing = { long_rate = 0.025, short_rate = 0.025, day_count = 360, placeholder = false, source = "Pepperstone Costs and Charges Information & Examples (Sept 2026), https://eu-assets.contentstack.com/v3/assets/bltd74737b907a31bbb/bltc19314db598b7ab0/UK_Legal_Costs_and_Charges.pdf, read 2026-10-07: indices '(ARR +/- admin fee)/360', 'Admin fee is 2.5%'" }
+carry = { placeholder = false, excluded = true, reason = "the benchmark (ARR) has no history in the config: costed results charge the 2.5% fee alone, so longs miss the ARR charge and shorts miss its credit", source = "Pepperstone Costs and Charges Information & Examples (Sept 2026), https://eu-assets.contentstack.com/v3/assets/bltd74737b907a31bbb/bltc19314db598b7ab0/UK_Legal_Costs_and_Charges.pdf, read 2026-10-07: indices funding 'based on Alternative Reference Rate (ARR)'" }
+
+[venues.pepperstone_razor]
+name = "Pepperstone Razor (CFD)"
+product = "cfd"
+rollover = { tz = "America/New_York", time = "17:00" }
+weekend.fx = { triple_day = "wednesday", days_on_triple = 3 }
+weekend.metal = { triple_day = "wednesday", days_on_triple = 3 }
+weekend.index = { triple_day = "friday", days_on_triple = 3 }
+
+[venues.pepperstone_razor.instruments.EURUSD]
+price_side = "mid"
+spread = { pips = 0.1, basis = "average", placeholder = false, source = "Pepperstone Costs and Charges Information & Examples (Sept 2026), https://eu-assets.contentstack.com/v3/assets/bltd74737b907a31bbb/bltc19314db598b7ab0/UK_Legal_Costs_and_Charges.pdf, read 2026-10-07: EURUSD Razor average spread 0.1 (minimum 0.00)" }
+slippage = { placeholder = false, excluded = true, reason = "no venue-published slippage figure: no slippage is charged, so costed results omit it", source = "Pepperstone Costs and Charges Information & Examples (Sept 2026), https://eu-assets.contentstack.com/v3/assets/bltd74737b907a31bbb/bltc19314db598b7ab0/UK_Legal_Costs_and_Charges.pdf, read 2026-10-07: spreads, commissions and funding only" }
+commission = { per_unit_per_fill = 0.0000225, placeholder = false, source = "Pepperstone Costs and Charges Information & Examples (Sept 2026), https://eu-assets.contentstack.com/v3/assets/bltd74737b907a31bbb/bltc19314db598b7ab0/UK_Legal_Costs_and_Charges.pdf, read 2026-10-07: MT4/MT5 Razor, GBP account, 'GBP 2.25 (GBP 4.50 round turn)' per 1 lot (100 000 units)" }
+financing = { long_rate = 0.0, short_rate = 0.0, day_count = 360, placeholder = false, excluded = true, reason = "Pepperstone's FX funding fee is a mark-up of up to 3% on the tom-next points, not an annual rate, so it cannot be charged without the tom-next rate: costed results omit it", source = "Pepperstone Costs and Charges Information & Examples (Sept 2026), https://eu-assets.contentstack.com/v3/assets/bltd74737b907a31bbb/bltc19314db598b7ab0/UK_Legal_Costs_and_Charges.pdf, read 2026-10-07: 'Funding Fee is the TomNext rate annualised in points marked-up by up to 3%'" }
+carry = { placeholder = false, excluded = true, reason = "the tom-next rate has no history in the config: costed results omit the EUR/USD interest differential (a credit or a debit)", source = "Pepperstone Costs and Charges Information & Examples (Sept 2026), https://eu-assets.contentstack.com/v3/assets/bltd74737b907a31bbb/bltc19314db598b7ab0/UK_Legal_Costs_and_Charges.pdf, read 2026-10-07: swap 'calculated by using the TomNext rate'" }
+
+[venues.pepperstone_razor.instruments.GBPJPY]
+price_side = "mid"
+spread = { pips = 1.2, basis = "average", placeholder = false, source = "Pepperstone Costs and charges (March 2020), https://files.pepperstone.com/Pepperstone-Limited-Cost-and-Charges.pdf, read 2026-10-07: GBPJPY Razor average spread 1.20 (minimum 0.4); the September 2026 edition lists no GBPJPY figure" }
+slippage = { placeholder = false, excluded = true, reason = "no venue-published slippage figure: no slippage is charged, so costed results omit it", source = "Pepperstone Costs and Charges Information & Examples (Sept 2026), https://eu-assets.contentstack.com/v3/assets/bltd74737b907a31bbb/bltc19314db598b7ab0/UK_Legal_Costs_and_Charges.pdf, read 2026-10-07: spreads, commissions and funding only" }
+commission = { per_unit_per_fill = 0.0000225, placeholder = false, source = "Pepperstone Costs and Charges Information & Examples (Sept 2026), https://eu-assets.contentstack.com/v3/assets/bltd74737b907a31bbb/bltc19314db598b7ab0/UK_Legal_Costs_and_Charges.pdf, read 2026-10-07: MT4/MT5 Razor, GBP account, 'GBP 2.25 (GBP 4.50 round turn)' per 1 lot (100 000 units)" }
+financing = { long_rate = 0.0, short_rate = 0.0, day_count = 360, placeholder = false, excluded = true, reason = "Pepperstone's FX funding fee is a mark-up of up to 3% on the tom-next points, not an annual rate, so it cannot be charged without the tom-next rate: costed results omit it", source = "Pepperstone Costs and Charges Information & Examples (Sept 2026), https://eu-assets.contentstack.com/v3/assets/bltd74737b907a31bbb/bltc19314db598b7ab0/UK_Legal_Costs_and_Charges.pdf, read 2026-10-07: 'Funding Fee is the TomNext rate annualised in points marked-up by up to 3%'" }
+carry = { placeholder = false, excluded = true, reason = "the tom-next rate has no history in the config: costed results omit the GBP/JPY interest differential (a credit or a debit)", source = "Pepperstone Costs and Charges Information & Examples (Sept 2026), https://eu-assets.contentstack.com/v3/assets/bltd74737b907a31bbb/bltc19314db598b7ab0/UK_Legal_Costs_and_Charges.pdf, read 2026-10-07: swap 'calculated by using the TomNext rate'" }
+
+[venues.pepperstone_razor.instruments.XAUUSD]
+price_side = "mid"
+spread = { pips = 22.0, basis = "average", placeholder = false, source = "Pepperstone Costs and Charges Information & Examples (Sept 2026), https://eu-assets.contentstack.com/v3/assets/bltd74737b907a31bbb/bltc19314db598b7ab0/UK_Legal_Costs_and_Charges.pdf, read 2026-10-07: Spot Gold ($) XAUUSD average spread 0.22 (minimum 0.1), account not named; Razor's advertised minimum is 0.08" }
+slippage = { placeholder = false, excluded = true, reason = "no venue-published slippage figure: no slippage is charged, so costed results omit it", source = "Pepperstone Costs and Charges Information & Examples (Sept 2026), https://eu-assets.contentstack.com/v3/assets/bltd74737b907a31bbb/bltc19314db598b7ab0/UK_Legal_Costs_and_Charges.pdf, read 2026-10-07: spreads, commissions and funding only" }
+commission = { per_unit_per_fill = 0.0225, placeholder = false, source = "Pepperstone Costs and Charges Information & Examples (Sept 2026), https://eu-assets.contentstack.com/v3/assets/bltd74737b907a31bbb/bltc19314db598b7ab0/UK_Legal_Costs_and_Charges.pdf, read 2026-10-07: MT4/MT5 Razor spot gold GBP 4.50 round trip per lot (GBP 2.25 per side); Spot Gold contract size '100 ounces' per lot" }
+financing = { long_rate = 0.0, short_rate = 0.0, day_count = 360, placeholder = false, excluded = true, reason = "Pepperstone's metals funding fee is a mark-up of up to 3% on the tom-next points, not an annual rate, so it cannot be charged without the tom-next rate: costed results omit it", source = "Pepperstone Costs and Charges Information & Examples (Sept 2026), https://eu-assets.contentstack.com/v3/assets/bltd74737b907a31bbb/bltc19314db598b7ab0/UK_Legal_Costs_and_Charges.pdf, read 2026-10-07: 'Forex and Metals' funding; 'Funding Fee is the TomNext rate annualised in points marked-up by up to 3%'" }
+carry = { placeholder = false, excluded = true, reason = "the tom-next rate has no history in the config: costed results omit the gold/USD carry (a credit or a debit)", source = "Pepperstone Costs and Charges Information & Examples (Sept 2026), https://eu-assets.contentstack.com/v3/assets/bltd74737b907a31bbb/bltc19314db598b7ab0/UK_Legal_Costs_and_Charges.pdf, read 2026-10-07: swap 'calculated by using the TomNext rate'" }
+
+[venues.pepperstone_razor.instruments.USA500IDXUSD]
+price_side = "mid"
+slippage = { placeholder = false, excluded = true, reason = "no venue-published slippage figure: no slippage is charged, so costed results omit it", source = "Pepperstone Costs and Charges Information & Examples (Sept 2026), https://eu-assets.contentstack.com/v3/assets/bltd74737b907a31bbb/bltc19314db598b7ab0/UK_Legal_Costs_and_Charges.pdf, read 2026-10-07: spreads, commissions and funding only" }
+commission = { placeholder = false, source = "Pepperstone Costs and Charges Information & Examples (Sept 2026), https://eu-assets.contentstack.com/v3/assets/bltd74737b907a31bbb/bltc19314db598b7ab0/UK_Legal_Costs_and_Charges.pdf, read 2026-10-07: 'commissions on index ... markets are reflected in the spread, with no separate commission charge applied'" }
+financing = { long_rate = 0.025, short_rate = 0.025, day_count = 360, placeholder = false, source = "Pepperstone Costs and Charges Information & Examples (Sept 2026), https://eu-assets.contentstack.com/v3/assets/bltd74737b907a31bbb/bltc19314db598b7ab0/UK_Legal_Costs_and_Charges.pdf, read 2026-10-07: indices '(ARR +/- admin fee)/360', 'Admin fee is 2.5%'" }
+carry = { placeholder = false, excluded = true, reason = "the benchmark (ARR) has no history in the config: costed results charge the 2.5% fee alone, so longs miss the ARR charge and shorts miss its credit", source = "Pepperstone Costs and Charges Information & Examples (Sept 2026), https://eu-assets.contentstack.com/v3/assets/bltd74737b907a31bbb/bltc19314db598b7ab0/UK_Legal_Costs_and_Charges.pdf, read 2026-10-07: indices funding 'based on Alternative Reference Rate (ARR)'" }
+
+[venues.pepperstone_razor.instruments.USA500IDXUSD.spread]
+# US500 minimum spread by session, published in server time (GMT+2 in the document;
+# server time is New York + 7h: "5pm New York (23:59 Server Time)"), here in New York
+# time: 16:30-23:00 server = 09:30-16:00 NY 0.40; 00:00-01:00 server = 17:00-18:00 NY
+# 1.50; otherwise 0.60. The costs-and-fees page (2026) gives the same 0.4 Razor minimum.
+pips = 0.6
+basis = "minimum"
+tz = "America/New_York"
+schedule = [
+    { from = "09:30", to = "16:00", pips = 0.4 },
+    { from = "17:00", to = "18:00", pips = 1.5 },
+]
+placeholder = false
+source = "Pepperstone Costs and charges (March 2020), https://files.pepperstone.com/Pepperstone-Limited-Cost-and-Charges.pdf, read 2026-10-07: US500 minimum spread by session (server time); Pepperstone Trading costs and fees, https://pepperstone.com/en-gb/trading/costs-and-fees, read 2026-10-07: US500 Razor min spread 0.4"
+
+[venues.pepperstone_razor.instruments.DEUIDXEUR]
+price_side = "mid"
+spread = { pips = 1.2, basis = "average", placeholder = false, source = "Pepperstone Costs and Charges Information & Examples (Sept 2026), https://eu-assets.contentstack.com/v3/assets/bltd74737b907a31bbb/bltc19314db598b7ab0/UK_Legal_Costs_and_Charges.pdf, read 2026-10-07: GER40 average spread 1.2 (minimum 0.9)" }
+slippage = { placeholder = false, excluded = true, reason = "no venue-published slippage figure: no slippage is charged, so costed results omit it", source = "Pepperstone Costs and Charges Information & Examples (Sept 2026), https://eu-assets.contentstack.com/v3/assets/bltd74737b907a31bbb/bltc19314db598b7ab0/UK_Legal_Costs_and_Charges.pdf, read 2026-10-07: spreads, commissions and funding only" }
+commission = { placeholder = false, source = "Pepperstone Costs and Charges Information & Examples (Sept 2026), https://eu-assets.contentstack.com/v3/assets/bltd74737b907a31bbb/bltc19314db598b7ab0/UK_Legal_Costs_and_Charges.pdf, read 2026-10-07: 'commissions on index ... markets are reflected in the spread, with no separate commission charge applied'" }
+financing = { long_rate = 0.025, short_rate = 0.025, day_count = 360, placeholder = false, source = "Pepperstone Costs and Charges Information & Examples (Sept 2026), https://eu-assets.contentstack.com/v3/assets/bltd74737b907a31bbb/bltc19314db598b7ab0/UK_Legal_Costs_and_Charges.pdf, read 2026-10-07: indices '(ARR +/- admin fee)/360', 'Admin fee is 2.5%'" }
+carry = { placeholder = false, excluded = true, reason = "the benchmark (ARR) has no history in the config: costed results charge the 2.5% fee alone, so longs miss the ARR charge and shorts miss its credit", source = "Pepperstone Costs and Charges Information & Examples (Sept 2026), https://eu-assets.contentstack.com/v3/assets/bltd74737b907a31bbb/bltc19314db598b7ab0/UK_Legal_Costs_and_Charges.pdf, read 2026-10-07: indices funding 'based on Alternative Reference Rate (ARR)'" }

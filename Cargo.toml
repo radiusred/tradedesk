@@ -18,6 +18,7 @@
 resolver = "3"
 members = [
     "crates/tradedesk-data",
+    "crates/tradedesk-backtest",
 ]
 
 [workspace.package]
