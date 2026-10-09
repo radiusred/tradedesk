@@ -1,0 +1,65 @@
+# The Rust crates of tradedesk: the data layer and the backtester.
+#
+# Virtual manifest (no [package] section) beside the Python package, which keeps its own
+# `pyproject.toml`. The crates were cut from the tradedesk-miner workspace; see each
+# crate's manifest for what it holds. They are not published to crates.io
+# (`publish = false`) and carry their own version, independent of the Python package's.
+#
+# Resolver pin: "3" because edition 2024 implies resolver 3. Setting resolver = "2"
+# alongside edition = "2024" would silently disable the MSRV-aware resolver.
+#
+# Determinism note: the `serde_json` entry stays the bare string version "1" with no
+# `features = [...]` list. Enabling `preserve_order` would switch `serde_json::Map` from
+# BTreeMap-backed (sorted keys) to IndexMap-backed (insertion order), and the backtester
+# hashes canonical JSON into its trial ids. Enabling `float_roundtrip` would move pinned
+# goldens.
+
+[workspace]
+resolver = "3"
+members = [
+    "crates/tradedesk-data",
+]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.85"
+license = "Apache-2.0"
+
+[workspace.dependencies]
+serde              = { version = "1", features = ["derive"] }
+serde_json         = "1"  # NO features list: see the determinism note above
+schemars           = { version = "1", features = ["chrono04"] }
+chrono             = { version = "0.4", default-features = false, features = ["clock", "serde"] }
+thiserror          = "1"
+tracing            = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter", "fmt"] }
+clap               = { version = "4.5", features = ["derive", "env"] }
+blake3             = "1"
+# The bar cache's Arrow IPC format.
+arrow              = "58"
+csv                = "1.4"
+zstd               = "0.13"
+walkdir            = "2.5"
+tempfile           = "3"
+# The SIGINT handler of the backtester's command line.
+ctrlc              = "3.5"
+# The normal CDF and its inverse for the deflated Sharpe.
+statrs             = "0.17"
+# The sweep spec.
+toml               = "0.8"
+# The sweep runner's parallel cell fanout.
+rayon              = "1.10"
+# IANA zones for the venues' rollover calendars, so a DST change moves the rollover
+# instant with the venue's local clock.
+chrono-tz          = "0.10"
+
+[workspace.lints.rust]
+unsafe_code = "forbid"
+
+[workspace.lints.clippy]
+pedantic = { level = "warn", priority = -1 }
+
+[profile.release]
+lto = "thin"
+codegen-units = 1
