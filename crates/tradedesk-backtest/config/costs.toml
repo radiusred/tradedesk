@@ -46,12 +46,14 @@
 #
 # raw_scale verified against the cache on 2026-10-06: EURUSD 11036.6 = 1.10366,
 # GBPJPY 17960.1 = 179.601, XAUUSD 206362.5 = $2063.625 (cents), USA500IDXUSD 4774.361
-# points, DEUIDXEUR 17901.597 points.
+# points, DEUIDXEUR 17901.597 points. On 2026-10-12 (task #180): GBRIDXGBP 7738.175
+# points, JPNIDXJPY 33091.581 points, AUSIDXAUD 7609.001 points (2024-01-02 00:00 UTC ask).
 #
 # divergence_tolerance: largest bar |ask - bid| (pips/points) a fill accepts. Set at
 # about 2-3x the largest open/close spread measured in the cache 2020-2026 (EURUSD 33.1,
-# GBPJPY 99.5, XAUUSD 1492.7, USA500IDXUSD 7.3, DEUIDXEUR 30.0), so real rollover and
-# news spikes pass and a scale or side corruption (orders of magnitude) fails.
+# GBPJPY 99.5, XAUUSD 1492.7, USA500IDXUSD 7.3, DEUIDXEUR 30.0; measured 2026-10-12:
+# GBRIDXGBP 27.6, JPNIDXJPY 21.4, AUSIDXAUD 32.2), so real rollover and news spikes pass
+# and a scale or side corruption (orders of magnitude) fails.
 # ---------------------------------------------------------------------------------------
 
 [instruments.EURUSD]
@@ -89,8 +91,30 @@ raw_scale = 1.0
 pip_size = 1.0
 divergence_tolerance = 60.0
 
+[instruments.GBRIDXGBP]
+asset_class = "index"
+quote_currency = "GBP"
+raw_scale = 1.0
+pip_size = 1.0
+divergence_tolerance = 60.0
+
+[instruments.JPNIDXJPY]
+asset_class = "index"
+quote_currency = "JPY"
+raw_scale = 1.0
+pip_size = 1.0
+divergence_tolerance = 60.0
+
+[instruments.AUSIDXAUD]
+asset_class = "index"
+quote_currency = "AUD"
+raw_scale = 1.0
+pip_size = 1.0
+divergence_tolerance = 80.0
+
 # ---------------------------------------------------------------------------------------
-# IG, UK spread bet. Every page read 2026-10-07.
+# IG, UK spread bet. Every page read 2026-10-07; read again 2026-10-12 for GBRIDXGBP,
+# JPNIDXJPY and AUSIDXAUD (task #180).
 #
 # Rollover 22:00 Europe/London (moves with BST). IG "What is overnight funding, how is it
 # charged and how is it calculated?",
@@ -205,6 +229,82 @@ schedule = [
 ]
 placeholder = false
 source = "IG Spread bet Indices product details, https://www.ig.com/uk/help-and-support/articles/682128-spread-bet-indices-product-details, read 2026-10-07: Germany 40 DFB available spread by time period (London); peak 1.4 from IG Costs and Charges on Spread Bets, CFDs, and US Options and Futures, https://www.ig.com/uk/charges, read 2026-10-07 (Germany 40 minimum spread 1.4)"
+
+# GBRIDXGBP, JPNIDXJPY, AUSIDXAUD (task #180). The indices page, note 7a, gives the
+# interest adjustment "D = n x L x C x i / 365" with "a 365-day divisor for the FTSE 100
+# and other GBP, SGD and ZAR denominated markets, and a 360-day divisor for all others",
+# and "on Fridays open positions will be adjusted for 3 days funding". Note 1a: "Japan 225
+# is priced as a USD denominated contract" (360 either way). Note 7a also says an AUD
+# index is funded at 16.50 Sydney time; the venue has one rollover (22:00 London), so
+# AUSIDXAUD is charged at 22:00 London: the rate is IG's, the instant is not.
+
+[venues.ig_spread_bet.instruments.GBRIDXGBP]
+price_side = "mid"
+slippage = { placeholder = false, excluded = true, reason = "no venue-published slippage figure: no slippage is charged, so costed results omit it", source = "IG What are the fees and costs of spread betting and CFD trading?, https://www.ig.com/uk/help-and-support/articles/681705-what-are-the-fees-and-costs-of-spread-betting-and-cfd-trading, read 2026-10-12: spreads, commission and funding only" }
+commission = { placeholder = false, source = "IG What are the fees and costs of spread betting and CFD trading?, https://www.ig.com/uk/help-and-support/articles/681705-what-are-the-fees-and-costs-of-spread-betting-and-cfd-trading, read 2026-10-12: commission only on CFD share trading" }
+financing = { long_rate = 0.034, short_rate = 0.034, day_count = 365, placeholder = false, source = "IG What is overnight funding, how is it charged and how is it calculated?, https://www.ig.com/uk/help-and-support/articles/681712-what-is-overnight-funding-how-is-it-charged-and-how-is-it-calculated, read 2026-10-12: index spread bet admin fee 3.4%, 365-day divisor for the FTSE 100" }
+carry = { placeholder = false, excluded = true, reason = "the benchmark rate has no history in the config: costed results charge the 3.4% fee alone, so longs miss the benchmark charge and shorts miss its credit", source = "IG What is overnight funding, how is it charged and how is it calculated?, https://www.ig.com/uk/help-and-support/articles/681712-what-is-overnight-funding-how-is-it-charged-and-how-is-it-calculated, read 2026-10-12: '(3.4% admin fee +/- SONIA%)'" }
+
+[venues.ig_spread_bet.instruments.GBRIDXGBP.spread]
+# FTSE 100 DFB, London time: 07.00-08.00 2; 08.00-16.30 1; 16.30-21.00 2; 21.00-01.00 4;
+# 01.00-07.00 3. The windows cover the whole day, so `pips` is never used.
+pips = 4.0
+basis = "minimum"
+tz = "Europe/London"
+schedule = [
+    { from = "01:00", to = "07:00", pips = 3.0 },
+    { from = "07:00", to = "08:00", pips = 2.0 },
+    { from = "08:00", to = "16:30", pips = 1.0 },
+    { from = "16:30", to = "21:00", pips = 2.0 },
+    { from = "21:00", to = "01:00", pips = 4.0 },
+]
+placeholder = false
+source = "IG Spread bet Indices product details, https://www.ig.com/uk/help-and-support/articles/682128-spread-bet-indices-product-details, read 2026-10-12: FTSE 100 DFB available spread by time period (London); IG Costs and Charges on Spread Bets, CFDs, and US Options and Futures, https://www.ig.com/uk/charges, read 2026-10-12, gives the 1 as the FTSE 100 minimum"
+
+[venues.ig_spread_bet.instruments.JPNIDXJPY]
+price_side = "mid"
+slippage = { placeholder = false, excluded = true, reason = "no venue-published slippage figure: no slippage is charged, so costed results omit it", source = "IG What are the fees and costs of spread betting and CFD trading?, https://www.ig.com/uk/help-and-support/articles/681705-what-are-the-fees-and-costs-of-spread-betting-and-cfd-trading, read 2026-10-12: spreads, commission and funding only" }
+commission = { placeholder = false, source = "IG What are the fees and costs of spread betting and CFD trading?, https://www.ig.com/uk/help-and-support/articles/681705-what-are-the-fees-and-costs-of-spread-betting-and-cfd-trading, read 2026-10-12: commission only on CFD share trading" }
+financing = { long_rate = 0.034, short_rate = 0.034, day_count = 360, placeholder = false, source = "IG What is overnight funding, how is it charged and how is it calculated?, https://www.ig.com/uk/help-and-support/articles/681712-what-is-overnight-funding-how-is-it-charged-and-how-is-it-calculated, read 2026-10-12: index spread bet admin fee 3.4%, 360-day divisor for non-GBP markets" }
+carry = { placeholder = false, excluded = true, reason = "the benchmark rate has no history in the config: costed results charge the 3.4% fee alone, so longs miss the benchmark charge and shorts miss its credit", source = "IG What is overnight funding, how is it charged and how is it calculated?, https://www.ig.com/uk/help-and-support/articles/681712-what-is-overnight-funding-how-is-it-charged-and-how-is-it-calculated, read 2026-10-12: '(3.4% admin fee +/- relevant interest rate benchmark%)'" }
+
+[venues.ig_spread_bet.instruments.JPNIDXJPY.spread]
+# Japan 225 DFB, times marked "(GMT)" on the page: 23.00-00.30 15; 00.30-21.15 7;
+# 21.15-21.59 15; all other times (21.59-23.00) 30.
+pips = 30.0
+basis = "minimum"
+tz = "Etc/GMT"
+schedule = [
+    { from = "23:00", to = "00:30", pips = 15.0 },
+    { from = "00:30", to = "21:15", pips = 7.0 },
+    { from = "21:15", to = "21:59", pips = 15.0 },
+]
+placeholder = false
+source = "IG Spread bet Indices product details, https://www.ig.com/uk/help-and-support/articles/682128-spread-bet-indices-product-details, read 2026-10-12: Japan 225 DFB available spread by time period (GMT)"
+
+[venues.ig_spread_bet.instruments.AUSIDXAUD]
+price_side = "mid"
+slippage = { placeholder = false, excluded = true, reason = "no venue-published slippage figure: no slippage is charged, so costed results omit it", source = "IG What are the fees and costs of spread betting and CFD trading?, https://www.ig.com/uk/help-and-support/articles/681705-what-are-the-fees-and-costs-of-spread-betting-and-cfd-trading, read 2026-10-12: spreads, commission and funding only" }
+commission = { placeholder = false, source = "IG What are the fees and costs of spread betting and CFD trading?, https://www.ig.com/uk/help-and-support/articles/681705-what-are-the-fees-and-costs-of-spread-betting-and-cfd-trading, read 2026-10-12: commission only on CFD share trading" }
+financing = { long_rate = 0.034, short_rate = 0.034, day_count = 360, placeholder = false, source = "IG What is overnight funding, how is it charged and how is it calculated?, https://www.ig.com/uk/help-and-support/articles/681712-what-is-overnight-funding-how-is-it-charged-and-how-is-it-calculated, read 2026-10-12: index spread bet admin fee 3.4%, 360-day divisor for non-GBP markets; IG Spread bet Indices product details note 7a: AUD indices funded at 16.50 Sydney, charged here at the venue's 22:00 London rollover" }
+carry = { placeholder = false, excluded = true, reason = "the benchmark rate has no history in the config: costed results charge the 3.4% fee alone, so longs miss the benchmark charge and shorts miss its credit", source = "IG What is overnight funding, how is it charged and how is it calculated?, https://www.ig.com/uk/help-and-support/articles/681712-what-is-overnight-funding-how-is-it-charged-and-how-is-it-calculated, read 2026-10-12: '(3.4% admin fee +/- relevant interest rate benchmark%)'" }
+
+[venues.ig_spread_bet.instruments.AUSIDXAUD.spread]
+# Australia 200 DFB, times marked "(Sydney)" on the page: 09.50-10.00 2; 10.00-16.00 1;
+# 16.00-16.30 2; 17.10-08.00 3, which note 2a moves to 17.10-07.00 during US daylight
+# saving; all other times 4. The 17.10-07.00 window is used all year, so 07.00-08.00
+# charges the wider 4 (task #180 Decision).
+pips = 4.0
+basis = "minimum"
+tz = "Australia/Sydney"
+schedule = [
+    { from = "09:50", to = "10:00", pips = 2.0 },
+    { from = "10:00", to = "16:00", pips = 1.0 },
+    { from = "16:00", to = "16:30", pips = 2.0 },
+    { from = "17:10", to = "07:00", pips = 3.0 },
+]
+placeholder = false
+source = "IG Spread bet Indices product details, https://www.ig.com/uk/help-and-support/articles/682128-spread-bet-indices-product-details, read 2026-10-12: Australia 200 DFB available spread by time period (Sydney); note 2a: '17.10-07.00 (Sydney time)' during US daylight saving"
 
 # ---------------------------------------------------------------------------------------
 # Pepperstone (UK, Pepperstone Limited). Rollover 17:00 America/New_York (moves with EDT).

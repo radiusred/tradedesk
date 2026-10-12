@@ -1204,8 +1204,71 @@ mod tests {
         }
         assert_eq!(
             c.minimum_spreads("ig_spread_bet").unwrap(),
-            ["DEUIDXEUR", "USA500IDXUSD", "XAUUSD"]
+            [
+                "AUSIDXAUD",
+                "DEUIDXEUR",
+                "GBRIDXGBP",
+                "JPNIDXJPY",
+                "USA500IDXUSD",
+                "XAUUSD"
+            ]
         );
+    }
+
+    #[test]
+    fn builtin_costs_the_three_added_indices_on_ig_only() {
+        // Task #180 (M2-R3): FTSE 100, Japan 225 and Australia 200 on the IG venue.
+        let c = CostConfig::builtin();
+        let quote = |s: &str, raw: f64| c.instrument(s).unwrap().to_quote(raw);
+        // Verified against the market-data cache on 2026-10-12.
+        assert!((quote("GBRIDXGBP", 7738.175) - 7738.175).abs() < 1e-12);
+        assert!((quote("JPNIDXJPY", 33091.581) - 33091.581).abs() < 1e-12);
+        assert!((quote("AUSIDXAUD", 7609.001) - 7609.001).abs() < 1e-12);
+        assert!(c.placeholders("ig_spread_bet").unwrap().is_empty());
+        let costed = c.costed("ig_spread_bet").unwrap();
+        let ig = c.venue("ig_spread_bet").unwrap();
+        for (symbol, currency, tz, day_count) in [
+            ("GBRIDXGBP", "GBP", chrono_tz::Europe::London, 365),
+            ("JPNIDXJPY", "JPY", chrono_tz::Etc::GMT, 360),
+            ("AUSIDXAUD", "AUD", chrono_tz::Australia::Sydney, 360),
+        ] {
+            let spec = c.instrument(symbol).unwrap();
+            assert_eq!(spec.asset_class, AssetClass::Index, "{symbol}");
+            assert_eq!(spec.quote_currency, currency, "{symbol}");
+            assert!(costed[symbol], "{symbol} is not costed on IG");
+            let cost = &ig.instruments[symbol];
+            assert_eq!(cost.spread.tz, Some(tz), "{symbol}");
+            assert_eq!(cost.spread.basis, Some(SpreadBasis::Minimum), "{symbol}");
+            assert_eq!(cost.financing.long_rate, 0.034, "{symbol}");
+            assert_eq!(cost.financing.short_rate, 0.034, "{symbol}");
+            assert_eq!(cost.financing.day_count, day_count, "{symbol}");
+            for p in cost.provenance() {
+                let at = format!("{symbol} {:?}", p.component);
+                assert_ne!(p.status, ProvenanceStatus::Placeholder, "{at}");
+                assert!(p.source.contains("https://www.ig.com/uk/"), "{at}");
+                assert!(p.source.contains("read 2026-10-12"), "{at}: {}", p.source);
+                if p.status == ProvenanceStatus::Excluded {
+                    assert!(p.reason.is_some_and(|r| !r.is_empty()), "{at}");
+                }
+            }
+            for venue in ["pepperstone_spread_bet", "pepperstone_razor"] {
+                let v = c.venue(venue).unwrap();
+                assert!(!v.instruments.contains_key(symbol), "{venue} {symbol}");
+            }
+        }
+        // IG's published windows, at a point inside each.
+        let spread = |s: &str, utc: (u32, u32, u32, u32)| {
+            let at = Utc
+                .with_ymd_and_hms(2026, utc.0, utc.1, utc.2, utc.3, 0)
+                .unwrap();
+            ig.instruments[s].spread.pips_at(at)
+        };
+        assert_eq!(spread("GBRIDXGBP", (1, 14, 9, 0)), 1.0); // 09:00 London
+        assert_eq!(spread("GBRIDXGBP", (7, 14, 22, 0)), 4.0); // 23:00 BST
+        assert_eq!(spread("JPNIDXJPY", (1, 14, 3, 0)), 7.0);
+        assert_eq!(spread("JPNIDXJPY", (1, 14, 22, 0)), 30.0);
+        assert_eq!(spread("AUSIDXAUD", (1, 14, 0, 0)), 1.0); // 11:00 AEDT
+        assert_eq!(spread("AUSIDXAUD", (1, 14, 20, 30)), 4.0); // 07:30 AEDT
     }
 
     #[test]

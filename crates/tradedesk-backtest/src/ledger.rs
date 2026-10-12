@@ -1645,16 +1645,34 @@ mod tests {
             ]
         );
         assert!(!m.is_costed("EURUSD"));
-        for s in ["GBPJPY", "XAUUSD", "USA500IDXUSD", "DEUIDXEUR"] {
+        for s in [
+            "GBPJPY",
+            "XAUUSD",
+            "USA500IDXUSD",
+            "DEUIDXEUR",
+            "GBRIDXGBP",
+            "JPNIDXJPY",
+            "AUSIDXAUD",
+        ] {
             assert!(m.is_costed(s), "{s}");
         }
         // IG's FX spreads are averages; gold and the index schedules are minimums.
-        assert_eq!(m.minimum_spreads, ["DEUIDXEUR", "USA500IDXUSD", "XAUUSD"]);
+        assert_eq!(
+            m.minimum_spreads,
+            [
+                "AUSIDXAUD",
+                "DEUIDXEUR",
+                "GBRIDXGBP",
+                "JPNIDXJPY",
+                "USA500IDXUSD",
+                "XAUUSD"
+            ]
+        );
         // Every IG instrument is costed in the builtin config.
         let builtin =
             Ledger::new(&CostConfig::builtin(), "ig_spread_bet", STOP_FIRST, fx()).unwrap();
         assert!(builtin.metadata().costed.values().all(|c| *c));
-        assert_eq!(builtin.metadata().costed.len(), 5);
+        assert_eq!(builtin.metadata().costed.len(), 8);
     }
 
     #[test]
