@@ -192,6 +192,9 @@ and every completed trial is costed. A registry written before task #58 has no
 | XAUUSD | `206362.5` cents = $2063.625 | `1e-2` | $0.01 |
 | USA500IDXUSD | `4774.361` points | `1` | 1 point |
 | DEUIDXEUR | `17901.597` points | `1` | 1 point |
+| GBRIDXGBP | `7738.175` points | `1` | 1 point |
+| JPNIDXJPY | `33091.581` points | `1` | 1 point |
+| AUSIDXAUD | `7609.001` points | `1` | 1 point |
 
 ### Fills
 
@@ -236,12 +239,14 @@ tom-next carry is excluded (see below).
 
 ### Figures and provenance
 
-Every figure below is the venue's own, read on **2026-10-07**. The full
+Every figure below is the venue's own, read on **2026-10-07**; the IG
+figures for GBRIDXGBP, JPNIDXJPY and AUSIDXAUD were read on **2026-10-12**
+(task #180). The full
 citation for each component is its `source` string in `costs.toml`, and the
 Decisions on #58 record the choices. Spreads are in pips (FX), dollars × 100
 (gold, so 30 = $0.30) or index points.
 
-Two exclusions apply at every venue and to all five instruments:
+Two exclusions apply at every venue and to every instrument:
 
 - **Slippage is excluded (omitted).** Neither venue publishes a slippage
   figure. Costed results charge no slippage, so execution cost is a lower
@@ -262,12 +267,17 @@ Two exclusions apply at every venue and to all five instruments:
 | Spread XAUUSD | 30 ($0.30) | [Commodities spread bet product details](https://www.ig.com/uk/help-and-support/articles/681833-commodities-spread-bet-product-details), "standard spread" | current | verified, minimum |
 | Spread USA500IDXUSD | London: 0.4 from 14:30 to 21:00, 1.5 from 22:00 to 23:00, 0.6 otherwise | [Spread bet Indices product details](https://www.ig.com/uk/help-and-support/articles/682128-spread-bet-indices-product-details) | current | verified, minimum, schedule |
 | Spread DEUIDXEUR | London: 4 from 00:15 to 07:00, 2 from 07:00 to 08:00, 1.4 from 08:00 to 16:30, 2 from 16:30 to 21:00, 5 from 21:00 to 00:15 | same page; peak 1.4 from [IG charges](https://www.ig.com/uk/charges) | current | verified, minimum, schedule |
-| Commission, all five | 0 | [Fees and costs of spread betting and CFD trading](https://www.ig.com/uk/help-and-support/articles/681705-what-are-the-fees-and-costs-of-spread-betting-and-cfd-trading): commission only on CFD share trading | current | verified |
+| Spread GBRIDXGBP | London: 3 from 01:00 to 07:00, 2 from 07:00 to 08:00, 1 from 08:00 to 16:30, 2 from 16:30 to 21:00, 4 from 21:00 to 01:00 | same page; 1 is the FTSE 100 minimum on [IG charges](https://www.ig.com/uk/charges) | current | verified, minimum, schedule |
+| Spread JPNIDXJPY | GMT: 15 from 23:00 to 00:30, 7 from 00:30 to 21:15, 15 from 21:15 to 21:59, 30 otherwise | same page | current | verified, minimum, schedule |
+| Spread AUSIDXAUD | Sydney: 2 from 09:50 to 10:00, 1 from 10:00 to 16:00, 2 from 16:00 to 16:30, 3 from 17:10 to 07:00, 4 otherwise | same page; IG's 17:10 to 08:00 outside US daylight saving is not used, so 07:00 to 08:00 charges the wider 4 | current | verified, minimum, schedule |
+| Commission, all eight | 0 | [Fees and costs of spread betting and CFD trading](https://www.ig.com/uk/help-and-support/articles/681705-what-are-the-fees-and-costs-of-spread-betting-and-cfd-trading): commission only on CFD share trading | current | verified |
 | Financing FX, gold | 1.5% /360, long and short | [Overnight funding](https://www.ig.com/uk/help-and-support/articles/681712-what-is-overnight-funding-how-is-it-charged-and-how-is-it-calculated) | current | verified |
-| Financing indices | 3.4% /360, long and short | same page | current | verified |
+| Financing indices | 3.4% /360, long and short; GBRIDXGBP /365 | same page | current | verified |
 
-All five IG instruments are **costed**. Gold and both indices are costed on
-minimums, so their spread cost is a lower bound.
+All eight IG instruments are **costed**. Gold and the five indices are costed
+on minimums, so their spread cost is a lower bound. IG funds AUSIDXAUD at
+16:50 Sydney time; the venue has one rollover, so it is charged at 22:00
+London. GBRIDXGBP, JPNIDXJPY and AUSIDXAUD are configured at IG only.
 
 **Pepperstone spread bet**
 
