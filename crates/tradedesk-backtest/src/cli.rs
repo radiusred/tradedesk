@@ -3,6 +3,7 @@
 //!
 //! ```text
 //! tradedesk-backtest sweep <SPEC> --out <REGISTRY> --cache-root <DIR>
+//!                                [--cost-config <COSTS>]
 //! tradedesk-backtest report <REGISTRY> [--sweep <ID>] [--format text|json]
 //!                                  [--cscv-blocks <S>] [--prior-trials <N>]
 //! tradedesk-backtest walkforward <REGISTRY> [--sweep <ID>] [--format text|json]
@@ -86,6 +87,10 @@ struct SweepArgs {
     /// Root of the Dukascopy cache (`<root>/<SYMBOL>/<YYYY>/<MM>/<DD>_<side>.csv.zst`).
     #[arg(long, env = "TRADEDESK_CACHE_ROOT")]
     cache_root: PathBuf,
+    /// The cost config: TOML in the schema of the crate README's "Config schema". It
+    /// replaces the spec's `cost_config`; absent, the spec's (or the builtin example).
+    #[arg(long)]
+    cost_config: Option<PathBuf>,
 }
 
 #[derive(Debug, clap::Args)]
@@ -305,7 +310,18 @@ fn sweep(
     stdout: &mut dyn Write,
     interrupted: &AtomicBool,
 ) -> Exit {
-    let spec = match SweepSpec::from_path(&args.spec).and_then(|spec| {
+    let spec = match SweepSpec::from_path(&args.spec).and_then(|mut spec| {
+        if let Some(path) = &args.cost_config {
+            if let Some(in_spec) = spec.cost_config.as_ref().filter(|p| *p != path) {
+                tracing::warn!(
+                    spec = %in_spec.display(),
+                    command_line = %path.display(),
+                    "--cost-config replaces the spec's cost_config"
+                );
+            }
+            // Set in the spec, so the registry header records the file that was used.
+            spec.cost_config = Some(path.clone());
+        }
         validate_spec(&spec, strategies)?;
         Ok(spec)
     }) {
@@ -686,7 +702,26 @@ mod tests {
             "/data",
         ])
         .unwrap();
-        assert!(matches!(cli.command, Command::Sweep(ref a) if a.out == Path::new("reg.jsonl")));
+        assert!(matches!(
+            cli.command,
+            Command::Sweep(ref a) if a.out == Path::new("reg.jsonl") && a.cost_config.is_none()
+        ));
+        let cli = Cli::try_parse_from([
+            "tradedesk-backtest",
+            "sweep",
+            "spec.toml",
+            "--out",
+            "reg.jsonl",
+            "--cache-root",
+            "/data",
+            "--cost-config",
+            "costs.toml",
+        ])
+        .unwrap();
+        assert!(matches!(
+            cli.command,
+            Command::Sweep(ref a) if a.cost_config.as_deref() == Some(Path::new("costs.toml"))
+        ));
         let cli = Cli::try_parse_from([
             "tradedesk-backtest",
             "report",

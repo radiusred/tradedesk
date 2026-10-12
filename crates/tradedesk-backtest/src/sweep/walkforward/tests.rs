@@ -142,7 +142,7 @@ fn trade(exit: &str, gross: f64, spread: f64) -> ClosedTrade {
     ClosedTrade {
         id: PositionId(0),
         instrument: "USA500IDXUSD".to_owned(),
-        venue: "ig_spread_bet".to_owned(),
+        venue: "example_spread_bet".to_owned(),
         quote_currency: "GBP".to_owned(),
         direction: Direction::Long,
         size: 1.0,

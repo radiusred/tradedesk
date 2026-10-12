@@ -49,7 +49,7 @@ its strategy implementations, their goldens and their parity harness.
 | `LoadRequest` | A symbol, a half-open UTC window and the timeframes to build. `utc_days` covers whole inclusive days. |
 | `OneSidedPolicy` | `Reject` (the default) fails the load on any one-sided minute. `Report` keeps the two-sided bars and attaches the list. |
 | `load` → `MarketData` / `InstrumentSeries` | Reads each `(symbol, side)` once, in parallel across instruments, and returns read-only `Send + Sync` data. |
-| `CostConfig` | The validated cost configuration. `builtin()` loads the checked-in `config/costs.toml`, and `from_path` / `from_toml_str` load an override. Per venue, `placeholders` lists every unverified component, `exclusions` every excluded one, `minimum_spreads` the instruments whose spread is a published minimum, and `costed` which instruments can be reported as costed. |
+| `CostConfig` | The validated cost configuration. `builtin()` loads the checked-in `config/costs.toml`, a labelled example with illustrative figures, and `from_path` / `from_toml_str` load a real file. Per venue, `placeholders` lists every unverified component, `exclusions` every excluded one, `minimum_spreads` the instruments whose spread is a published minimum, and `costed` which instruments can be reported as costed. |
 | `InstrumentSpec` | Venue-independent units: `asset_class`, `quote_currency`, `raw_scale` (raw → quote), `pip_size`, and `divergence_tolerance`. |
 | `Venue` / `VenueInstrumentCost` | A venue's rollover clock, weekend rules and per-instrument `price_side`, `Spread`, `Slippage`, `Commission`, `Financing` and `Carry`. Each component (`CostComponent`) has its own `source` and a `ProvenanceStatus`: verified, placeholder or excluded (`provenance()`, `is_costed()`). |
 | `Spread` / `SpreadBasis` / `SpreadWindow` | The venue spread: a flat `pips`, or a time-of-day `schedule` of local windows in `tz` (`pips_at(instant)`), with a `basis` of `average` or `minimum`. |
@@ -104,6 +104,14 @@ its strategy implementations, their goldens and their parity harness.
 
 ### Config schema (`config/costs.toml`)
 
+The checked-in `config/costs.toml` is a **labelled example**. Its venue
+figures are illustrative: none is any real venue's, and none may be used for
+costed results. It shows the schema and exercises every feature of it, and the
+crate's tests use it. A real run loads its own file with the same schema:
+`tradedesk-backtest sweep --cost-config <PATH>` (see "Command line"),
+`cost_config` in the sweep spec, or `CostConfig::from_path`. Without one, the
+example is used.
+
 ```toml
 [instruments.EURUSD]
 asset_class = "fx"              # fx | metal | index: selects the weekend rule
@@ -112,30 +120,30 @@ raw_scale = 0.0001              # quote price = raw cache price x raw_scale
 pip_size = 0.0001               # one pip/point in quote price
 divergence_tolerance = 100.0    # max bar |ask - bid| in pips/points a fill accepts
 
-[venues.ig_spread_bet]
-name = "IG spread bet"
+[venues.example_spread_bet]
+name = "Example spread bet (illustrative figures)"
 product = "spread_bet"          # spread_bet | cfd
 rollover = { tz = "Europe/London", time = "22:00" }
 weekend.fx = { triple_day = "wednesday", days_on_triple = 3 }
 weekend.metal = { triple_day = "friday" }
 weekend.index = { triple_day = "friday" }
 
-[venues.ig_spread_bet.instruments.EURUSD]
+[venues.example_spread_bet.instruments.EURUSD]
 price_side = "mid"              # bid | ask | mid
 # Every component carries its own provenance; all five are required.
-spread = { pips = 1.04, basis = "average", placeholder = false, source = "..." }  # full width
+spread = { pips = 1.0, basis = "average", placeholder = false, source = "..." }  # full width
 slippage = { placeholder = false, excluded = true, reason = "...", source = "..." }
-commission = { per_fill = 0.0, per_unit_per_fill = 0.0, per_round_trip = 0.0, placeholder = false, source = "..." }  # GBP
-financing = { long_rate = 0.015, short_rate = 0.015, day_count = 360, placeholder = false, source = "..." }
+commission = { per_fill = 0.0, per_unit_per_fill = 0.0, per_round_trip = 0.0, placeholder = false, source = "..." }  # account currency
+financing = { long_rate = 0.02, short_rate = 0.02, day_count = 360, placeholder = false, source = "..." }
 carry = { placeholder = false, excluded = true, reason = "...", source = "..." }
 
-[venues.ig_spread_bet.instruments.USA500IDXUSD.spread]   # a spread by time of day
-pips = 0.6                      # outside every window
+[venues.example_spread_bet.instruments.USA500IDXUSD.spread]   # a spread by time of day
+pips = 1.0                      # outside every window
 basis = "minimum"
 tz = "Europe/London"            # the windows' local time zone
 schedule = [
-    { from = "14:30", to = "21:00", pips = 0.4 },   # [from, to); to < from wraps midnight
-    { from = "22:00", to = "23:00", pips = 1.5 },
+    { from = "14:30", to = "21:00", pips = 0.5 },   # [from, to); to < from wraps midnight
+    { from = "21:00", to = "23:00", pips = 2.0 },
 ]
 placeholder = false
 source = "..."
@@ -152,9 +160,10 @@ with a source.
 **Provenance.** Each component is in exactly one of three states:
 
 - **verified** (`placeholder = false`): a figure the venue publishes. The
-  `source` names the page, its URL and the date it was read.
+  `source` names the page, its URL and the date it was read. (In the builtin
+  example every `source` says the figure is an example instead.)
 - **placeholder** (`placeholder = true`): an assumption or a stand-in. A run
-  that uses one is never costed. The builtin config has none.
+  that uses one is never costed. The builtin example has none.
 - **excluded** (`excluded = true` with a `reason`): the venue publishes no
   figure. The component charges nothing, so every amount in it must be zero,
   and an excluded spread has no `basis` or schedule. What that does to a
@@ -218,10 +227,12 @@ bar pays the spread in force at the bar's close, not at its open.
 Rollovers happen at the venue's local time, on local weekdays only. The UTC
 instant moves with daylight saving through `chrono-tz`.
 
+In the builtin example:
+
 | Venue | Rollover | FX | Metals | Indices |
 |---|---|---|---|---|
-| IG spread bet | 22:00 `Europe/London` | Wednesday x3 | Friday x3 | Friday x3 |
-| Pepperstone (spread bet, Razor) | 17:00 `America/New_York` | Wednesday x3 | Wednesday x3 | Friday x3 |
+| `example_spread_bet` | 22:00 `Europe/London` | Wednesday x3 | Friday x3 | Friday x3 |
+| `example_ny_spread_bet`, `example_ny_cfd` | 17:00 `America/New_York` | Wednesday x3 | Wednesday x3 | Friday x3 |
 
 A position is charged at a rollover when it is held across it, that is
 `entry < rollover < exit`. The triple day charges `days_on_triple` and every
@@ -231,77 +242,35 @@ calendar day is charged once. The charge is
 close of the last 1m bar closed by the rollover instant. Long and short
 rates are separate, and a positive rate is a charge.
 
-The charge uses the venue's annual admin fee alone, because the benchmark or
+The charge uses the configured annual rate alone, because the benchmark or
 tom-next carry is excluded (see below).
 
-### Figures and provenance
+### The builtin example
 
-Every figure below is the venue's own, read on **2026-10-07**. The full
-citation for each component is its `source` string in `costs.toml`, and the
-Decisions on #58 record the choices. Spreads are in pips (FX), dollars × 100
-(gold, so 30 = $0.30) or index points.
+Every figure below is **illustrative**: it is not any venue's, and it must not
+be used for costed results. Spreads are in pips (FX), dollars × 100 (gold, so
+40 = $0.40) or index points. Every `source` in the file says "example".
 
-Two exclusions apply at every venue and to all five instruments:
+Two exclusions apply at every example venue and to all five instruments:
 
-- **Slippage is excluded (omitted).** Neither venue publishes a slippage
-  figure. Costed results charge no slippage, so execution cost is a lower
-  bound.
-- **Carry is excluded (omitted).** No venue publishes a rate history.
-  Costed results charge the admin fee to longs and shorts alike. Compared with
-  the venue's real funding, a long is under-charged by the benchmark rate, a
-  short is over-charged by it (a venue normally credits an index short the
-  benchmark minus the fee), and the FX or gold interest differential is
-  missing. That differential can be a credit or a debit on either side.
+- **Slippage is excluded (omitted).** Costed results charge no slippage, so
+  execution cost is a lower bound.
+- **Carry is excluded (omitted).** Results charge the annual rate to longs and
+  shorts alike; the benchmark or tom-next part is not modelled.
 
-**IG spread bet**
+| Component | `example_spread_bet` | `example_ny_spread_bet` | `example_ny_cfd` |
+|---|---|---|---|
+| Spread EURUSD | 1.0 average | 0.8 minimum | 0.3 average |
+| Spread GBPJPY | 3.0 average | **excluded (uncosted)** | 1.0 average |
+| Spread XAUUSD | 40 ($0.40) minimum | 20 ($0.20) minimum | 25 ($0.25) average |
+| Spread USA500IDXUSD | London: 0.5 from 14:30 to 21:00, 2.0 from 21:00 to 23:00, 1.0 otherwise (minimum) | 0.8 minimum | New York: 0.5 from 09:30 to 16:00, 2.0 from 17:00 to 18:00, 1.0 otherwise (minimum) |
+| Spread DEUIDXEUR | London: 6 from 22:00 to 01:00, 3 from 01:00 to 08:00, 1.5 from 08:00 to 16:30, 2.5 from 16:30 to 22:00 (minimum) | 1.6 minimum | 1.5 average |
+| Commission | 0 | 0 | FX 3.00 per 100,000 units per side; gold 0.03 per ounce per side; indices 0 |
+| Financing FX, gold | 2% /360 | excluded (omitted) | excluded (omitted) |
+| Financing indices | 3% /360 | 3% /360 | 3% /360 |
 
-| Component | Figure | Source | Date | Status |
-|---|---|---|---|---|
-| Spread EURUSD | 1.04 average (minimum 0.6) | [Forex spread betting product details](https://www.ig.com/uk/help-and-support/articles/681881-forex-spread-betting-product-details), Mon 00:00–Fri 22:00 GMT average | 12 weeks to 2021-01-08 | verified, average |
-| Spread GBPJPY | 3.86 average (minimum 2.5) | same page | 12 weeks to 2021-01-08 | verified, average |
-| Spread XAUUSD | 30 ($0.30) | [Commodities spread bet product details](https://www.ig.com/uk/help-and-support/articles/681833-commodities-spread-bet-product-details), "standard spread" | current | verified, minimum |
-| Spread USA500IDXUSD | London: 0.4 from 14:30 to 21:00, 1.5 from 22:00 to 23:00, 0.6 otherwise | [Spread bet Indices product details](https://www.ig.com/uk/help-and-support/articles/682128-spread-bet-indices-product-details) | current | verified, minimum, schedule |
-| Spread DEUIDXEUR | London: 4 from 00:15 to 07:00, 2 from 07:00 to 08:00, 1.4 from 08:00 to 16:30, 2 from 16:30 to 21:00, 5 from 21:00 to 00:15 | same page; peak 1.4 from [IG charges](https://www.ig.com/uk/charges) | current | verified, minimum, schedule |
-| Commission, all five | 0 | [Fees and costs of spread betting and CFD trading](https://www.ig.com/uk/help-and-support/articles/681705-what-are-the-fees-and-costs-of-spread-betting-and-cfd-trading): commission only on CFD share trading | current | verified |
-| Financing FX, gold | 1.5% /360, long and short | [Overnight funding](https://www.ig.com/uk/help-and-support/articles/681712-what-is-overnight-funding-how-is-it-charged-and-how-is-it-calculated) | current | verified |
-| Financing indices | 3.4% /360, long and short | same page | current | verified |
-
-All five IG instruments are **costed**. Gold and both indices are costed on
-minimums, so their spread cost is a lower bound.
-
-**Pepperstone spread bet**
-
-| Component | Figure | Source | Date | Status |
-|---|---|---|---|---|
-| Spread EURUSD | 0.5 | [Trading costs and fees](https://pepperstone.com/en-gb/trading/costs-and-fees), "Spread bet min spread" | current | verified, minimum |
-| Spread XAUUSD | 10 ($0.10) | same page | current | verified, minimum |
-| Spread USA500IDXUSD | 0.4 | same page | current | verified, minimum |
-| Spread DEUIDXEUR | 0.9 | same page | current | verified, minimum |
-| Spread GBPJPY | none published | same page, and the GBP/JPY market page, which shows only a live quote | — | **excluded (uncosted)** |
-| Commission, all five | 0 | same page: "There's no commission to pay" | current | verified |
-| Financing EURUSD, GBPJPY, XAUUSD | none charged | [Costs and Charges Information & Examples](https://eu-assets.contentstack.com/v3/assets/bltd74737b907a31bbb/bltc19314db598b7ab0/UK_Legal_Costs_and_Charges.pdf) (v9.0): the funding fee is a mark-up of up to 3% on the tom-next points | September 2026 | excluded (omitted) |
-| Financing indices | 2.5% /360, long and short | same document: "(ARR +/- admin fee)/360", "Admin fee is 2.5%" | September 2026 | verified |
-
-Four instruments are **costed**, all on published minimums (a lower bound).
-**GBPJPY is uncosted** at this venue.
-
-**Pepperstone Razor (CFD)**
-
-| Component | Figure | Source | Date | Status |
-|---|---|---|---|---|
-| Spread EURUSD | 0.1 average (minimum 0.0) | [Costs and Charges Information & Examples](https://eu-assets.contentstack.com/v3/assets/bltd74737b907a31bbb/bltc19314db598b7ab0/UK_Legal_Costs_and_Charges.pdf) | September 2026 | verified, average |
-| Spread GBPJPY | 1.20 average (minimum 0.4) | [Costs and charges, March 2020](https://files.pepperstone.com/Pepperstone-Limited-Cost-and-Charges.pdf) | March 2020 | verified, average |
-| Spread XAUUSD | 22 ($0.22) average (minimum $0.10); the account is not named | Costs and Charges Information & Examples | September 2026 | verified, average |
-| Spread USA500IDXUSD | New York: 0.4 from 09:30 to 16:00, 1.5 from 17:00 to 18:00, 0.6 otherwise | Costs and charges, March 2020 (session minimums in server time = New York + 7h); 0.4 also on [Trading costs and fees](https://pepperstone.com/en-gb/trading/costs-and-fees) | March 2020 | verified, minimum, schedule |
-| Spread DEUIDXEUR | 1.2 average (minimum 0.9) | Costs and Charges Information & Examples | September 2026 | verified, average |
-| Commission FX | GBP 2.25 per 100,000 units per side | same document, MT4/MT5 GBP account | September 2026 | verified |
-| Commission XAUUSD | GBP 2.25 per 100 oz lot per side | same document ("100 ounces" per lot) | September 2026 | verified |
-| Commission indices | 0 | same document: index commission "reflected in the spread" | September 2026 | verified |
-| Financing EURUSD, GBPJPY, XAUUSD | none charged | same document (the mark-up on tom-next) | September 2026 | excluded (omitted) |
-| Financing indices | 2.5% /360, long and short | same document | September 2026 | verified |
-
-All five Razor instruments are **costed**. USA500IDXUSD is costed on session
-minimums, so its spread cost is a lower bound.
+Every instrument is **costed** except GBPJPY at `example_ny_spread_bet`. A
+result on a minimum spread is a lower bound on spread cost.
 
 A run lists all of this in its metadata: `placeholders` (none),
 `exclusions` (with reasons and effects), `minimum_spreads` and `costed`.
@@ -661,8 +630,9 @@ instruments = ["XAUUSD"]                   # each is crossed with every paramete
 first_day = "2024-01-01"                   # inclusive UTC days
 last_day = "2024-01-31"
 warmup_days = 90                           # calendar days loaded before first_day
-venue = "ig_spread_bet"
-# cost_config = "path/to/costs.toml"       # absent: the builtin config/costs.toml
+venue = "my_venue"                         # a venue id in the cost config
+# cost_config = "path/to/costs.toml"       # absent: the builtin example config/costs.toml;
+                                           # sweep --cost-config replaces it
 exit_evaluation = { mode = "intrabar", both_hit = "stop_first" }
 account_fx = { account_currency = "GBP", rates = { USD = 0.79 } }
 sizing = { kind = "stake_per_point", stake = 0.1 }
@@ -885,7 +855,8 @@ The `tradedesk-backtest` binary in this crate registers no strategy: `report` an
 registered names (none). With a binary that registers strategies:
 
 ```sh
-my-backtest sweep spec.toml --out registry.jsonl --cache-root path/to/marketdata
+my-backtest sweep spec.toml --out registry.jsonl --cache-root path/to/marketdata \
+    --cost-config path/to/costs.toml
 tradedesk-backtest report registry.jsonl
 tradedesk-backtest report registry.jsonl --format json
 tradedesk-backtest walkforward registry.jsonl
@@ -896,9 +867,17 @@ a shorter one finds no fold and exits 1.
 
 `--cache-root` may come from `TRADEDESK_CACHE_ROOT` instead.
 
+`--cost-config` names the cost config file (the schema in "Config schema"). It
+replaces the spec's `cost_config`, with a warning on stderr when the two
+differ, and is set in the spec before validation. So the sweep header records
+the file that was used: `spec.cost_config` and `cost_config` `{source, blake3}`
+both name it, and its blake3 is part of the sweep and trial ids. Without
+`--cost-config` the spec's `cost_config` is used, or the builtin example when
+the spec has none. A relative path is relative to the working directory.
+
 | Command | What it does |
 |---|---|
-| `sweep <SPEC> --out <REGISTRY> --cache-root <DIR>` | Validates the spec (the format in "The spec"), opens the registry for appending (created if absent), loads the data once and runs every cell |
+| `sweep <SPEC> --out <REGISTRY> --cache-root <DIR> [--cost-config <COSTS>]` | Validates the spec (the format in "The spec") and the cost config, opens the registry for appending (created if absent), loads the data once and runs every cell |
 | `report <REGISTRY> [--sweep <ID>] [--format text\|json] [--cscv-blocks <S>] [--prior-trials <N>]` | Reports one sweep's deflated Sharpe and PBO. `--sweep` is needed when the registry holds several sweeps. `--cscv-blocks` defaults to 16 and `--prior-trials` to 0 |
 | `walkforward <REGISTRY> [--sweep <ID>] [--format text\|json] [--train-months <M>] [--test-months <M>] [--step-months <M>]` | Reports one sweep's rolling walk-forward ("Walk-forward" above). The months default to 24, 6 and 6 |
 
@@ -925,7 +904,7 @@ a shorter one finds no fold and exits 1.
 | Code | Meaning |
 |---|---|
 | 0 | Done. For `sweep`, every cell completed |
-| 1 | Input refused before anything ran: the spec is unreadable or invalid, the cost config is invalid, or the registry is unreadable, truncated (`TruncatedTail`), of an unknown schema, or has no single sweep to report. For `walkforward`, also invalid months or a window too short for one fold. A refused spec creates no registry file |
+| 1 | Input refused before anything ran: the spec is unreadable or invalid, the cost config is missing or invalid, or the registry is unreadable, truncated (`TruncatedTail`), of an unknown schema, or has no single sweep to report. For `walkforward`, also invalid months or a window too short for one fold. A refused spec creates no registry file |
 | 2 | Usage error (clap) |
 | 3 | The sweep finished, and at least one cell is recorded as a failure |
 | 4 | A runtime failure: the market data could not be loaded, or the registry or stdout could not be written |

@@ -1,8 +1,9 @@
 //! The venue cost configuration: per-instrument units and per-venue, per-instrument costs.
 //!
-//! The checked-in defaults live in `crates/tradedesk-backtest/config/costs.toml` and load with
-//! [`CostConfig::builtin`]. A run can load its own file with the same schema through
-//! [`CostConfig::from_path`] or [`CostConfig::from_toml_str`]. Every load is validated
+//! The checked-in `crates/tradedesk-backtest/config/costs.toml` is a labelled example: its
+//! venue figures are illustrative, not any venue's. It loads with [`CostConfig::builtin`].
+//! A real run loads its own file with the same schema through [`CostConfig::from_path`] or
+//! [`CostConfig::from_toml_str`]. Every load is validated
 //! before it is returned, so a [`CostConfig`] in hand is always usable.
 //!
 //! Units, once:
@@ -28,7 +29,7 @@ use chrono::{DateTime, NaiveTime, Timelike, Utc, Weekday};
 use chrono_tz::Tz;
 use serde::{Deserialize, Deserializer, Serialize};
 
-/// The checked-in cost configuration (see the module docs).
+/// The checked-in example cost configuration (see the module docs).
 pub const BUILTIN_COSTS_TOML: &str = include_str!("../../config/costs.toml");
 
 /// Why a cost configuration cannot be loaded or used.
@@ -651,7 +652,8 @@ pub struct CostConfig {
 }
 
 impl CostConfig {
-    /// The checked-in configuration, `crates/tradedesk-backtest/config/costs.toml`.
+    /// The checked-in example, `crates/tradedesk-backtest/config/costs.toml`: illustrative
+    /// figures, not any venue's.
     ///
     /// # Panics
     /// If the checked-in file fails to load. A unit test loads it, so this cannot ship.
@@ -1024,20 +1026,20 @@ fn currency(code: &str, at: &str) -> Result<(), ConfigError> {
     }
 }
 
-/// The M1 builtin figures (task #30) as a fixed arithmetic fixture for unit tests: flat
-/// spreads, the archive's slippage and admin-fee-only financing, all flagged verified. The
-/// ledger and metrics tests pin their hand-computed P&L to these, so a change to a venue's
-/// published figures in `costs.toml` does not move them.
+/// Fixed synthetic figures for unit-test arithmetic, set on the example venues: flat
+/// spreads, fixed slippage, annual financing and the CFD's per-unit commission, all
+/// flagged verified. The ledger and metrics tests pin their hand-computed P&L to these, so
+/// a change to the example figures in `costs.toml` does not move them.
 #[cfg(test)]
 pub(crate) fn arithmetic_fixture() -> CostConfig {
-    const IG: [(&str, f64, f64, f64); 5] = [
+    const FIGURES: [(&str, f64, f64, f64); 5] = [
         ("EURUSD", 0.6, 0.2, 0.015),
         ("GBPJPY", 1.5, 0.2, 0.015),
         ("XAUUSD", 30.0, 5.0, 0.015),
         ("USA500IDXUSD", 0.4, 0.1, 0.034),
         ("DEUIDXEUR", 1.2, 0.2, 0.034),
     ];
-    const RAZOR_SPREADS: [(&str, f64); 5] = [
+    const CFD_SPREADS: [(&str, f64); 5] = [
         ("EURUSD", 0.1),
         ("GBPJPY", 0.5),
         ("XAUUSD", 8.0),
@@ -1046,21 +1048,21 @@ pub(crate) fn arithmetic_fixture() -> CostConfig {
     ];
     let mut c = CostConfig::builtin();
     for venue in [
-        "ig_spread_bet",
-        "pepperstone_spread_bet",
-        "pepperstone_razor",
+        "example_spread_bet",
+        "example_ny_spread_bet",
+        "example_ny_cfd",
     ] {
         let v = c.venues.get_mut(venue).expect("builtin venue");
-        for (symbol, spread, slippage, rate) in IG {
-            // Pepperstone indices: 2.5%; everything else as at IG.
-            let rate = if venue != "ig_spread_bet" && rate > 0.02 {
+        for (symbol, spread, slippage, rate) in FIGURES {
+            // New York indices: 2.5%; everything else as at the London venue.
+            let rate = if venue != "example_spread_bet" && rate > 0.02 {
                 0.025
             } else {
                 rate
             };
-            let spread = RAZOR_SPREADS
+            let spread = CFD_SPREADS
                 .iter()
-                .find(|(s, _)| venue == "pepperstone_razor" && *s == symbol)
+                .find(|(s, _)| venue == "example_ny_cfd" && *s == symbol)
                 .map_or(spread, |(_, p)| *p);
             let cost = v.instruments.get_mut(symbol).expect("builtin instrument");
             cost.spread = Spread {
@@ -1080,6 +1082,14 @@ pub(crate) fn arithmetic_fixture() -> CostConfig {
             cost.financing.short_rate = rate;
             cost.financing.excluded = false;
             cost.financing.reason = None;
+            if venue == "example_ny_cfd" && symbol != "USA500IDXUSD" && symbol != "DEUIDXEUR" {
+                // 2.25 per 100,000 units (FX) or per 100 ounces (gold), per fill.
+                cost.commission.per_unit_per_fill = if symbol == "XAUUSD" {
+                    0.0225
+                } else {
+                    0.000_022_5
+                };
+            }
         }
     }
     c.validate().expect("the fixture is valid");
@@ -1097,9 +1107,9 @@ mod tests {
     fn builtin_config_loads_and_defines_every_required_venue_and_instrument() {
         let c = CostConfig::builtin();
         for venue in [
-            "ig_spread_bet",
-            "pepperstone_spread_bet",
-            "pepperstone_razor",
+            "example_spread_bet",
+            "example_ny_spread_bet",
+            "example_ny_cfd",
         ] {
             let v = c.venue(venue).unwrap_or_else(|| panic!("{venue} missing"));
             for symbol in REQUIRED {
@@ -1123,15 +1133,14 @@ mod tests {
     }
 
     const VENUES: [&str; 3] = [
-        "ig_spread_bet",
-        "pepperstone_spread_bet",
-        "pepperstone_razor",
+        "example_spread_bet",
+        "example_ny_spread_bet",
+        "example_ny_cfd",
     ];
 
     #[test]
-    fn builtin_has_no_placeholder_for_the_five_instruments_at_any_venue() {
-        // M2-R1: every component is a published figure with a dated source, or excluded
-        // with a reason.
+    fn builtin_is_a_labelled_example_with_no_placeholder() {
+        // Every component is an example figure that says so, or excluded with a reason.
         let c = CostConfig::builtin();
         for venue in VENUES {
             assert!(c.placeholders(venue).unwrap().is_empty(), "{venue}");
@@ -1140,9 +1149,8 @@ mod tests {
                 for p in v.instruments[symbol].provenance() {
                     let at = format!("{venue} {symbol} {:?}", p.component);
                     assert_ne!(p.status, ProvenanceStatus::Placeholder, "{at}");
-                    assert!(p.source.contains("https://"), "{at}: {}", p.source);
-                    assert!(p.source.contains("read 2026-10-07"), "{at}: {}", p.source);
-                    assert!(!p.source.contains("spread_thresholds"), "{at}");
+                    assert!(p.source.starts_with("example"), "{at}: {}", p.source);
+                    assert!(!p.source.contains("://"), "{at}: {}", p.source);
                     if p.status == ProvenanceStatus::Excluded {
                         assert!(p.reason.is_some_and(|r| !r.is_empty()), "{at}");
                     }
@@ -1173,7 +1181,7 @@ mod tests {
                 .filter(|(_, costed)| !costed)
                 .map(|(s, _)| if s == "GBPJPY" { "GBPJPY" } else { "other" })
                 .collect();
-            let expect: &[&str] = if venue == "pepperstone_spread_bet" {
+            let expect: &[&str] = if venue == "example_ny_spread_bet" {
                 &["GBPJPY"]
             } else {
                 &[]
@@ -1183,19 +1191,18 @@ mod tests {
     }
 
     #[test]
-    fn builtin_ig_spreads_are_igs_published_figures() {
-        // Issue #52: IG's FX averages, not the peak-hours minimums of the archive's
-        // spread_thresholds.yaml; the indices by time of day; gold a minimum.
+    fn builtin_example_spreads_cover_average_minimum_and_schedule() {
+        // FX averages, the indices by time of day, gold a minimum.
         let c = CostConfig::builtin();
-        let ig = c.venue("ig_spread_bet").unwrap();
-        let spread = |s: &str| &ig.instruments[s].spread;
-        assert_eq!(spread("EURUSD").pips, 1.04);
-        assert_eq!(spread("GBPJPY").pips, 3.86);
+        let v = c.venue("example_spread_bet").unwrap();
+        let spread = |s: &str| &v.instruments[s].spread;
+        assert_eq!(spread("EURUSD").pips, 1.0);
+        assert_eq!(spread("GBPJPY").pips, 3.0);
         for s in ["EURUSD", "GBPJPY"] {
             assert_eq!(spread(s).basis, Some(SpreadBasis::Average));
             assert!(spread(s).schedule.is_empty());
         }
-        assert_eq!(spread("XAUUSD").pips, 30.0);
+        assert_eq!(spread("XAUUSD").pips, 40.0);
         assert_eq!(spread("XAUUSD").basis, Some(SpreadBasis::Minimum));
         for s in ["USA500IDXUSD", "DEUIDXEUR"] {
             assert_eq!(spread(s).tz, Some(chrono_tz::Europe::London));
@@ -1203,7 +1210,7 @@ mod tests {
             assert_eq!(spread(s).basis, Some(SpreadBasis::Minimum));
         }
         assert_eq!(
-            c.minimum_spreads("ig_spread_bet").unwrap(),
+            c.minimum_spreads("example_spread_bet").unwrap(),
             ["DEUIDXEUR", "USA500IDXUSD", "XAUUSD"]
         );
     }
@@ -1211,13 +1218,16 @@ mod tests {
     #[test]
     fn builtin_rollovers_are_london_22_and_new_york_17() {
         let c = CostConfig::builtin();
-        let ig = c.venue("ig_spread_bet").unwrap();
-        assert_eq!(ig.rollover.tz, chrono_tz::Europe::London);
-        assert_eq!(ig.rollover.time, NaiveTime::from_hms_opt(22, 0, 0).unwrap());
-        for id in ["pepperstone_spread_bet", "pepperstone_razor"] {
-            let p = c.venue(id).unwrap();
-            assert_eq!(p.rollover.tz, chrono_tz::America::New_York);
-            assert_eq!(p.rollover.time, NaiveTime::from_hms_opt(17, 0, 0).unwrap());
+        let london = c.venue("example_spread_bet").unwrap();
+        assert_eq!(london.rollover.tz, chrono_tz::Europe::London);
+        assert_eq!(
+            london.rollover.time,
+            NaiveTime::from_hms_opt(22, 0, 0).unwrap()
+        );
+        for id in ["example_ny_spread_bet", "example_ny_cfd"] {
+            let ny = c.venue(id).unwrap();
+            assert_eq!(ny.rollover.tz, chrono_tz::America::New_York);
+            assert_eq!(ny.rollover.time, NaiveTime::from_hms_opt(17, 0, 0).unwrap());
         }
     }
 
