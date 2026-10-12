@@ -344,7 +344,7 @@ mod tests {
 
     #[test]
     fn buy_and_sell_at_the_close_pay_half_the_spread_and_the_slippage() {
-        let m = flat(model("ig_spread_bet", "EURUSD"), 0.6, 0.2);
+        let m = flat(model("example_spread_bet", "EURUSD"), 0.6, 0.2);
         let b = eurusd_bar();
         let mid = f64::midpoint(1.0882, 1.088_23);
         // Half of a 0.6-pip spread plus 0.2 pips of slippage, each side.
@@ -364,7 +364,7 @@ mod tests {
 
     #[test]
     fn the_dukascopy_spread_never_enters_the_fill() {
-        let m = model("ig_spread_bet", "EURUSD");
+        let m = model("example_spread_bet", "EURUSD");
         let narrow = eurusd_bar();
         // Same mid, Dukascopy spread 20x wider: the fill must not move.
         let wide = bar(
@@ -384,7 +384,7 @@ mod tests {
     #[test]
     fn price_side_selects_bid_ask_or_mid() {
         let b = eurusd_bar();
-        let base = with_cost(model("ig_spread_bet", "EURUSD"), |c| {
+        let base = with_cost(model("example_spread_bet", "EURUSD"), |c| {
             c.spread.pips = 0.0;
             c.slippage.points = 0.0;
         });
@@ -403,7 +403,7 @@ mod tests {
 
     #[test]
     fn open_and_level_points_use_their_own_reference() {
-        let m = with_cost(model("ig_spread_bet", "EURUSD"), |c| {
+        let m = with_cost(model("example_spread_bet", "EURUSD"), |c| {
             c.spread.pips = 0.0;
             c.slippage.points = 0.0;
             c.price_side = PriceSide::Bid;
@@ -422,7 +422,7 @@ mod tests {
 
     #[test]
     fn gold_and_index_spreads_are_in_their_own_points() {
-        let gold = flat(model("ig_spread_bet", "XAUUSD"), 30.0, 5.0);
+        let gold = flat(model("example_spread_bet", "XAUUSD"), 30.0, 5.0);
         let b = bar(
             side(206_300.0, 206_400.0, 206_200.0, 206_350.0),
             side(206_330.0, 206_430.0, 206_230.0, 206_380.0),
@@ -434,7 +434,7 @@ mod tests {
         assert!(close(q.mark_price, 2063.65));
         assert!(close(q.fill_price, 2063.65 + 0.15 + 0.05));
         assert!(close(q.spread_cost, 0.30));
-        let spx = flat(model("ig_spread_bet", "USA500IDXUSD"), 0.4, 0.1);
+        let spx = flat(model("example_spread_bet", "USA500IDXUSD"), 0.4, 0.1);
         let b = bar(
             side(4774.0, 4775.0, 4773.0, 4774.2),
             side(4774.5, 4775.5, 4773.5, 4774.7),
@@ -446,9 +446,9 @@ mod tests {
     }
 
     #[test]
-    fn razor_charges_commission_per_unit_and_bps_slippage_scales_with_price() {
-        let razor = model("pepperstone_razor", "EURUSD");
-        let q = razor
+    fn a_cfd_charges_commission_per_unit_and_bps_slippage_scales_with_price() {
+        let cfd = model("example_ny_cfd", "EURUSD");
+        let q = cfd
             .quote(
                 &eurusd_bar(),
                 PricePoint::Close,
@@ -457,9 +457,9 @@ mod tests {
                 100_000.0,
             )
             .unwrap();
-        // GBP 2.25 per 100,000 units per side.
-        assert!(close(q.commission, 2.25));
-        let m = with_cost(model("ig_spread_bet", "USA500IDXUSD"), |c| {
+        // 3.00 per 100,000 units per side.
+        assert!(close(q.commission, 3.0));
+        let m = with_cost(model("example_spread_bet", "USA500IDXUSD"), |c| {
             c.spread.pips = 0.0;
             c.slippage.points = 0.0;
             c.slippage.bps = 2.0;
@@ -488,7 +488,7 @@ mod tests {
 
     #[test]
     fn divergence_beyond_tolerance_is_an_error_never_a_fallback() {
-        let m = model("ig_spread_bet", "EURUSD");
+        let m = model("example_spread_bet", "EURUSD");
         // 150 pips apart at the close (tolerance 100); open is fine.
         let b = bar(
             side(10880.0, 10885.0, 10875.0, 10882.0),
@@ -523,7 +523,7 @@ mod tests {
 
     #[test]
     fn rejects_bad_sizes_and_non_finite_prices() {
-        let m = model("ig_spread_bet", "EURUSD");
+        let m = model("example_spread_bet", "EURUSD");
         for size in [0.0, -1.0, f64::NAN, f64::INFINITY] {
             assert!(matches!(
                 m.quote(&eurusd_bar(), PricePoint::Close, T, TradeSide::Buy, size),
@@ -582,39 +582,40 @@ mod tests {
 
     #[test]
     fn a_scheduled_spread_is_the_window_the_fill_instant_falls_in() {
-        // IG US 500: 14:30-21:00 London 0.4, 22:00-23:00 1.5, otherwise 0.6.
-        let spx = model("ig_spread_bet", "USA500IDXUSD");
+        // Example US 500: 14:30-21:00 London 0.5, 21:00-23:00 2.0, otherwise 1.0.
+        let spx = model("example_spread_bet", "USA500IDXUSD");
         let pips = |at| half_spread_at(&spx, at);
         // Winter (GMT): London = UTC.
-        assert!(close(pips(utc(2024, 1, 16, 14, 29)), 0.6));
-        assert!(close(pips(utc(2024, 1, 16, 14, 30)), 0.4));
-        assert!(close(pips(utc(2024, 1, 16, 20, 59)), 0.4));
-        assert!(close(pips(utc(2024, 1, 16, 21, 0)), 0.6));
-        assert!(close(pips(utc(2024, 1, 16, 22, 30)), 1.5));
-        assert!(close(pips(utc(2024, 1, 16, 3, 0)), 0.6));
+        assert!(close(pips(utc(2024, 1, 16, 14, 29)), 1.0));
+        assert!(close(pips(utc(2024, 1, 16, 14, 30)), 0.5));
+        assert!(close(pips(utc(2024, 1, 16, 20, 59)), 0.5));
+        assert!(close(pips(utc(2024, 1, 16, 21, 0)), 2.0));
+        assert!(close(pips(utc(2024, 1, 16, 23, 0)), 1.0));
+        assert!(close(pips(utc(2024, 1, 16, 3, 0)), 1.0));
         // Summer (BST): the windows move with London, so 13:45Z is 14:45 BST.
-        assert!(close(pips(utc(2024, 7, 16, 13, 45)), 0.4));
-        assert!(close(pips(utc(2024, 1, 16, 13, 45)), 0.6));
-        assert!(close(pips(utc(2024, 7, 16, 21, 30)), 1.5));
+        assert!(close(pips(utc(2024, 7, 16, 13, 45)), 0.5));
+        assert!(close(pips(utc(2024, 1, 16, 13, 45)), 1.0));
+        assert!(close(pips(utc(2024, 7, 16, 21, 30)), 2.0));
+        assert!(close(pips(utc(2024, 1, 16, 22, 30)), 2.0));
     }
 
     #[test]
     fn a_window_can_wrap_midnight() {
-        // IG Germany 40: 21:00-00:15 London 5, 00:15-07:00 4.
-        let dax = model("ig_spread_bet", "DEUIDXEUR");
+        // Example Germany 40: 22:00-01:00 London 6, 01:00-08:00 3.
+        let dax = model("example_spread_bet", "DEUIDXEUR");
         let pips = |at| half_spread_at(&dax, at);
-        assert!(close(pips(utc(2024, 1, 16, 21, 0)), 5.0));
-        assert!(close(pips(utc(2024, 1, 16, 23, 59)), 5.0));
-        assert!(close(pips(utc(2024, 1, 17, 0, 14)), 5.0));
-        assert!(close(pips(utc(2024, 1, 17, 0, 15)), 4.0));
-        assert!(close(pips(utc(2024, 1, 17, 8, 0)), 1.4));
+        assert!(close(pips(utc(2024, 1, 16, 22, 0)), 6.0));
+        assert!(close(pips(utc(2024, 1, 16, 23, 59)), 6.0));
+        assert!(close(pips(utc(2024, 1, 17, 0, 59)), 6.0));
+        assert!(close(pips(utc(2024, 1, 17, 1, 0)), 3.0));
+        assert!(close(pips(utc(2024, 1, 17, 8, 0)), 1.5));
     }
 
     #[test]
     fn the_fill_instant_not_the_bar_open_selects_the_window() {
-        // A 1h bar opening 20:00Z in January: its open is in the 0.4 window and its close
-        // (21:00Z) is not.
-        let spx = model("ig_spread_bet", "USA500IDXUSD");
+        // A 1h bar opening 20:00Z in January: its open is in the 0.5 window and its close
+        // (21:00Z) is in the 2.0 window.
+        let spx = model("example_spread_bet", "USA500IDXUSD");
         let raw = 5000.0;
         let mut b = bar(side(raw, raw, raw, raw), side(raw, raw, raw, raw));
         b.ts_open_utc = utc(2024, 1, 16, 20, 0);
@@ -630,27 +631,27 @@ mod tests {
                 1.0,
             )
             .unwrap();
-        assert!(close(at_open.half_spread, 0.2));
-        assert!(close(at_close.half_spread, 0.3));
-        assert!(close(at_close.spread_cost, 0.3));
+        assert!(close(at_open.half_spread, 0.25));
+        assert!(close(at_close.half_spread, 1.0));
+        assert!(close(at_close.spread_cost, 1.0));
     }
 
     #[test]
     fn a_new_york_schedule_follows_new_york_daylight_saving() {
-        // Pepperstone Razor US500: 09:30-16:00 New York 0.4, 17:00-18:00 1.5, else 0.6.
-        let spx = model("pepperstone_razor", "USA500IDXUSD");
+        // Example CFD US500: 09:30-16:00 New York 0.5, 17:00-18:00 2.0, else 1.0.
+        let spx = model("example_ny_cfd", "USA500IDXUSD");
         let pips = |at| half_spread_at(&spx, at);
-        assert!(close(pips(utc(2024, 1, 16, 14, 30)), 0.4)); // 09:30 EST
-        assert!(close(pips(utc(2024, 7, 16, 13, 30)), 0.4)); // 09:30 EDT
-        assert!(close(pips(utc(2024, 7, 16, 21, 30)), 1.5)); // 17:30 EDT
-        assert!(close(pips(utc(2024, 1, 16, 21, 30)), 0.6)); // 16:30 EST
+        assert!(close(pips(utc(2024, 1, 16, 14, 30)), 0.5)); // 09:30 EST
+        assert!(close(pips(utc(2024, 7, 16, 13, 30)), 0.5)); // 09:30 EDT
+        assert!(close(pips(utc(2024, 7, 16, 21, 30)), 2.0)); // 17:30 EDT
+        assert!(close(pips(utc(2024, 1, 16, 21, 30)), 1.0)); // 16:30 EST
     }
 
     #[test]
     fn an_unscheduled_spread_is_the_same_at_every_hour() {
-        let m = model("ig_spread_bet", "EURUSD");
+        let m = model("example_spread_bet", "EURUSD");
         for h in 0..24 {
-            assert!(close(half_spread_at(&m, utc(2024, 1, 16, h, 0)), 1.04));
+            assert!(close(half_spread_at(&m, utc(2024, 1, 16, h, 0)), 1.0));
         }
     }
 
@@ -665,7 +666,7 @@ mod tests {
             size in 0.001f64..1e6,
             ps in prop_oneof![Just(PriceSide::Bid), Just(PriceSide::Ask), Just(PriceSide::Mid)],
         ) {
-            let m = with_cost(model("ig_spread_bet", "EURUSD"), |c| {
+            let m = with_cost(model("example_spread_bet", "EURUSD"), |c| {
                 c.spread.pips = spread;
                 c.slippage.points = slip;
                 c.slippage.bps = bps;

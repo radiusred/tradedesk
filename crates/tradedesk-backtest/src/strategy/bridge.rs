@@ -295,7 +295,7 @@ mod tests {
 
     fn ledger(eval: ExitEvaluation) -> Ledger {
         let fx = AccountFx::new("GBP", [("USD".to_owned(), 0.8)]).unwrap();
-        Ledger::new(&CostConfig::builtin(), "ig_spread_bet", eval, fx).unwrap()
+        Ledger::new(&CostConfig::builtin(), "example_spread_bet", eval, fx).unwrap()
     }
 
     /// What happened, for the assertions.

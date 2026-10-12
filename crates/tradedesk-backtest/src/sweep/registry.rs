@@ -437,7 +437,7 @@ mod tests {
             instruments = ["XAUUSD"]
             first_day = "2024-01-01"
             last_day = "2024-03-31"
-            venue = "ig_spread_bet"
+            venue = "example_spread_bet"
             exit_evaluation = {{ mode = "intrabar", both_hit = "stop_first" }}
             account_fx = {{ account_currency = "GBP", rates = {{ USD = 0.8 }} }}
             sizing = {{ kind = "stake_per_point", stake = 1.0 }}

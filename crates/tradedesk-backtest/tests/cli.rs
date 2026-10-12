@@ -39,7 +39,7 @@ instruments = ["XAUUSD"]
 first_day = "2024-03-01"
 last_day = "2024-04-30"
 warmup_days = 60
-venue = "ig_spread_bet"
+venue = "example_spread_bet"
 exit_evaluation = {{ mode = "intrabar", both_hit = "stop_first" }}
 account_fx = {{ account_currency = "GBP", rates = {{ USD = 0.8 }} }}
 sizing = {{ kind = "stake_per_point", stake = 0.01 }}
@@ -122,21 +122,41 @@ impl Scratch {
     fn sweep(&self, spec: &Path, out: &Path) -> Run {
         sweep_in_process(spec, out, &self.dir.join("cache"), false)
     }
+
+    /// `sweep` with `--cost-config costs`.
+    fn sweep_with_costs(&self, spec: &Path, out: &Path, costs: &Path) -> Run {
+        let cache = self.dir.join("cache");
+        let args = [OsStr::new("--cost-config"), costs.as_os_str()];
+        sweep_in_process_with(spec, out, &cache, false, &args)
+    }
 }
 
 /// `sweep` in-process, with the test strategy registered, over `cache`.
 fn sweep_in_process(spec: &Path, out: &Path, cache: &Path, interrupted: bool) -> Run {
+    sweep_in_process_with(spec, out, cache, interrupted, &[])
+}
+
+/// [`sweep_in_process`] with `extra` arguments after the required ones.
+fn sweep_in_process_with(
+    spec: &Path,
+    out: &Path,
+    cache: &Path,
+    interrupted: bool,
+    extra: &[&OsStr],
+) -> Run {
     let mut stdout = Vec::new();
+    let mut args = vec![
+        OsStr::new("tradedesk-backtest"),
+        OsStr::new("sweep"),
+        spec.as_os_str(),
+        OsStr::new("--out"),
+        out.as_os_str(),
+        OsStr::new("--cache-root"),
+        cache.as_os_str(),
+    ];
+    args.extend_from_slice(extra);
     let code = cli::run(
-        [
-            OsStr::new("tradedesk-backtest"),
-            OsStr::new("sweep"),
-            spec.as_os_str(),
-            OsStr::new("--out"),
-            out.as_os_str(),
-            OsStr::new("--cache-root"),
-            cache.as_os_str(),
-        ],
+        args,
         &toy::registry(),
         &mut stdout,
         &AtomicBool::new(interrupted),
@@ -217,6 +237,81 @@ fn a_sweep_streams_json_lines_and_writes_the_registry() {
     let again = s.sweep(&spec, &out);
     assert_eq!(again.code, 0);
     assert_eq!(read_registry(&out).unwrap().len(), 6);
+}
+
+/// The sweep header in `registry`: the spec's `cost_config` and the recorded
+/// `{source, blake3}`.
+fn header_costs(registry: &Path) -> (Option<PathBuf>, String, String) {
+    let records = read_registry(registry).unwrap();
+    let RegistryRecord::Sweep(h) = &records[0] else {
+        panic!("a sweep header first");
+    };
+    (
+        h.spec.cost_config.clone(),
+        h.cost_config.source.clone(),
+        h.cost_config.blake3.clone(),
+    )
+}
+
+#[test]
+fn cost_config_on_the_command_line_is_the_file_the_sweep_records() {
+    let s = Scratch::new("cost-config");
+    // The example with gold's spread widened: a different file, the same schema.
+    let example = include_str!("../config/costs.toml");
+    let text = example.replacen("pips = 40.0,", "pips = 45.0,", 1);
+    assert_ne!(text, example);
+    let costs = s.file("my-costs.toml", &text);
+    let blake3 = blake3::hash(text.as_bytes()).to_hex().to_string();
+
+    // Absent from both spec and command line: the builtin example.
+    let plain = s.file("spec.toml", &spec(""));
+    let builtin = s.path("builtin.jsonl");
+    assert_eq!(s.sweep(&plain, &builtin).code, 0);
+    let (in_spec, source, _) = header_costs(&builtin);
+    assert_eq!((in_spec, source.as_str()), (None, "builtin"));
+
+    // On the command line: recorded in the spec and as the source, with its blake3.
+    let out = s.path("registry.jsonl");
+    let run = s.sweep_with_costs(&plain, &out, &costs);
+    assert_eq!(run.code, 0);
+    let (in_spec, source, hash) = header_costs(&out);
+    assert_eq!(in_spec.as_deref(), Some(costs.as_path()));
+    assert_eq!(source, costs.display().to_string());
+    assert_eq!(hash, blake3);
+    let id = |p: &Path| json_lines(&std::fs::read(p).unwrap())[0]["sweep_id"].clone();
+    assert_ne!(
+        id(&out),
+        id(&builtin),
+        "the cost file is part of the sweep id"
+    );
+
+    // It replaces a cost_config in the spec, even one that does not exist.
+    let elsewhere = s.file(
+        "elsewhere.toml",
+        &spec("").replace(
+            "venue = \"example_spread_bet\"",
+            "venue = \"example_spread_bet\"\ncost_config = \"no-such-costs.toml\"",
+        ),
+    );
+    assert_eq!(s.sweep(&elsewhere, &s.path("no-such.jsonl")).code, 1);
+    let replaced = s.path("replaced.jsonl");
+    assert_eq!(s.sweep_with_costs(&elsewhere, &replaced, &costs).code, 0);
+    let (in_spec, source, hash) = header_costs(&replaced);
+    assert_eq!(in_spec.as_deref(), Some(costs.as_path()));
+    assert_eq!((source, hash), (costs.display().to_string(), blake3));
+
+    // A cost file that is missing or invalid is refused input: exit 1, nothing written.
+    let invalid = s.file("invalid.toml", "[instruments.EURUSD]\nbogus = 1\n");
+    for bad in [s.path("missing-costs.toml"), invalid] {
+        let refused = s.path("refused.jsonl");
+        let run = s.sweep_with_costs(&plain, &refused, &bad);
+        assert_eq!(run.code, 1, "{}", bad.display());
+        assert!(run.stdout.is_empty());
+        assert!(
+            !refused.exists(),
+            "no registry is created for a refused cost file"
+        );
+    }
 }
 
 #[test]
@@ -361,7 +456,7 @@ fn refused_input_exits_1_with_nothing_on_stdout() {
     // Parses, but names a venue the cost config does not have.
     let venue = s.file(
         "venue.toml",
-        &spec("").replace("venue = \"ig_spread_bet\"", "venue = \"nowhere\""),
+        &spec("").replace("venue = \"example_spread_bet\"", "venue = \"nowhere\""),
     );
     // Parses, but names a strategy that is not registered.
     let unknown = s.file(

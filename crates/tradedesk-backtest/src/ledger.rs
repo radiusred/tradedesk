@@ -1048,7 +1048,7 @@ mod tests {
     fn ledger(eval: ExitEvaluation) -> Ledger {
         Ledger::new(
             &crate::cost::config::arithmetic_fixture(),
-            "ig_spread_bet",
+            "example_spread_bet",
             eval,
             fx(),
         )
@@ -1112,7 +1112,7 @@ mod tests {
 
     #[test]
     fn round_trip_with_financing_books_every_field() {
-        // Tuesday 2024-01-16 12:00Z to Thursday 12:00Z: two IG rollovers (Tue and Wed
+        // Tuesday 2024-01-16 12:00Z to Thursday 12:00Z: two London rollovers (Tue and Wed
         // 22:00 GMT), each one day for an index.
         let from = utc(2024, 1, 16, 12, 0);
         let s = spx_series(from, 49, 4800.0, 1.0);
@@ -1148,7 +1148,7 @@ mod tests {
         // Marks: entry 4800 (open of bar 0), exit 4848 (close of bar 48, flat bars).
         assert!(close_to(t.entry_mark, 4800.0));
         assert!(close_to(t.exit_mark, 4848.0));
-        // IG USA500: 0.4-point spread (0.2 half) + 0.1 slippage per fill.
+        // Fixture USA500: 0.4-point spread (0.2 half) + 0.1 slippage per fill.
         assert!(close_to(t.entry_price, 4800.3));
         assert!(close_to(t.exit_price, 4847.7));
         assert!(close_to(t.gross_pnl_quote, 96.0));
@@ -1186,7 +1186,7 @@ mod tests {
         assert_eq!(f[1].exit_reason, Some(ExitReason::Signal));
         assert_eq!(f[0].price_side, PriceSide::Mid);
         assert!(close_to(f[0].raw_price, 4800.0));
-        assert_eq!(f[0].venue, "ig_spread_bet");
+        assert_eq!(f[0].venue, "example_spread_bet");
         assert!(l.open_positions().is_empty());
         assert_eq!(l.closed_trades().len(), 1);
     }
@@ -1194,7 +1194,7 @@ mod tests {
     #[test]
     fn commission_round_trip_and_fx_flow_into_net_pnl() {
         let c = crate::cost::config::arithmetic_fixture();
-        let mut l = Ledger::new(&c, "pepperstone_razor", ExitEvaluation::CloseOnly, fx()).unwrap();
+        let mut l = Ledger::new(&c, "example_ny_cfd", ExitEvaluation::CloseOnly, fx()).unwrap();
         // EURUSD intraday, no rollover: 100,000 units, mid 1.1000 -> 1.1050.
         let at = |h, mid: f64| JoinedBar {
             ts_open_utc: utc(2024, 1, 16, h, 0),
@@ -1234,11 +1234,12 @@ mod tests {
                 &s,
             )
             .unwrap();
-        // Gross 0.0050 x 100,000 = 500 USD. Razor: 0.1-pip spread, 0.2-pip slippage.
+        // Gross 0.0050 x 100,000 = 500 USD. The fixture's CFD: 0.1-pip spread, 0.2-pip
+        // slippage.
         assert!(close_to(t.gross_pnl_quote, 500.0));
         assert!(close_to(t.spread_cost, 2.0 * 0.000_005 * 100_000.0));
         assert!(close_to(t.slippage_cost, 2.0 * 0.000_02 * 100_000.0));
-        // GBP 2.25 each side.
+        // 2.25 each side.
         assert!(close_to(t.commission, 4.5));
         assert_eq!(t.financing, 0.0);
         let net_quote = 500.0 - 1.0 - 4.0 - 4.5 / 0.8;
@@ -1250,21 +1251,21 @@ mod tests {
     fn short_positions_pay_the_short_rate_and_profit_on_a_fall() {
         let from = utc(2024, 1, 19, 12, 0); // Friday
         let s = spx_series(from, 75, 4800.0, -1.0); // to Monday 15:00Z
-        // The first 3.4% index entry in the file is USA500IDXUSD's.
+        // The first 3% index entry in the file is USA500IDXUSD's.
         let config_text = crate::cost::config::BUILTIN_COSTS_TOML.replacen(
-            "long_rate = 0.034, short_rate = 0.034,",
-            "long_rate = 0.034, short_rate = -0.01,",
+            "long_rate = 0.03, short_rate = 0.03,",
+            "long_rate = 0.03, short_rate = -0.01,",
             1,
         );
         assert_ne!(config_text, crate::cost::config::BUILTIN_COSTS_TOML);
         let c = CostConfig::from_toml_str(&config_text).unwrap();
         assert_eq!(
-            c.venue("ig_spread_bet").unwrap().instruments["USA500IDXUSD"]
+            c.venue("example_spread_bet").unwrap().instruments["USA500IDXUSD"]
                 .financing
                 .short_rate,
             -0.01
         );
-        let mut l = Ledger::new(&c, "ig_spread_bet", STOP_FIRST, fx()).unwrap();
+        let mut l = Ledger::new(&c, "example_spread_bet", STOP_FIRST, fx()).unwrap();
         let b0 = &s.bars()[0];
         let id = l
             .open(
@@ -1496,7 +1497,7 @@ mod tests {
         // No FX rate for the quote currency.
         let mut no_usd = Ledger::new(
             &crate::cost::config::arithmetic_fixture(),
-            "ig_spread_bet",
+            "example_spread_bet",
             STOP_FIRST,
             AccountFx::new("GBP", []).unwrap(),
         )
@@ -1541,7 +1542,7 @@ mod tests {
     fn metadata_records_the_mode_fx_and_the_builtin_provenance() {
         let l = Ledger::new(
             &CostConfig::builtin(),
-            "pepperstone_spread_bet",
+            "example_ny_spread_bet",
             ExitEvaluation::Intrabar {
                 both_hit: BothHit::Conservative,
             },
@@ -1549,7 +1550,7 @@ mod tests {
         )
         .unwrap();
         let m = l.metadata();
-        assert_eq!(m.venue, "pepperstone_spread_bet");
+        assert_eq!(m.venue, "example_ny_spread_bet");
         assert_eq!(m.product, Product::SpreadBet);
         assert_eq!(
             m.exit_evaluation,
@@ -1558,10 +1559,10 @@ mod tests {
             }
         );
         assert_eq!(m.account_fx.account_currency(), "GBP");
-        // No builtin figure is a placeholder (task #58).
+        // No builtin figure is a placeholder.
         assert!(m.placeholders.is_empty(), "{:?}", m.placeholders);
-        // Excluded: slippage and carry for all five instruments, the FX and gold funding
-        // mark-up (EURUSD, GBPJPY, XAUUSD), and the GBPJPY spread-bet spread.
+        // Excluded: slippage and carry for all five instruments, the FX and gold financing
+        // (EURUSD, GBPJPY, XAUUSD), and the GBPJPY spread.
         let count = |c| m.exclusions.iter().filter(|e| e.component == c).count();
         assert_eq!(count(CostComponent::Slippage), 5);
         assert_eq!(count(CostComponent::Carry), 5);
@@ -1599,14 +1600,14 @@ mod tests {
 
     #[test]
     fn run_metadata_lists_verified_excluded_and_placeholder_per_component() {
-        // The builtin IG EURUSD entry with its spread turned back into a placeholder.
+        // The builtin example EURUSD entry with its spread turned into a placeholder.
         let text = crate::cost::config::BUILTIN_COSTS_TOML.replacen(
-            "spread = { pips = 1.04, basis = \"average\", placeholder = false",
-            "spread = { pips = 1.04, basis = \"average\", placeholder = true",
+            "spread = { pips = 1.0, basis = \"average\", placeholder = false",
+            "spread = { pips = 1.0, basis = \"average\", placeholder = true",
             1,
         );
         let config = CostConfig::from_toml_str(&text).unwrap();
-        let cost = &config.venue("ig_spread_bet").unwrap().instruments["EURUSD"];
+        let cost = &config.venue("example_spread_bet").unwrap().instruments["EURUSD"];
         let statuses: Vec<(CostComponent, ProvenanceStatus)> = cost
             .provenance()
             .iter()
@@ -1622,7 +1623,7 @@ mod tests {
                 (CostComponent::Carry, ProvenanceStatus::Excluded),
             ]
         );
-        let l = Ledger::new(&config, "ig_spread_bet", STOP_FIRST, fx()).unwrap();
+        let l = Ledger::new(&config, "example_spread_bet", STOP_FIRST, fx()).unwrap();
         let m = l.metadata();
         // The placeholder is listed and makes EURUSD uncosted; nothing else changes.
         let placeholders: Vec<(&str, CostComponent)> = m
@@ -1648,11 +1649,16 @@ mod tests {
         for s in ["GBPJPY", "XAUUSD", "USA500IDXUSD", "DEUIDXEUR"] {
             assert!(m.is_costed(s), "{s}");
         }
-        // IG's FX spreads are averages; gold and the index schedules are minimums.
+        // The example's FX spreads are averages; gold and the index schedules are minimums.
         assert_eq!(m.minimum_spreads, ["DEUIDXEUR", "USA500IDXUSD", "XAUUSD"]);
-        // Every IG instrument is costed in the builtin config.
-        let builtin =
-            Ledger::new(&CostConfig::builtin(), "ig_spread_bet", STOP_FIRST, fx()).unwrap();
+        // Every instrument at the London example venue is costed.
+        let builtin = Ledger::new(
+            &CostConfig::builtin(),
+            "example_spread_bet",
+            STOP_FIRST,
+            fx(),
+        )
+        .unwrap();
         assert!(builtin.metadata().costed.values().all(|c| *c));
         assert_eq!(builtin.metadata().costed.len(), 5);
     }

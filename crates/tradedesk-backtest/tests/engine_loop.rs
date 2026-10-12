@@ -52,7 +52,7 @@ fn fx() -> AccountFx {
 fn config(first: NaiveDate, last: NaiveDate, eval: ExitEvaluation, end: EndOfRun) -> EngineConfig {
     EngineConfig {
         instrument: SYMBOL.to_owned(),
-        venue: "ig_spread_bet".to_owned(),
+        venue: "example_spread_bet".to_owned(),
         exit_evaluation: eval,
         account_fx: fx(),
         sizing: SizingPolicy::StakePerPoint { stake: 1.0 },
@@ -191,13 +191,13 @@ const QUIET: [Day; 5] = [(2062.0, 2066.0, 2058.0, 2063.0); 5];
 #[test]
 fn financing_is_charged_for_each_night_held() {
     let (out, _) = run(&QUIET, INTRABAR, EndOfRun::LeaveOpen);
-    // Held from Sat 2 March 00:00Z to the last close (Thu 7 March 00:00Z): the IG
+    // Held from Sat 2 March 00:00Z to the last close (Thu 7 March 00:00Z): the London
     // rollovers on Mon, Tue and Wed at 22:00 London, one day each (metals triple on
     // Friday). The engine accrued them bar by bar on its own ledger.
     let position = &out.ledger.open_positions()[0];
     assert_eq!(position.financing_days, 3);
     assert_eq!(out.ledger.financing_charges().len(), 3);
-    assert!(position.financing > 0.0, "a long pays the admin fee");
+    assert!(position.financing > 0.0, "a long pays the financing rate");
     for charge in out.ledger.financing_charges() {
         assert_eq!(
             charge.mark_price, 2063.0,
@@ -279,7 +279,8 @@ fn a_divergent_or_missing_input_fails_the_run_instead_of_falling_back() {
 #[test]
 fn sizing_policies_give_the_documented_units() {
     let costs = CostConfig::builtin();
-    let ledger = tradedesk_backtest::Ledger::new(&costs, "ig_spread_bet", INTRABAR, fx()).unwrap();
+    let ledger =
+        tradedesk_backtest::Ledger::new(&costs, "example_spread_bet", INTRABAR, fx()).unwrap();
     let model = ledger.fill_model(SYMBOL).unwrap();
     let entry = Entry {
         direction: Direction::Long,

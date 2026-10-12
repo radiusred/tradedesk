@@ -1,4 +1,4 @@
-//! Metrics over hand-built ledgers on synthetic hourly USA500 bars at IG (spread 0.4
+//! Metrics over hand-built ledgers on synthetic hourly USA500 bars at the arithmetic fixture's London venue (spread 0.4
 //! points, slippage 0.1 a fill, no commission, 3.4% / 360 financing, rollover 22:00Z in
 //! January), USD → GBP at 0.8.
 #![allow(clippy::many_single_char_names)]
@@ -52,7 +52,7 @@ fn rising(from: DateTime<Utc>, hours: i64) -> JoinedSeries {
 fn ledger() -> Ledger {
     Ledger::new(
         &crate::cost::config::arithmetic_fixture(),
-        "ig_spread_bet",
+        "example_spread_bet",
         ExitEvaluation::Intrabar {
             both_hit: BothHit::StopFirst,
         },
@@ -608,7 +608,7 @@ fn metrics_round_trip_through_json_with_their_conventions() {
         r#""risk_free_rate":0.04"#,
         r#""account_currency":"GBP""#,
         r#""mode":"intrabar""#,
-        r#""venue":"ig_spread_bet""#,
+        r#""venue":"example_spread_bet""#,
         r#""component":"carry""#,
         r#""effect":"omitted""#,
         r#""USA500IDXUSD":true"#,

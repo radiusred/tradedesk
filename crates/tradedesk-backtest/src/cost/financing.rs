@@ -1,7 +1,7 @@
 //! Overnight financing on the venue's real rollover calendar.
 //!
-//! A venue rolls positions once per trading day at a local wall-clock time (IG 22:00
-//! `Europe/London`, Pepperstone 17:00 `America/New_York`), so the UTC instant moves with
+//! A venue rolls positions once per trading day at a local wall-clock time (22:00
+//! `Europe/London` at one example venue, 17:00 `America/New_York` at another), so the UTC instant moves with
 //! that zone's daylight saving. A position is charged at a rollover when it is held
 //! across it: opened strictly before the instant and still open strictly after it.
 //!
@@ -185,9 +185,9 @@ mod tests {
 
     #[test]
     fn plain_weekday_overnight_charges_one_day() {
-        // Tuesday 2024-01-16 10:00Z to Wednesday 10:00Z: IG rollover Tue 22:00 GMT.
-        let ig = calendar("ig_spread_bet");
-        let rs = ig.rollovers_between(
+        // Tuesday 2024-01-16 10:00Z to Wednesday 10:00Z: London rollover Tue 22:00 GMT.
+        let london = calendar("example_spread_bet");
+        let rs = london.rollovers_between(
             AssetClass::Index,
             utc(2024, 1, 16, 10, 0),
             utc(2024, 1, 17, 10, 0),
@@ -197,25 +197,28 @@ mod tests {
         assert_eq!(rs[0].days, 1);
         // Intraday: no rollover crossed.
         assert!(
-            ig.rollovers_between(
-                AssetClass::Index,
-                utc(2024, 1, 16, 8, 0),
-                utc(2024, 1, 16, 21, 59)
-            )
-            .is_empty()
+            london
+                .rollovers_between(
+                    AssetClass::Index,
+                    utc(2024, 1, 16, 8, 0),
+                    utc(2024, 1, 16, 21, 59)
+                )
+                .is_empty()
         );
     }
 
     #[test]
     fn rollover_instant_itself_is_not_held_across() {
-        let ig = calendar("ig_spread_bet");
+        let london = calendar("example_spread_bet");
         let r = utc(2024, 1, 16, 22, 0);
         assert!(
-            ig.rollovers_between(AssetClass::Fx, r, utc(2024, 1, 17, 10, 0))
+            london
+                .rollovers_between(AssetClass::Fx, r, utc(2024, 1, 17, 10, 0))
                 .is_empty()
         );
         assert!(
-            ig.rollovers_between(AssetClass::Fx, utc(2024, 1, 16, 10, 0), r)
+            london
+                .rollovers_between(AssetClass::Fx, utc(2024, 1, 16, 10, 0), r)
                 .is_empty()
         );
     }
@@ -223,8 +226,8 @@ mod tests {
     #[test]
     fn index_weekend_is_charged_on_friday_once() {
         // Friday 2024-01-19 12:00Z to Monday 2024-01-22 12:00Z.
-        let ig = calendar("ig_spread_bet");
-        let rs = ig.rollovers_between(
+        let london = calendar("example_spread_bet");
+        let rs = london.rollovers_between(
             AssetClass::Index,
             utc(2024, 1, 19, 12, 0),
             utc(2024, 1, 22, 12, 0),
@@ -241,14 +244,14 @@ mod tests {
 
     #[test]
     fn fx_triple_is_wednesday_and_its_weekend_is_free() {
-        let ig = calendar("ig_spread_bet");
-        let wed = ig.rollovers_between(
+        let london = calendar("example_spread_bet");
+        let wed = london.rollovers_between(
             AssetClass::Fx,
             utc(2024, 1, 17, 12, 0),
             utc(2024, 1, 18, 12, 0),
         );
         assert_eq!(days(&wed), 3);
-        let weekend = ig.rollovers_between(
+        let weekend = london.rollovers_between(
             AssetClass::Fx,
             utc(2024, 1, 19, 12, 0),
             utc(2024, 1, 22, 12, 0),
@@ -259,14 +262,14 @@ mod tests {
     #[test]
     fn metals_follow_each_venues_own_triple_day() {
         let fri_to_mon = (utc(2024, 1, 19, 12, 0), utc(2024, 1, 22, 12, 0));
-        let ig = calendar("ig_spread_bet");
+        let london = calendar("example_spread_bet");
         assert_eq!(
-            days(&ig.rollovers_between(AssetClass::Metal, fri_to_mon.0, fri_to_mon.1)),
+            days(&london.rollovers_between(AssetClass::Metal, fri_to_mon.0, fri_to_mon.1)),
             3
         );
-        let pep = calendar("pepperstone_razor");
+        let ny = calendar("example_ny_cfd");
         assert_eq!(
-            days(&pep.rollovers_between(AssetClass::Metal, fri_to_mon.0, fri_to_mon.1)),
+            days(&ny.rollovers_between(AssetClass::Metal, fri_to_mon.0, fri_to_mon.1)),
             1
         );
     }
@@ -274,9 +277,9 @@ mod tests {
     #[test]
     fn a_full_week_charges_seven_days_for_every_class_and_venue() {
         for venue in [
-            "ig_spread_bet",
-            "pepperstone_spread_bet",
-            "pepperstone_razor",
+            "example_spread_bet",
+            "example_ny_spread_bet",
+            "example_ny_cfd",
         ] {
             let cal = calendar(venue);
             for class in [AssetClass::Fx, AssetClass::Metal, AssetClass::Index] {
@@ -290,34 +293,34 @@ mod tests {
 
     #[test]
     fn london_rollover_moves_with_bst() {
-        let ig = calendar("ig_spread_bet");
+        let london = calendar("example_spread_bet");
         // UK clocks go forward Sunday 2024-03-31 and back Sunday 2024-10-27.
         assert_eq!(
-            ig.instant_on(NaiveDate::from_ymd_opt(2024, 3, 29).unwrap()),
+            london.instant_on(NaiveDate::from_ymd_opt(2024, 3, 29).unwrap()),
             utc(2024, 3, 29, 22, 0)
         );
         assert_eq!(
-            ig.instant_on(NaiveDate::from_ymd_opt(2024, 4, 1).unwrap()),
+            london.instant_on(NaiveDate::from_ymd_opt(2024, 4, 1).unwrap()),
             utc(2024, 4, 1, 21, 0)
         );
         assert_eq!(
-            ig.instant_on(NaiveDate::from_ymd_opt(2024, 10, 25).unwrap()),
+            london.instant_on(NaiveDate::from_ymd_opt(2024, 10, 25).unwrap()),
             utc(2024, 10, 25, 21, 0)
         );
         assert_eq!(
-            ig.instant_on(NaiveDate::from_ymd_opt(2024, 10, 28).unwrap()),
+            london.instant_on(NaiveDate::from_ymd_opt(2024, 10, 28).unwrap()),
             utc(2024, 10, 28, 22, 0)
         );
         // A position opened Monday 2024-04-01 21:30Z is past that day's 21:00Z rollover:
         // the GMT clock would have charged it, the BST clock does not.
-        let rs = ig.rollovers_between(
+        let rs = london.rollovers_between(
             AssetClass::Index,
             utc(2024, 4, 1, 21, 30),
             utc(2024, 4, 1, 23, 0),
         );
         assert!(rs.is_empty());
         // Across the spring change weekend: Friday GMT rollover, then Monday BST rollover.
-        let rs = ig.rollovers_between(
+        let rs = london.rollovers_between(
             AssetClass::Index,
             utc(2024, 3, 29, 12, 0),
             utc(2024, 4, 2, 12, 0),
@@ -331,34 +334,34 @@ mod tests {
 
     #[test]
     fn new_york_rollover_moves_with_edt_including_the_weeks_london_disagrees() {
-        let pep = calendar("pepperstone_razor");
+        let ny = calendar("example_ny_cfd");
         // US clocks go forward Sunday 2024-03-10 and back Sunday 2024-11-03.
         assert_eq!(
-            pep.instant_on(NaiveDate::from_ymd_opt(2024, 3, 8).unwrap()),
+            ny.instant_on(NaiveDate::from_ymd_opt(2024, 3, 8).unwrap()),
             utc(2024, 3, 8, 22, 0)
         );
         assert_eq!(
-            pep.instant_on(NaiveDate::from_ymd_opt(2024, 3, 11).unwrap()),
+            ny.instant_on(NaiveDate::from_ymd_opt(2024, 3, 11).unwrap()),
             utc(2024, 3, 11, 21, 0)
         );
         assert_eq!(
-            pep.instant_on(NaiveDate::from_ymd_opt(2024, 11, 1).unwrap()),
+            ny.instant_on(NaiveDate::from_ymd_opt(2024, 11, 1).unwrap()),
             utc(2024, 11, 1, 21, 0)
         );
         assert_eq!(
-            pep.instant_on(NaiveDate::from_ymd_opt(2024, 11, 4).unwrap()),
+            ny.instant_on(NaiveDate::from_ymd_opt(2024, 11, 4).unwrap()),
             utc(2024, 11, 4, 22, 0)
         );
         // 2024-03-11 to 2024-03-29 New York is on EDT and London on GMT: both venues roll
-        // at 22:00 London on 2024-03-12, but Pepperstone rolls an hour earlier, 21:00Z.
-        let ig = calendar("ig_spread_bet");
+        // at 22:00 London on 2024-03-12, but the New York venues roll an hour earlier, 21:00Z.
+        let london = calendar("example_spread_bet");
         let d = NaiveDate::from_ymd_opt(2024, 3, 12).unwrap();
-        assert_eq!(pep.instant_on(d), utc(2024, 3, 12, 21, 0));
-        assert_eq!(ig.instant_on(d), utc(2024, 3, 12, 22, 0));
-        // A position opened at 21:30Z that day is charged by IG, not by Pepperstone.
+        assert_eq!(ny.instant_on(d), utc(2024, 3, 12, 21, 0));
+        assert_eq!(london.instant_on(d), utc(2024, 3, 12, 22, 0));
+        // A position opened at 21:30Z that day is charged in London, not in New York.
         let (a, b) = (utc(2024, 3, 12, 21, 30), utc(2024, 3, 13, 9, 0));
-        assert_eq!(ig.rollovers_between(AssetClass::Index, a, b).len(), 1);
-        assert!(pep.rollovers_between(AssetClass::Index, a, b).is_empty());
+        assert_eq!(london.rollovers_between(AssetClass::Index, a, b).len(), 1);
+        assert!(ny.rollovers_between(AssetClass::Index, a, b).is_empty());
     }
 
     #[test]
@@ -389,7 +392,7 @@ mod tests {
             start in 0i64..(3 * 365 * 24 * 60),
             len in 1i64..(40 * 24 * 60),
             cut_permille in 0i64..=1000,
-            venue in prop_oneof![Just("ig_spread_bet"), Just("pepperstone_razor")],
+            venue in prop_oneof![Just("example_spread_bet"), Just("example_ny_cfd")],
             class in prop_oneof![Just(AssetClass::Fx), Just(AssetClass::Metal), Just(AssetClass::Index)],
         ) {
             let cal = calendar(venue);
@@ -415,7 +418,7 @@ mod tests {
         fn whole_weeks_charge_seven_days_per_week(
             start in 0i64..(3 * 365 * 24 * 60),
             weeks in 1i64..20,
-            venue in prop_oneof![Just("ig_spread_bet"), Just("pepperstone_spread_bet")],
+            venue in prop_oneof![Just("example_spread_bet"), Just("example_ny_spread_bet")],
             class in prop_oneof![Just(AssetClass::Fx), Just(AssetClass::Metal), Just(AssetClass::Index)],
         ) {
             let cal = calendar(venue);

@@ -29,7 +29,7 @@ base = "default"
 instruments = ["XAUUSD", "EURUSD"]
 first_day = "2024-01-01"
 last_day = "2024-05-02"
-venue = "ig_spread_bet"
+venue = "example_spread_bet"
 exit_evaluation = { mode = "intrabar", both_hit = "stop_first" }
 account_fx = { account_currency = "GBP", rates = { USD = 0.8 } }
 sizing = { kind = "stake_per_point", stake = 0.01 }
@@ -127,7 +127,7 @@ fn the_data_is_loaded_once_and_failed_cells_are_recorded() {
                 assert_eq!(trades.len(), metrics.trades.count);
                 let net: f64 = trades.iter().map(|x| x.net_pnl_account).sum();
                 assert!((net - metrics.trades.net_pnl).abs() < 1e-6);
-                assert_eq!(metrics.run.venue, "ig_spread_bet");
+                assert_eq!(metrics.run.venue, "example_spread_bet");
                 // Task #58: no builtin placeholder; the trial is costed.
                 assert!(metrics.run.placeholders.is_empty());
                 assert!(metrics.run.is_costed(&t.instrument), "{}", t.instrument);
@@ -304,10 +304,10 @@ fn a_cancelled_sweep_writes_whole_records_and_says_so() {
 
 #[test]
 fn a_trial_on_a_placeholder_figure_is_not_costed_and_neither_is_its_sweep() {
-    // The builtin config with IG's EURUSD spread turned back into a placeholder.
+    // The builtin example with its London EURUSD spread turned into a placeholder.
     let text = tradedesk_backtest::cost::config::BUILTIN_COSTS_TOML.replacen(
-        "spread = { pips = 1.04, basis = \"average\", placeholder = false",
-        "spread = { pips = 1.04, basis = \"average\", placeholder = true",
+        "spread = { pips = 1.0, basis = \"average\", placeholder = false",
+        "spread = { pips = 1.0, basis = \"average\", placeholder = true",
         1,
     );
     let path = std::path::Path::new(env!("CARGO_TARGET_TMPDIR")).join("costs_placeholder.toml");
