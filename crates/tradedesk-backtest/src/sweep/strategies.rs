@@ -17,6 +17,7 @@
 //!         match base {
 //!             BaseConfig::Default => Ok(serde_json::json!({ "period": 20 })),
 //!             BaseConfig::Frozen => Err("no frozen config; use base = \"default\"".into()),
+//!             BaseConfig::Explicit => Err("a sweep never asks for an explicit base".into()),
 //!         }
 //!     }
 //!
@@ -47,6 +48,10 @@ pub trait StrategyFactory: Send + Sync {
     /// The config every cell of a sweep starts from, as JSON. A cell sets its parameters
     /// by dotted path in it, and a path that is absent is a spec error, so every field a
     /// sweep may vary must be present.
+    ///
+    /// A sweep never asks for [`BaseConfig::Explicit`]. Under that base it asks for
+    /// [`BaseConfig::Default`] and uses only its paths, as the set of fields every cell
+    /// must set. So the default config should serialise every field, `None` included.
     ///
     /// # Errors
     /// A message when the strategy has no config for `base`.

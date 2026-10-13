@@ -27,6 +27,13 @@
 //! own validation. A path absent from the base config is a spec error, found before
 //! anything runs; a value the strategy rejects is that cell's failure.
 //!
+//! **Explicit base.** Under [`BaseConfig::Explicit`] the cell alone is the config. The
+//! strategy's default config, serialised, gives the schema: its leaf paths, never its
+//! values. A cell must set every leaf path (except the derived price-scale path below)
+//! and nothing else, and the config is built from the cell's values only. A field with
+//! a serde default is required like any other. A missing or unknown path is a spec
+//! error, found before anything runs.
+//!
 //! **Price scale.** When the strategy's factory names a config path for it
 //! ([`StrategyFactory::raw_scale_path`]), every cell's value there is set to its
 //! instrument's `raw_scale` from the cost config, so a signal that depends on the price
@@ -99,6 +106,10 @@ pub enum BaseConfig {
     Frozen,
     /// The strategy's defaults.
     Default,
+    /// No base: each cell is the whole config and must set every field. The strategy's
+    /// default config gives the set of fields (its leaf paths) and none of its values.
+    /// A factory is never asked for this base.
+    Explicit,
 }
 
 /// The run's FX table as written in a spec; validated by [`AccountFx::new`].
@@ -275,6 +286,134 @@ fn set_path(target: &mut Value, path: &str, value: Value) -> Result<(), String> 
     Err(format!("{path:?}: empty parameter path"))
 }
 
+/// Insert `value` at the dotted `path` in `target`, adding objects for missing
+/// segments.
+fn insert_path(target: &mut Value, path: &str, value: Value) -> Result<(), String> {
+    let mut node = target;
+    let mut segments = path.split('.').peekable();
+    while let Some(segment) = segments.next() {
+        let Value::Object(map) = node else {
+            return Err(format!("{path:?}: {segment:?} is not inside an object"));
+        };
+        if segments.peek().is_none() {
+            map.insert(segment.to_owned(), value);
+            return Ok(());
+        }
+        node = map
+            .entry(segment)
+            .or_insert_with(|| Value::Object(serde_json::Map::new()));
+    }
+    Err(format!("{path:?}: empty parameter path"))
+}
+
+/// The dotted paths to the leaves of `config`: every value that is not a non-empty
+/// object, in sorted order.
+fn leaf_paths(config: &Value) -> BTreeSet<String> {
+    fn walk(value: &Value, prefix: &str, out: &mut BTreeSet<String>) {
+        match value {
+            Value::Object(map) if !map.is_empty() => {
+                for (key, child) in map {
+                    let path = if prefix.is_empty() {
+                        key.clone()
+                    } else {
+                        format!("{prefix}.{key}")
+                    };
+                    walk(child, &path, out);
+                }
+            }
+            _ => {
+                out.insert(prefix.to_owned());
+            }
+        }
+    }
+    let mut out = BTreeSet::new();
+    walk(config, "", &mut out);
+    out
+}
+
+/// How a cell becomes a config: set paths in a base config, or (explicit base) build
+/// it from the cell's paths alone, which must be exactly `required`.
+enum Resolver {
+    Base(Value),
+    Explicit {
+        leaves: BTreeSet<String>,
+        required: BTreeSet<String>,
+    },
+}
+
+impl Resolver {
+    fn new(spec: &SweepSpec, factory: &dyn StrategyFactory) -> Result<Self, String> {
+        if spec.base != BaseConfig::Explicit {
+            return factory.base_config(spec.base).map(Self::Base);
+        }
+        let schema = factory.base_config(BaseConfig::Default).map_err(|e| {
+            format!(
+                "base = \"explicit\" takes the set of fields from the strategy's default \
+                 config, and it has none: {e}"
+            )
+        })?;
+        let leaves = leaf_paths(&schema);
+        let mut required = leaves.clone();
+        if let Some(path) = factory.raw_scale_path() {
+            if !required.remove(path) {
+                return Err(format!(
+                    "{path:?}: no field {path:?} in the strategy's config"
+                ));
+            }
+        }
+        Ok(Self::Explicit { leaves, required })
+    }
+
+    /// Set the derived price scale at `path` in a resolved `config`.
+    fn set_raw_scale(&self, config: &mut Value, path: &str, raw_scale: f64) -> Result<(), String> {
+        match self {
+            Self::Base(_) => set_path(config, path, Value::from(raw_scale)),
+            Self::Explicit { .. } => insert_path(config, path, Value::from(raw_scale)),
+        }
+    }
+
+    /// The config of the cell at `index` with `params`, before the price scale is set.
+    fn resolve(&self, index: usize, params: &BTreeMap<String, Value>) -> Result<Value, String> {
+        match self {
+            Self::Base(base) => {
+                let mut config = base.clone();
+                for (path, value) in params {
+                    set_path(&mut config, path, value.clone())?;
+                }
+                Ok(config)
+            }
+            Self::Explicit { leaves, required } => {
+                if let Some(path) = params.keys().find(|p| !leaves.contains(*p)) {
+                    let prefix = format!("{path}.");
+                    return Err(if leaves.iter().any(|l| l.starts_with(&prefix)) {
+                        format!(
+                            "{path:?} names an object; under base = \"explicit\" set its \
+                             fields one by one"
+                        )
+                    } else {
+                        format!("{path:?}: no such field in the strategy's config")
+                    });
+                }
+                let missing: Vec<_> = required
+                    .iter()
+                    .filter(|p| !params.contains_key(*p))
+                    .collect();
+                if !missing.is_empty() {
+                    return Err(format!(
+                        "cell {index} does not set {missing:?}; under base = \"explicit\" a \
+                         cell sets every field"
+                    ));
+                }
+                let mut config = Value::Object(serde_json::Map::new());
+                for (path, value) in params {
+                    insert_path(&mut config, path, value.clone())?;
+                }
+                Ok(config)
+            }
+        }
+    }
+}
+
 /// One cell, resolved as far as it goes before running.
 struct Cell {
     index: usize,
@@ -395,7 +534,7 @@ impl<'a> Prepared<'a> {
         let mut run = ledger.metadata().clone();
         run.end_of_run = Some(EndOfRunRule::new(spec.end_of_run));
 
-        let base = factory.base_config(spec.base).map_err(SweepError::Spec)?;
+        let resolver = Resolver::new(spec, factory).map_err(SweepError::Spec)?;
         let parameter_cells = spec.parameter_cells();
         let mut cells = Vec::new();
         let mut timeframes = BTreeSet::new();
@@ -408,13 +547,11 @@ impl<'a> Prepared<'a> {
                 .ok_or_else(|| {
                     SweepError::Spec(format!("no instrument spec for {instrument:?}"))
                 })?;
-            for params in &parameter_cells {
-                let mut config = base.clone();
-                for (path, value) in params {
-                    set_path(&mut config, path, value.clone()).map_err(SweepError::Spec)?;
-                }
+            for (index, params) in parameter_cells.iter().enumerate() {
+                let mut config = resolver.resolve(index, params).map_err(SweepError::Spec)?;
                 if let Some(path) = factory.raw_scale_path() {
-                    set_path(&mut config, path, Value::from(raw_scale))
+                    resolver
+                        .set_raw_scale(&mut config, path, raw_scale)
                         .map_err(SweepError::Spec)?;
                 }
                 // Build once here to learn the timeframes and to check the values.
@@ -909,6 +1046,58 @@ mod tests {
         assert!(set_path(&mut v, "a.x", Value::from(1)).is_err());
         assert!(set_path(&mut v, "c.d", Value::from(1)).is_err());
         assert!(set_path(&mut v, "", Value::from(1)).is_err());
+    }
+
+    #[test]
+    fn insert_path_adds_missing_objects() {
+        let mut v = serde_json::json!({});
+        insert_path(&mut v, "a.b", Value::from(1)).unwrap();
+        insert_path(&mut v, "a.c", Value::from(2)).unwrap();
+        insert_path(&mut v, "d", Value::Null).unwrap();
+        assert_eq!(v, serde_json::json!({"a": {"b": 1, "c": 2}, "d": null}));
+        assert!(insert_path(&mut v, "d.e", Value::from(1)).is_err());
+        assert!(insert_path(&mut v, "a.b.x", Value::from(1)).is_err());
+    }
+
+    #[test]
+    fn leaf_paths_are_every_value_but_a_non_empty_object() {
+        let v = serde_json::json!({"a": {"b": 1, "c": {"d": [1, 2]}}, "e": null, "f": {}});
+        let leaves: Vec<_> = leaf_paths(&v).into_iter().collect();
+        assert_eq!(leaves, ["a.b", "a.c.d", "e", "f"]);
+    }
+
+    #[test]
+    fn an_explicit_cell_sets_every_leaf_and_names_no_object() {
+        let leaves = leaf_paths(&serde_json::json!({"a": {"b": 1, "c": 2}, "d": null}));
+        let resolver = Resolver::Explicit {
+            required: leaves.clone(),
+            leaves,
+        };
+        let cell = |pairs: &[(&str, Value)]| -> BTreeMap<String, Value> {
+            pairs
+                .iter()
+                .map(|(k, v)| ((*k).to_owned(), v.clone()))
+                .collect()
+        };
+        let config = resolver
+            .resolve(
+                0,
+                &cell(&[("a.b", 5.into()), ("a.c", 6.into()), ("d", 7.into())]),
+            )
+            .unwrap();
+        assert_eq!(config, serde_json::json!({"a": {"b": 5, "c": 6}, "d": 7}));
+        // A whole object is refused, even when it would be complete.
+        let e = resolver
+            .resolve(
+                0,
+                &cell(&[("a", serde_json::json!({"b": 5, "c": 6})), ("d", 7.into())]),
+            )
+            .unwrap_err();
+        assert!(e.contains("\"a\" names an object"), "{e}");
+        let e = resolver
+            .resolve(3, &cell(&[("a.b", 5.into())]))
+            .unwrap_err();
+        assert!(e.contains("cell 3") && e.contains(r#"["a.c", "d"]"#), "{e}");
     }
 
     #[test]
