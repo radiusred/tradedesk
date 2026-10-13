@@ -28,11 +28,13 @@
 //! anything runs; a value the strategy rejects is that cell's failure.
 //!
 //! **Explicit base.** Under [`BaseConfig::Explicit`] the cell alone is the config. The
-//! strategy's default config, serialised, gives the schema: its leaf paths, never its
+//! factory's schema for the cell ([`StrategyFactory::explicit_schema`]; by default the
+//! strategy's default config, serialised) gives the fields: its leaf paths, never its
 //! values. A cell must set every leaf path (except the derived price-scale path below)
 //! and nothing else, and the config is built from the cell's values only. A field with
 //! a serde default is required like any other. A missing or unknown path is a spec
-//! error, found before anything runs.
+//! error, found before anything runs. A strategy whose config has more than one form
+//! gives each cell the schema of its own form, so one sweep can hold cells of each.
 //!
 //! **Price scale.** When the strategy's factory names a config path for it
 //! ([`StrategyFactory::raw_scale_path`]), every cell's value there is set to its
@@ -106,8 +108,10 @@ pub enum BaseConfig {
     Frozen,
     /// The strategy's defaults.
     Default,
-    /// No base: each cell is the whole config and must set every field. The strategy's
-    /// default config gives the set of fields (its leaf paths) and none of its values.
+    /// No base: each cell is the whole config and must set every field. The factory's
+    /// schema for the cell ([`StrategyFactory::explicit_schema`]; by default the
+    /// strategy's default config) gives the set of fields (its leaf paths) and none of
+    /// its values.
     /// A factory is never asked for this base.
     Explicit,
 }
@@ -342,16 +346,22 @@ enum Resolver {
 }
 
 impl Resolver {
-    fn new(spec: &SweepSpec, factory: &dyn StrategyFactory) -> Result<Self, String> {
-        if spec.base != BaseConfig::Explicit {
-            return factory.base_config(spec.base).map(Self::Base);
-        }
-        let schema = factory.base_config(BaseConfig::Default).map_err(|e| {
-            format!(
-                "base = \"explicit\" takes the set of fields from the strategy's default \
-                 config, and it has none: {e}"
-            )
-        })?;
+    /// The resolver of a sweep whose base is not explicit: its one base config.
+    fn base(spec: &SweepSpec, factory: &dyn StrategyFactory) -> Result<Self, String> {
+        factory.base_config(spec.base).map(Self::Base)
+    }
+
+    /// Under the explicit base, the resolver of the cell at `index` with `params`: the
+    /// leaf paths of the factory's schema for that cell, less the derived price-scale
+    /// path.
+    fn explicit(
+        index: usize,
+        params: &BTreeMap<String, Value>,
+        factory: &dyn StrategyFactory,
+    ) -> Result<Self, String> {
+        let schema = factory
+            .explicit_schema(params)
+            .map_err(|e| format!("cell {index}: {e}"))?;
         let leaves = leaf_paths(&schema);
         let mut required = leaves.clone();
         if let Some(path) = factory.raw_scale_path() {
@@ -410,6 +420,39 @@ impl Resolver {
                 }
                 Ok(config)
             }
+        }
+    }
+}
+
+/// The resolver of each parameter cell: one base config for every cell, or under the
+/// explicit base one field set per cell ([`StrategyFactory::explicit_schema`]).
+enum Resolvers {
+    Shared(Resolver),
+    PerCell(Vec<Resolver>),
+}
+
+impl Resolvers {
+    fn new(
+        spec: &SweepSpec,
+        factory: &dyn StrategyFactory,
+        cells: &[BTreeMap<String, Value>],
+    ) -> Result<Self, String> {
+        if spec.base != BaseConfig::Explicit {
+            return Resolver::base(spec, factory).map(Self::Shared);
+        }
+        cells
+            .iter()
+            .enumerate()
+            .map(|(index, params)| Resolver::explicit(index, params, factory))
+            .collect::<Result<_, _>>()
+            .map(Self::PerCell)
+    }
+
+    /// The resolver of the parameter cell at `index`.
+    fn get(&self, index: usize) -> &Resolver {
+        match self {
+            Self::Shared(resolver) => resolver,
+            Self::PerCell(resolvers) => &resolvers[index],
         }
     }
 }
@@ -534,8 +577,9 @@ impl<'a> Prepared<'a> {
         let mut run = ledger.metadata().clone();
         run.end_of_run = Some(EndOfRunRule::new(spec.end_of_run));
 
-        let resolver = Resolver::new(spec, factory).map_err(SweepError::Spec)?;
         let parameter_cells = spec.parameter_cells();
+        let resolvers =
+            Resolvers::new(spec, factory, &parameter_cells).map_err(SweepError::Spec)?;
         let mut cells = Vec::new();
         let mut timeframes = BTreeSet::new();
         for instrument in &spec.instruments {
@@ -548,6 +592,7 @@ impl<'a> Prepared<'a> {
                     SweepError::Spec(format!("no instrument spec for {instrument:?}"))
                 })?;
             for (index, params) in parameter_cells.iter().enumerate() {
+                let resolver = resolvers.get(index);
                 let mut config = resolver.resolve(index, params).map_err(SweepError::Spec)?;
                 if let Some(path) = factory.raw_scale_path() {
                     resolver

@@ -2,7 +2,9 @@
 //! runs and its values are the trial's recorded config; a cell that omits a field, a
 //! field with a serde default included, is refused with the path before any trial
 //! runs; an unknown path is refused; a grid expands to complete cells. The strategy is
-//! the test strategy (`toy`), on synthetic bars.
+//! the test strategy (`toy`), on synthetic bars. A factory with two config forms (#190)
+//! gives each cell the fields of its own form: cells of both forms run in one sweep, and
+//! a cell that mixes them or omits a field of its form is refused.
 #![allow(clippy::float_cmp)]
 
 mod synthetic;
@@ -299,4 +301,185 @@ fn explicit_base_needs_the_strategys_default_config_for_its_fields() {
         err.contains("default config") && err.contains("explicit"),
         "{err}"
     );
+}
+
+#[test]
+fn the_default_explicit_schema_is_the_default_config_for_every_cell() {
+    let strategies = toy::registry();
+    let factory = strategies.get(toy::NAME).unwrap();
+    let default = factory.base_config(BaseConfig::Default).unwrap();
+    for cell in [BTreeMap::new(), complete_cell()] {
+        assert_eq!(factory.explicit_schema(&cell).unwrap(), default);
+    }
+}
+
+/// A strategy whose config has two forms, chosen by its `form` field, each with fields
+/// the other refuses: `levels` (the test strategy's own config) and `band` (a centre
+/// and a half width in place of `enter_above` and `exit_below`). Both build the test
+/// strategy.
+struct TwoForms;
+
+impl TwoForms {
+    fn levels() -> Value {
+        let mut schema = toy::ThresholdFactory
+            .base_config(BaseConfig::Default)
+            .unwrap();
+        schema["form"] = json!("levels");
+        schema
+    }
+
+    fn band() -> Value {
+        let mut schema = Self::levels();
+        let map = schema.as_object_mut().unwrap();
+        map.remove("enter_above");
+        map.remove("exit_below");
+        map.insert("form".into(), json!("band"));
+        map.insert("centre".into(), json!(203_000.0));
+        map.insert("half_width".into(), json!(0.0));
+        schema
+    }
+}
+
+impl StrategyFactory for TwoForms {
+    fn base_config(&self, base: BaseConfig) -> Result<Value, String> {
+        match base {
+            BaseConfig::Default => Ok(Self::levels()),
+            BaseConfig::Frozen | BaseConfig::Explicit => Err("no such config".into()),
+        }
+    }
+
+    fn explicit_schema(&self, cell: &BTreeMap<String, Value>) -> Result<Value, String> {
+        match cell.get("form").and_then(Value::as_str) {
+            Some("levels") => Ok(Self::levels()),
+            Some("band") => Ok(Self::band()),
+            other => Err(format!("form {other:?}: expected \"levels\" or \"band\"")),
+        }
+    }
+
+    fn build(&self, config: Value) -> Result<BoxedStrategy, String> {
+        let Value::Object(mut map) = config else {
+            return Err("the config is not an object".into());
+        };
+        let form = map.remove("form");
+        if form == Some(json!("band")) {
+            let field = |map: &mut serde_json::Map<String, Value>, key: &str| {
+                map.remove(key)
+                    .and_then(|v| v.as_f64())
+                    .ok_or_else(|| format!("band: no {key:?}"))
+            };
+            let centre = field(&mut map, "centre")?;
+            let half_width = field(&mut map, "half_width")?;
+            map.insert("enter_above".into(), json!(centre + half_width));
+            map.insert("exit_below".into(), json!(centre - half_width));
+        } else if form != Some(json!("levels")) {
+            return Err(format!("unknown form {form:?}"));
+        }
+        toy::ThresholdFactory.build(Value::Object(map))
+    }
+
+    fn raw_scale_path(&self) -> Option<&str> {
+        Some("price_scale")
+    }
+}
+
+/// A complete `band` cell with the same levels as [`complete_cell`].
+fn band_cell() -> BTreeMap<String, Value> {
+    let mut cell = complete_cell();
+    cell.remove("enter_above");
+    cell.remove("exit_below");
+    cell.insert("form".into(), json!("band"));
+    cell.insert("centre".into(), json!(205_000.0));
+    cell.insert("half_width".into(), json!(1_000.0));
+    cell
+}
+
+fn levels_cell() -> BTreeMap<String, Value> {
+    let mut cell = complete_cell();
+    cell.insert("form".into(), json!("levels"));
+    cell
+}
+
+fn two_forms_spec(cells: Vec<BTreeMap<String, Value>>) -> SweepSpec {
+    let mut spec = spec("explicit", cells);
+    spec.strategy = "two_forms".into();
+    spec
+}
+
+fn two_forms_registry() -> tradedesk_backtest::sweep::StrategyRegistry {
+    let mut strategies = toy::registry();
+    strategies.register("two_forms", TwoForms).unwrap();
+    strategies
+}
+
+#[test]
+fn cells_of_two_forms_run_in_one_sweep_each_against_its_own_fields() {
+    let strategies = two_forms_registry();
+    let spec = two_forms_spec(vec![levels_cell(), band_cell()]);
+    validate_spec(&spec, &strategies).unwrap();
+    let mut records = Vec::new();
+    let summary = run_sweep(&spec, &strategies, &reader(), &mut records).unwrap();
+    assert_eq!((summary.cells, summary.ok, summary.failed), (2, 2, 0));
+    let trials = trials(&records);
+    let [levels, band] = trials.as_slice() else {
+        panic!("two trials");
+    };
+    // Each trial records its own cell as its config, plus the derived scale.
+    assert_eq!(levels.params, levels_cell());
+    assert_eq!(band.params, band_cell());
+    assert_eq!(
+        levels.config.as_ref().unwrap(),
+        &expected_config(&levels_cell())
+    );
+    assert_eq!(
+        band.config.as_ref().unwrap(),
+        &expected_config(&band_cell())
+    );
+    assert_ne!(levels.trial_id, band.trial_id);
+    // The two cells give the same levels, so the same trades.
+    assert!(matches!(levels.outcome, TrialOutcome::Ok { .. }));
+    assert_eq!(levels.outcome, band.outcome);
+}
+
+#[test]
+fn a_cell_that_mixes_the_forms_or_omits_a_field_of_its_form_is_refused() {
+    let strategies = two_forms_registry();
+    let refused = |cell: BTreeMap<String, Value>| {
+        let spec = two_forms_spec(vec![levels_cell(), cell]);
+        let err = validate_spec(&spec, &strategies).unwrap_err().to_string();
+        // The sweep refuses the same way: nothing is loaded or written.
+        let reader = reader();
+        let mut records = Vec::new();
+        let run = run_sweep(&spec, &strategies, &reader, &mut records).unwrap_err();
+        assert_eq!(run.to_string(), err);
+        assert!(records.is_empty() && reader.reads().is_empty(), "{err}");
+        err
+    };
+    // A band cell that also sets a levels field: unknown to its form.
+    let mut cell = band_cell();
+    cell.insert("enter_above".into(), json!(206_000.0));
+    let err = refused(cell);
+    assert!(err.contains("\"enter_above\": no such field"), "{err}");
+    // A levels cell that also sets a band field.
+    let mut cell = levels_cell();
+    cell.insert("centre".into(), json!(205_000.0));
+    let err = refused(cell);
+    assert!(err.contains("\"centre\": no such field"), "{err}");
+    // A band cell that omits a field of its form, with the levels it replaces set.
+    let mut cell = band_cell();
+    cell.remove("half_width");
+    cell.insert("enter_above".into(), json!(206_000.0));
+    let err = refused(cell);
+    assert!(err.contains("\"enter_above\""), "{err}");
+    let mut cell = band_cell();
+    cell.remove("half_width");
+    let err = refused(cell);
+    assert!(
+        err.contains("cell 1") && err.contains(r#"["half_width"]"#),
+        "{err}"
+    );
+    // A cell that names no form has no schema; the factory's message names the cell.
+    let mut cell = band_cell();
+    cell.remove("form");
+    let err = refused(cell);
+    assert!(err.contains("cell 1") && err.contains("form None"), "{err}");
 }

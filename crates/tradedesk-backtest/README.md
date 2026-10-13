@@ -642,10 +642,13 @@ A sweep runs a strategy by name. A `StrategyRegistry` maps each name to a
 ```rust
 pub trait StrategyFactory: Send + Sync {
     /// The config every cell starts from, as JSON: `base` is the spec's `base`.
-    /// Never called with `Explicit`; under that base the sweep asks for `Default`.
+    /// Never called with `Explicit`; under that base the sweep asks `explicit_schema`.
     fn base_config(&self, base: BaseConfig) -> Result<Value, String>;
     /// Build the strategy from a resolved config, refusing unknown fields.
     fn build(&self, config: Value) -> Result<BoxedStrategy, String>;
+    /// Under `base = "explicit"`, the schema of one cell (its leaf paths are the
+    /// fields the cell must set). Default: `base_config(BaseConfig::Default)`.
+    fn explicit_schema(&self, cell: &BTreeMap<String, Value>) -> Result<Value, String> { .. }
     /// The config path the sweep writes each instrument's `raw_scale` into, if any.
     fn raw_scale_path(&self) -> Option<&str> { None }
 }
@@ -710,7 +713,8 @@ A value the strategy rejects becomes that cell's recorded failure.
 #### Explicit base
 
 Under `base = "explicit"` there is no base: each cell alone is the strategy's
-config. The sweep takes the set of fields from the strategy's default config,
+config. The sweep takes each cell's set of fields from the factory's schema
+for that cell (`explicit_schema`), by default the strategy's default config,
 serialised to JSON. It uses its **leaf paths** (the dotted paths to values
 that are not non-empty objects) and none of its values.
 - A cell must set every leaf path, except the factory's `raw_scale_path`,
@@ -723,6 +727,18 @@ that are not non-empty objects) and none of its values.
   `config` holds the cell's value for every field.
 - A strategy with no default config cannot use explicit base, and the spec is
   refused with that reason.
+
+**A config with more than one form.** Some strategies take one of several
+config forms, each with fields the others refuse (a field of the config names
+the form). The default schema is one form only, so under it every cell of
+another form is refused. Such a factory overrides `explicit_schema` to return
+the schema of the form the cell names. The sweep asks once per cell and checks
+each cell against its own form's leaf paths, so one sweep can hold cells of
+every form. A cell that mixes two forms sets a path its form does not have and
+is refused, as is a cell that omits a field of its form. When the cell names
+no form the factory returns an error, and the spec is refused with it and the
+cell's index. The default changes nothing for a factory that does not
+override it: every cell, record and trial id stays the same.
 
 These checks are part of the spec's validation, so `validate_spec` makes them
 and a sweep makes them before it loads data or runs a trial.
