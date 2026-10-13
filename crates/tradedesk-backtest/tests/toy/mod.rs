@@ -39,10 +39,17 @@ pub struct ThresholdConfig {
     pub stop_distance: f64,
     /// The target's distance above the entry close (> 0).
     pub target_distance: f64,
-    /// Bars to wait after an exit or a rejected entry before entering again.
+    /// Bars to wait after an exit or a rejected entry before entering again. It has a
+    /// serde default (1), so the sweep tests can show that `base = "explicit"` still
+    /// requires it.
+    #[serde(default = "one_bar")]
     pub cooldown_bars: u32,
     /// The price scale the strategy declares ([`Strategy::price_scale`]), if any.
     pub price_scale: Option<f64>,
+}
+
+fn one_bar() -> u32 {
+    1
 }
 
 impl Default for ThresholdConfig {
@@ -55,7 +62,7 @@ impl Default for ThresholdConfig {
             exit_below: 203_000.0,
             stop_distance: 5_000.0,
             target_distance: 15_000.0,
-            cooldown_bars: 1,
+            cooldown_bars: one_bar(),
             price_scale: None,
         }
     }
@@ -193,6 +200,7 @@ impl StrategyFactory for ThresholdFactory {
             BaseConfig::Frozen => Err(format!(
                 "strategy {NAME:?} has no frozen config; use base = \"default\""
             )),
+            BaseConfig::Explicit => Err("a sweep never asks for an explicit base".into()),
         }
     }
 

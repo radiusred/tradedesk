@@ -601,6 +601,7 @@ A sweep runs a strategy by name. A `StrategyRegistry` maps each name to a
 ```rust
 pub trait StrategyFactory: Send + Sync {
     /// The config every cell starts from, as JSON: `base` is the spec's `base`.
+    /// Never called with `Explicit`; under that base the sweep asks for `Default`.
     fn base_config(&self, base: BaseConfig) -> Result<Value, String>;
     /// Build the strategy from a resolved config, refusing unknown fields.
     fn build(&self, config: Value) -> Result<BoxedStrategy, String>;
@@ -626,6 +627,7 @@ are errors.
 name = "a label"                           # not part of any id
 strategy = "my_strategy"                   # a name in the StrategyRegistry
 base = "default"                           # | frozen (the default), if the factory provides one
+                                           # | explicit: each cell sets every field
 instruments = ["XAUUSD"]                   # each is crossed with every parameter cell
 first_day = "2024-01-01"                   # inclusive UTC days
 last_day = "2024-01-31"
@@ -659,9 +661,51 @@ anything runs (`validate_spec` runs the same checks on their own):
 - every instrument is priced at the venue and has an FX rate;
 - the strategy is registered, and its factory has the spec's `base`;
 - every parameter path exists in the base config, and none is the factory's
-  `raw_scale_path`, which is derived.
+  `raw_scale_path`, which is derived;
+- under `base = "explicit"`, every cell sets every field (below).
 
 A value the strategy rejects becomes that cell's recorded failure.
+
+#### Explicit base
+
+Under `base = "explicit"` there is no base: each cell alone is the strategy's
+config. The sweep takes the set of fields from the strategy's default config,
+serialised to JSON. It uses its **leaf paths** (the dotted paths to values
+that are not non-empty objects) and none of its values.
+- A cell must set every leaf path, except the factory's `raw_scale_path`,
+  which the sweep sets as for the other bases. A cell that omits one is
+  refused, with every missing path and the cell's index (counted from 0).
+- A path that is not a leaf path is refused, as for the other bases. A path
+  that names an object (for example `filter` when `filter.confirm_on` is a
+  field) is refused too: set its fields one by one.
+- The config is built from the cell's values alone, so the trial record's
+  `config` holds the cell's value for every field.
+- A strategy with no default config cannot use explicit base, and the spec is
+  refused with that reason.
+
+These checks are part of the spec's validation, so `validate_spec` makes them
+and a sweep makes them before it loads data or runs a trial.
+
+**A field with a serde default** (`#[serde(default)]`) is required like any
+other. It is in the serialised default config, so a cell that omits it is
+refused; the serde default never fills it. A field that the serialised config
+leaves out (for example one under `skip_serializing_if`) is not in the set:
+no base lets a cell set it, and only the strategy's deserialiser decides its
+value. So a factory's default config should serialise every field, `None`
+included (as `null`).
+
+**A grid** under explicit base expands as usual, and every key is in every
+cell. So the grid must name every field; a field held fixed is a one-value
+list:
+
+```toml
+base = "explicit"
+
+[grid]
+period = [10, 20, 40]
+take_profit = [8.0, 12.0]
+"filter.confirm_on" = [2]                  # fixed, but still named
+```
 
 ### Running
 
