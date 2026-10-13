@@ -3,8 +3,9 @@
 //! A strategy **does not fill orders and computes no P&L**. Fills, venue costs and
 //! the ledger are the engine's, metrics are [`crate::metrics`]'. What a strategy does own
 //! is the position it has *signalled*: it assumes every [`SignalKind::Enter`] fills at the
-//! signal bar's close (`reference_price`) and every [`SignalKind::Exit`] flattens, and it
-//! evaluates its own close-based exits.
+//! signal bar's close (`reference_price`), every [`SignalKind::Exit`] flattens and every
+//! [`SignalKind::Reverse`] leaves it in the entry's direction, and it evaluates its own
+//! close-based exits.
 //!
 //! No strategy ships in this crate. A strategy crate implements [`Strategy`], and
 //! registers a factory for it in a [`crate::sweep::StrategyRegistry`] to run it in
@@ -87,6 +88,16 @@ pub enum SignalKind {
         /// Why.
         reason: SignalExitReason,
     },
+    /// Close the open position and open the opposite one at the same fill, with no flat
+    /// bar between (a one-fill reversal). Both legs fill at the signal bar's close; the
+    /// exit is booked first, for `reason`, then `entry`. Refused while flat, and when
+    /// `entry.direction` is the open position's direction.
+    Reverse {
+        /// Why the open position closes.
+        reason: SignalExitReason,
+        /// The new position, in the opposite direction.
+        entry: Entry,
+    },
 }
 
 /// One signal, labelled with the open of the primary bar it fired on (the label the
@@ -102,7 +113,8 @@ pub struct Signal {
 /// The engine's report back to a strategy about its signalled position.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum PositionFeedback {
-    /// The last entry filled at `price`; re-anchor the position there.
+    /// The last entry (an [`SignalKind::Enter`] or the entry leg of a
+    /// [`SignalKind::Reverse`]) filled at `price`; re-anchor the position there.
     EntryFilled {
         /// Executed fill price in **raw** units (the ledger's `Fill::fill_price` is in
         /// quote units: convert with [`FillBridge::anchor`]).
