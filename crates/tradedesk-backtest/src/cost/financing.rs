@@ -7,8 +7,8 @@
 //!
 //! Each calendar day is charged exactly once. There is no rollover on a local Saturday
 //! or Sunday; instead, the asset class's triple day (Wednesday for spot FX, Friday for
-//! indices; per venue for metals) charges `days_on_triple` days, so a full week charges
-//! seven. This replaces the Python loop that charged every calendar day and then tripled
+//! indices; per venue for metals and energy) charges `days_on_triple` days, so a full
+//! week charges seven. This replaces the Python loop that charged every calendar day and then tripled
 //! Friday on top (`client.py:348-382`).
 //!
 //! The charge for one rollover is `|size| × mark × rate / day_count × days`. The mark is
@@ -107,6 +107,12 @@ impl RolloverCalendar {
     /// Every rollover strictly after `after` and strictly before `before`, oldest first,
     /// with the days each one charges for `class`. Local Saturdays and Sundays have no
     /// rollover.
+    ///
+    /// # Panics
+    /// If the calendar's weekend rules have no rule for `class` (an [`AssetClass::Energy`]
+    /// instrument at a venue without `weekend.energy`). A loaded
+    /// [`CostConfig`](super::config::CostConfig) rejects that venue, so a calendar built from
+    /// one never panics for an instrument the venue costs.
     #[must_use]
     pub fn rollovers_between(
         &self,
@@ -118,7 +124,10 @@ impl RolloverCalendar {
         if before <= after {
             return out;
         }
-        let rule = self.weekend.for_class(class);
+        let rule = self
+            .weekend
+            .for_class(class)
+            .unwrap_or_else(|| panic!("the venue has no weekend rule for {class:?}"));
         let last = before.with_timezone(&self.tz).date_naive();
         let mut date = after.with_timezone(&self.tz).date_naive();
         while date <= last {
@@ -275,6 +284,51 @@ mod tests {
     }
 
     #[test]
+    fn energy_follows_each_venues_own_triple_day() {
+        let fri_to_mon = (utc(2024, 1, 19, 12, 0), utc(2024, 1, 22, 12, 0));
+        let wed_to_thu = (utc(2024, 1, 17, 12, 0), utc(2024, 1, 18, 12, 0));
+        let london = calendar("example_spread_bet");
+        let ny = calendar("example_ny_spread_bet");
+        for (cal, (a, b), expect) in [
+            (&london, fri_to_mon, 3),
+            (&london, wed_to_thu, 1),
+            (&ny, fri_to_mon, 1),
+            (&ny, wed_to_thu, 3),
+        ] {
+            assert_eq!(
+                days(&cal.rollovers_between(AssetClass::Energy, a, b)),
+                expect
+            );
+        }
+    }
+
+    #[test]
+    #[should_panic(expected = "no weekend rule for Energy")]
+    fn a_calendar_without_an_energy_rule_refuses_an_energy_instrument() {
+        // The example New York CFD venue defines no `weekend.energy`.
+        let ny = calendar("example_ny_cfd");
+        let _ = ny.rollovers_between(
+            AssetClass::Energy,
+            utc(2024, 1, 19, 12, 0),
+            utc(2024, 1, 22, 12, 0),
+        );
+    }
+
+    /// Every class `venue` has a weekend rule for.
+    fn classes(venue: &str) -> Vec<AssetClass> {
+        let weekend = CostConfig::builtin().venue(venue).unwrap().weekend;
+        [
+            AssetClass::Fx,
+            AssetClass::Metal,
+            AssetClass::Index,
+            AssetClass::Energy,
+        ]
+        .into_iter()
+        .filter(|c| weekend.for_class(*c).is_some())
+        .collect()
+    }
+
+    #[test]
     fn a_full_week_charges_seven_days_for_every_class_and_venue() {
         for venue in [
             "example_spread_bet",
@@ -282,7 +336,7 @@ mod tests {
             "example_ny_cfd",
         ] {
             let cal = calendar(venue);
-            for class in [AssetClass::Fx, AssetClass::Metal, AssetClass::Index] {
+            for class in classes(venue) {
                 let rs =
                     cal.rollovers_between(class, utc(2024, 1, 15, 12, 0), utc(2024, 1, 22, 12, 0));
                 assert_eq!(rs.len(), 5, "{venue} {class:?}");
@@ -393,8 +447,14 @@ mod tests {
             len in 1i64..(40 * 24 * 60),
             cut_permille in 0i64..=1000,
             venue in prop_oneof![Just("example_spread_bet"), Just("example_ny_cfd")],
-            class in prop_oneof![Just(AssetClass::Fx), Just(AssetClass::Metal), Just(AssetClass::Index)],
+            class in prop_oneof![
+                Just(AssetClass::Fx),
+                Just(AssetClass::Metal),
+                Just(AssetClass::Index),
+                Just(AssetClass::Energy),
+            ],
         ) {
+            prop_assume!(classes(venue).contains(&class));
             let cal = calendar(venue);
             let base = utc(2022, 1, 1, 0, 0);
             let a = base + chrono::Duration::minutes(start);
@@ -419,7 +479,12 @@ mod tests {
             start in 0i64..(3 * 365 * 24 * 60),
             weeks in 1i64..20,
             venue in prop_oneof![Just("example_spread_bet"), Just("example_ny_spread_bet")],
-            class in prop_oneof![Just(AssetClass::Fx), Just(AssetClass::Metal), Just(AssetClass::Index)],
+            class in prop_oneof![
+                Just(AssetClass::Fx),
+                Just(AssetClass::Metal),
+                Just(AssetClass::Index),
+                Just(AssetClass::Energy),
+            ],
         ) {
             let cal = calendar(venue);
             let a = utc(2022, 1, 1, 0, 0) + chrono::Duration::minutes(start);
