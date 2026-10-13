@@ -17,8 +17,16 @@
 //!    - a strategy exit closes at the bar close through [`Ledger::close_signal`], which
 //!      keeps the strategy's label;
 //!    - a stop move goes to [`Ledger::set_levels`];
+//!    - a reversal ([`SignalKind::Reverse`](crate::strategy::SignalKind::Reverse))
+//!      closes the open position, then opens the opposite one at the bar close as an
+//!      entry does: two trades on the ledger at one fill time, each leg priced and
+//!      costed on its own, with no flat bar between. The old position closes at the bar
+//!      close through [`Ledger::close_signal`], or at the trigger point when the ledger's
+//!      stop or target fired on the bar (the strategy is not told: it already left it);
 //! 4. with a position still open, [`Ledger::accrue_financing`] charges every rollover
-//!    up to the bar close, marked from the instrument's 1-minute series.
+//!    up to the bar close, marked from the instrument's 1-minute series;
+//! 5. the ledger's open position and [`Strategy::position`] must agree on the direction
+//!    (or both be flat), or the run fails.
 //!
 //! **Fill timestamps.** An entry, a strategy exit and a close-only stop fill at the bar
 //! close and are stamped with it. A gap through a level fills at the open and is stamped
@@ -31,7 +39,8 @@
 //! signalled there is answered with [`PositionFeedback::EntryRejected`], and the strategy
 //! restarts its cooldown as if the entry had filled and exited on that bar, so it does
 //! not re-signal on every warm-up bar. Sizing refusals and divergent bars are not
-//! rejections: they fail the run. Bars opening at or after the window's end are not
+//! rejections: they fail the run, as does an exit, stop move or reversal signalled while
+//! flat. Bars opening at or after the window's end are not
 //! stepped.
 //!
 //! **End of run.** [`EndOfRun::Close`] closes a position still open after the last bar
@@ -58,6 +67,7 @@ use chrono::{DateTime, NaiveTime, Utc};
 use serde::{Deserialize, Serialize};
 
 use crate::cost::fill::{FillModel, PricePoint};
+use crate::cost::financing::Direction;
 use crate::exit::{ExitEvaluation, ExitReason};
 use crate::ledger::{AccountFx, FillAt, Ledger, LedgerError, PositionId};
 pub use crate::ledger::{EndOfRun, EndOfRunRule, FinalBarEntry};
@@ -193,6 +203,11 @@ pub struct EngineStats {
     /// count existed read back as 0.
     #[serde(default)]
     pub final_bar_entries: usize,
+    /// One-fill reversals. Each also counts once in `entries` (its new position) and once
+    /// in `strategy_exits` or `ledger_exits` (its old one). Records written before the
+    /// count existed read back as 0.
+    #[serde(default)]
+    pub reversals: usize,
 }
 
 /// A finished run.
@@ -264,6 +279,44 @@ pub enum EngineError {
 
 fn day_start(day: chrono::NaiveDate) -> DateTime<Utc> {
     day.and_time(NaiveTime::MIN).and_utc()
+}
+
+/// The fill timestamp for a fill at `point` on `bar` (see the module docs).
+fn fill_ts(point: PricePoint, bar: &JoinedBar, close_ts: DateTime<Utc>) -> DateTime<Utc> {
+    match point {
+        PricePoint::Open => bar.ts_open_utc,
+        PricePoint::Close | PricePoint::Level(_) => close_ts,
+    }
+}
+
+/// Size, open and anchor `entry` at `at`: the ledger gets the order and the shifted
+/// levels, the strategy the raw-unit fill.
+fn book_entry<S: Strategy + ?Sized>(
+    strategy: &mut S,
+    ledger: &mut Ledger,
+    bridge: &FillBridge,
+    model: &FillModel,
+    config: &EngineConfig,
+    entry: &Entry,
+    at: FillAt<'_>,
+) -> Result<PositionId, EngineError> {
+    let units = config.sizing.units(entry, model, &config.account_fx)?;
+    let order = bridge.open_order(&config.instrument, entry, units);
+    let id = ledger.open(&order, at)?;
+    let fill = ledger.fills().last().expect("open books a fill");
+    let anchored = bridge.anchor(entry, fill)?;
+    strategy.on_feedback(anchored.feedback())?;
+    ledger.set_levels(id, anchored.stop, anchored.target)?;
+    Ok(id)
+}
+
+/// The direction of open position `id`, if it is on the book.
+fn direction_of(ledger: &Ledger, id: PositionId) -> Option<Direction> {
+    ledger
+        .open_positions()
+        .iter()
+        .find(|p| p.id == id)
+        .map(|p| p.direction)
 }
 
 /// Run `strategy` over `data` under `config`, then compute the metrics. See the module
@@ -373,13 +426,8 @@ pub fn run<S: Strategy + ?Sized>(
         match resolve_bar(open.is_some(), trigger, signal.as_ref())? {
             BarAction::None => {}
             BarAction::Enter(entry) => {
-                let units = config.sizing.units(&entry, &model, &config.account_fx)?;
-                let order = bridge.open_order(instrument, &entry, units);
-                let id = ledger.open(&order, at(PricePoint::Close, close_ts))?;
-                let fill = ledger.fills().last().expect("open books a fill");
-                let anchored = bridge.anchor(&entry, fill)?;
-                strategy.on_feedback(anchored.feedback())?;
-                ledger.set_levels(id, anchored.stop, anchored.target)?;
+                let at = at(PricePoint::Close, close_ts);
+                let id = book_entry(strategy, &mut ledger, &bridge, &model, config, &entry, at)?;
                 open = Some(id);
                 entered_at = Some(i);
                 stats.entries += 1;
@@ -389,10 +437,7 @@ pub fn run<S: Strategy + ?Sized>(
                 notify_strategy,
             } => {
                 let id = open.take().expect("resolve_bar checked a position is open");
-                let ts = match trigger.at {
-                    PricePoint::Open => bar.ts_open_utc,
-                    PricePoint::Close | PricePoint::Level(_) => close_ts,
-                };
+                let ts = fill_ts(trigger.at, bar, close_ts);
                 ledger.close(id, at(trigger.at, ts), trigger.reason, data)?;
                 if notify_strategy {
                     strategy.on_feedback(PositionFeedback::ClosedExternally)?;
@@ -414,11 +459,38 @@ pub fn run<S: Strategy + ?Sized>(
                 ledger.set_levels(id, Some(stop), target)?;
                 stats.stop_moves += 1;
             }
+            BarAction::Reverse {
+                trigger,
+                reason,
+                entry,
+            } => {
+                let id = open.take().expect("resolve_bar checked a position is open");
+                if direction_of(&ledger, id) == Some(entry.direction) {
+                    return Err(BridgeError::OutOfStep(
+                        "reversal in the open position's direction",
+                    )
+                    .into());
+                }
+                if let Some(trigger) = trigger {
+                    let ts = fill_ts(trigger.at, bar, close_ts);
+                    ledger.close(id, at(trigger.at, ts), trigger.reason, data)?;
+                    stats.ledger_exits += 1;
+                } else {
+                    ledger.close_signal(id, at(PricePoint::Close, close_ts), reason, data)?;
+                    stats.strategy_exits += 1;
+                }
+                let at = at(PricePoint::Close, close_ts);
+                let id = book_entry(strategy, &mut ledger, &bridge, &model, config, &entry, at)?;
+                open = Some(id);
+                entered_at = Some(i);
+                stats.entries += 1;
+                stats.reversals += 1;
+            }
         }
         if open.is_some() {
             ledger.accrue_financing(close_ts, data)?;
         }
-        if open.is_some() != strategy.position().is_some() {
+        if open.and_then(|id| direction_of(&ledger, id)) != strategy.position() {
             return Err(BridgeError::OutOfStep("ledger and strategy disagree after a bar").into());
         }
         last = Some((i, bar));

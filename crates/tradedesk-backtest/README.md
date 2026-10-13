@@ -470,7 +470,10 @@ pub trait Strategy {
   on. Its `SignalKind` is one of:
   - `Enter(Entry { direction, reference_price, stop, target, atr })`;
   - `MoveStop { stop }`, used for the breakeven ratchet;
-  - `Exit { reason }`.
+  - `Exit { reason }`;
+  - `Reverse { reason, entry }`, a one-fill reversal: close the open position
+    for `reason` and open `entry`, in the opposite direction, at the same fill
+    (see "One-fill reversal" below).
 
   Levels are in raw price units and are anchored at `reference_price`, the
   signal bar's close. `SignalExitReason::as_str` gives the Python `exit_reason`
@@ -526,6 +529,27 @@ the one place they meet.
   that bar: no same-bar re-entry, cooldown from zero. With no trigger, a
   strategy `Exit` closes at the bar close and a `MoveStop` moves the ledger
   stop.
+- **One-fill reversal.** A strategy that holds a position can return
+  `Reverse { reason, entry }` to close it and open the opposite one on the same
+  bar, with no flat bar between. After that `on_bar` the strategy holds
+  `entry.direction`, as after an `Enter`. `resolve_bar` gives
+  `BarAction::Reverse { trigger, reason, entry }`:
+  - with no ledger trigger, the old position closes at the bar close for
+    `reason` (booked as `Signal` with that label);
+  - when the ledger's stop or target fired on the bar, the trigger wins for the
+    old position (closed at its trigger point, booked as `Stop` or `Target`),
+    and the strategy is not sent `ClosedExternally`, because it already left
+    that position;
+  - either way the new position then opens at the bar close, exactly as an
+    `Enter` does, and the strategy receives `EntryFilled` for it.
+
+  A `Reverse` while flat is refused (`BridgeError::OutOfStep`), as an `Exit` or
+  a `MoveStop` while flat is: the strategy believes it holds a position the
+  ledger does not, and treating the signal as an entry would hide that. A flat
+  strategy signals `Enter`. The engine also refuses a `Reverse` whose
+  `entry.direction` is the open position's direction. An `Enter` while a
+  position is open is still refused, and `Exit` on one bar followed by `Enter`
+  on the next books exactly as before, with a flat bar between.
 - **Price sides.** The built-in venues price from mid while the strategies read
   bid. The levels keep their distance from the fill either way. The two
   evaluators can see prices half a Dukascopy spread apart, and `resolve_bar`
@@ -560,8 +584,19 @@ Each primary bar follows the bridge's order:
      hears `ClosedExternally` after its `on_bar`;
    - a **strategy exit** closes at the bar close through `close_signal`, which
      keeps its label;
-   - a **stop move** goes to `set_levels`.
+   - a **stop move** goes to `set_levels`;
+   - a **reversal** closes the open position (at the bar close through
+     `close_signal`, or at the ledger's trigger point if its stop or target
+     fired), then opens the opposite position at the bar close as an entry
+     does. The ledger records two trades at one fill time: the closing fill of
+     the old position and the opening fill of the new one. Each leg is priced
+     by the fill model on its own side, so each pays its own spread, slippage
+     and commission (the round-trip commission, where the venue has one, on
+     the closing leg, as for any close).
 4. With a position still open, `accrue_financing` runs at the bar close.
+5. The ledger's open position and `Strategy::position` must agree on the
+   direction, or both be flat; otherwise the run fails
+   (`BridgeError::OutOfStep`).
 
 - **Fill timestamps.** A fill at the close or at a level inside the bar is
   stamped with the bar close. The moment a level traded inside the bar is
@@ -580,7 +615,13 @@ Each primary bar follows the bridge's order:
   carried in `open_at_end`. Either way the curve's last point reconciles. The
   rule is written into `RunMetadata.end_of_run` (`{ mode, final_bar_entry:
   "filled_then_end_of_run" }`) in every trial, and
-  `EngineStats::final_bar_entries` counts such entries.
+  `EngineStats::final_bar_entries` counts such entries. A reversal on the
+  final bar is such an entry too.
+- **Reversal counts.** `EngineStats::reversals` counts one-fill reversals. Each
+  also counts once in `entries` (the new position) and once in
+  `strategy_exits`, or `ledger_exits` when a trigger took the old position, so
+  the counts still match the ledger. Records written before the count existed
+  read back as 0.
 - **Price scale.** A strategy whose signals depend on the price scale (for
   example a notional cap in quote units) declares the scale it assumes
   (`Strategy::price_scale`). It must be the instrument's `raw_scale`, or the run

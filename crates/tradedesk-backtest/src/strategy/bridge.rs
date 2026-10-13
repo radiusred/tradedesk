@@ -32,6 +32,15 @@
 //!    same-bar re-entry). Without a trigger, the strategy's `Exit` closes the position
 //!    at the bar close and its `MoveStop` moves the ledger stop.
 //!
+//! **One-fill reversal.** A [`SignalKind::Reverse`] closes the open position and opens the
+//! opposite one on the same bar, with no flat bar between: [`BarAction::Reverse`]. Without
+//! a trigger the old position closes at the bar close for the strategy's reason; with one,
+//! the trigger wins for the old position (closed at its trigger point, booked as the
+//! ledger's stop or target) and the strategy is not told, because it has already left
+//! that position. Either way the new position then opens at the bar close, exactly as an
+//! entry does. A reversal while flat is refused like an exit while flat: the strategy
+//! believes it holds a position the ledger does not.
+//!
 //! Price sides: the ledger evaluates levels on the venue's configured side (mid for the
 //! built-in venues) while a strategy reads its own side (bid by default). The levels keep
 //! their distance from the fill either way; the two evaluators may see prices half a
@@ -185,6 +194,18 @@ pub enum BarAction {
         /// The new stop, raw units, already anchored at the fill.
         stop: f64,
     },
+    /// A one-fill reversal: close the open position, then open `entry` at the bar close.
+    /// The old position closes at `trigger` when the ledger's stop or target fired on the
+    /// bar (the strategy is not told: it already left that position), otherwise at the
+    /// bar close for `reason`.
+    Reverse {
+        /// The ledger's stop or target, if it fired on this bar.
+        trigger: Option<ExitTrigger>,
+        /// The strategy's reason for leaving the old position.
+        reason: SignalExitReason,
+        /// The new position (the engine prices it and then anchors it).
+        entry: Entry,
+    },
 }
 
 /// Decide one bar given whether a position was open before it, the ledger's
@@ -193,7 +214,8 @@ pub enum BarAction {
 ///
 /// # Errors
 /// [`BridgeError::OutOfStep`] when the inputs contradict each other: a trigger or a
-/// strategy exit/stop move with no position open, or an entry while one is open.
+/// strategy exit, stop move or reversal with no position open, or an entry while one is
+/// open. The caller checks a reversal's direction against the open position.
 pub fn resolve_bar(
     position_open: bool,
     trigger: Option<ExitTrigger>,
@@ -204,6 +226,9 @@ pub fn resolve_bar(
         return match (trigger, kind) {
             (Some(_), _) => Err(BridgeError::OutOfStep("ledger trigger with no position")),
             (None, Some(SignalKind::Enter(entry))) => Ok(BarAction::Enter(entry)),
+            (None, Some(SignalKind::Reverse { .. })) => {
+                Err(BridgeError::OutOfStep("reversal while flat"))
+            }
             (None, Some(_)) => Err(BridgeError::OutOfStep("exit or stop move while flat")),
             (None, None) => Ok(BarAction::None),
         };
@@ -212,6 +237,11 @@ pub fn resolve_bar(
         (_, Some(SignalKind::Enter(_))) => {
             Err(BridgeError::OutOfStep("entry while a position is open"))
         }
+        (trigger, Some(SignalKind::Reverse { reason, entry })) => Ok(BarAction::Reverse {
+            trigger,
+            reason,
+            entry,
+        }),
         (Some(trigger), kind) => Ok(BarAction::LedgerExit {
             trigger,
             notify_strategy: !matches!(kind, Some(SignalKind::Exit { .. })),
@@ -367,6 +397,7 @@ mod tests {
                     let target = ledger.open_positions()[0].target;
                     ledger.set_levels(id, Some(stop), target).unwrap();
                 }
+                BarAction::Reverse { .. } => unreachable!("the test strategy never reverses"),
             }
             run.actions.push((i, action));
             // The two books never disagree after a bar.
@@ -516,6 +547,50 @@ mod tests {
                 notify_strategy: true
             })
         );
+    }
+
+    #[test]
+    fn resolve_bar_reverses_an_open_position_and_refuses_a_flat_one() {
+        let trigger = ExitTrigger {
+            reason: crate::ExitReason::Stop,
+            at: PricePoint::Level(1.0),
+        };
+        let entry = Entry {
+            direction: Direction::Short,
+            reference_price: 1.0,
+            stop: Some(1.5),
+            target: None,
+            atr: 0.5,
+        };
+        let reason = SignalExitReason::StopLoss;
+        let reverse = Signal {
+            ts_open_utc: start(),
+            kind: SignalKind::Reverse { reason, entry },
+        };
+        // Open, no trigger: the strategy closes the old position and opens the new one.
+        assert_eq!(
+            resolve_bar(true, None, Some(&reverse)),
+            Ok(BarAction::Reverse {
+                trigger: None,
+                reason,
+                entry
+            })
+        );
+        // Open, with a trigger: the trigger is carried for the old position's close.
+        assert_eq!(
+            resolve_bar(true, Some(trigger), Some(&reverse)),
+            Ok(BarAction::Reverse {
+                trigger: Some(trigger),
+                reason,
+                entry
+            })
+        );
+        // Flat: refused, like an exit while flat.
+        assert_eq!(
+            resolve_bar(false, None, Some(&reverse)),
+            Err(BridgeError::OutOfStep("reversal while flat"))
+        );
+        assert!(resolve_bar(false, Some(trigger), Some(&reverse)).is_err());
     }
 
     #[test]
