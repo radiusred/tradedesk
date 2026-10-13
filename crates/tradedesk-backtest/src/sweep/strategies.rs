@@ -50,8 +50,9 @@ pub trait StrategyFactory: Send + Sync {
     /// sweep may vary must be present.
     ///
     /// A sweep never asks for [`BaseConfig::Explicit`]. Under that base it asks for
-    /// [`BaseConfig::Default`] and uses only its paths, as the set of fields every cell
-    /// must set. So the default config should serialise every field, `None` included.
+    /// [`explicit_schema`](Self::explicit_schema), which by default is
+    /// [`BaseConfig::Default`], and uses only its paths, as the set of fields a cell must
+    /// set. So the default config should serialise every field, `None` included.
     ///
     /// # Errors
     /// A message when the strategy has no config for `base`.
@@ -64,6 +65,27 @@ pub trait StrategyFactory: Send + Sync {
     /// A message when the config does not deserialise or the strategy rejects it; the
     /// sweep records it as that cell's failure.
     fn build(&self, config: Value) -> Result<BoxedStrategy, String>;
+
+    /// Under [`BaseConfig::Explicit`], the schema of the cell with parameters `cell`: a
+    /// config whose leaf paths are the fields that cell must set, and the only fields it
+    /// may set. Its values are never used. The sweep asks once per parameter cell.
+    ///
+    /// The default is [`base_config`](Self::base_config) with [`BaseConfig::Default`],
+    /// the same for every cell. A strategy whose config has more than one form, each
+    /// with its own fields, overrides it to choose the form's schema from a field of the
+    /// cell; a cell that names no form can be refused here.
+    ///
+    /// # Errors
+    /// A message when there is no schema for `cell`; the sweep refuses the spec.
+    fn explicit_schema(&self, cell: &BTreeMap<String, Value>) -> Result<Value, String> {
+        let _ = cell;
+        self.base_config(BaseConfig::Default).map_err(|e| {
+            format!(
+                "base = \"explicit\" takes the set of fields from the strategy's default \
+                 config, and it has none: {e}"
+            )
+        })
+    }
 
     /// The dotted config path the sweep writes each instrument's `raw_scale` (from the
     /// cost config) into, when the strategy's signals depend on the price scale
