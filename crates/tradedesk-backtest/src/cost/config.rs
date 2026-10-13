@@ -77,6 +77,9 @@ pub enum AssetClass {
     Metal,
     /// Cash index markets.
     Index,
+    /// Energy commodities (crude oil, natural gas, refined products). Its weekend rule is
+    /// optional in a venue: required only where the venue costs an energy instrument.
+    Energy,
 }
 
 /// Which price of the joined bar a venue × instrument marks and fills from.
@@ -152,7 +155,9 @@ fn three() -> u32 {
     3
 }
 
-/// The weekend rule for each asset class. All three are required.
+/// The weekend rule for each asset class. `fx`, `metal` and `index` are required.
+/// `energy` is optional: a loaded config has it in every venue that costs an energy
+/// instrument, so an existing config without energy instruments loads unchanged.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct WeekendRules {
@@ -162,16 +167,21 @@ pub struct WeekendRules {
     pub metal: WeekendRule,
     /// Indices.
     pub index: WeekendRule,
+    /// Energy commodities.
+    #[serde(default)]
+    pub energy: Option<WeekendRule>,
 }
 
 impl WeekendRules {
-    /// The rule for `class`.
+    /// The rule for `class`, or `None` when the venue defines none for it (only
+    /// [`AssetClass::Energy`] can be absent).
     #[must_use]
-    pub fn for_class(&self, class: AssetClass) -> WeekendRule {
+    pub fn for_class(&self, class: AssetClass) -> Option<WeekendRule> {
         match class {
-            AssetClass::Fx => self.fx,
-            AssetClass::Metal => self.metal,
-            AssetClass::Index => self.index,
+            AssetClass::Fx => Some(self.fx),
+            AssetClass::Metal => Some(self.metal),
+            AssetClass::Index => Some(self.index),
+            AssetClass::Energy => self.energy,
         }
     }
 }
@@ -803,11 +813,12 @@ impl CostConfig {
         }
         for (id, venue) in &self.venues {
             for (class, rule) in [
-                ("fx", venue.weekend.fx),
-                ("metal", venue.weekend.metal),
-                ("index", venue.weekend.index),
+                ("fx", Some(venue.weekend.fx)),
+                ("metal", Some(venue.weekend.metal)),
+                ("index", Some(venue.weekend.index)),
+                ("energy", venue.weekend.energy),
             ] {
-                if rule.days_on_triple == 0 {
+                if rule.is_some_and(|r| r.days_on_triple == 0) {
                     return Err(invalid(
                         format!("venues.{id}.weekend.{class}.days_on_triple"),
                         "must be at least 1",
@@ -820,6 +831,13 @@ impl CostConfig {
                     return Err(invalid(
                         at("").trim_end_matches('.').to_owned(),
                         "no [instruments] entry defines this symbol",
+                    ));
+                }
+                let class = self.instruments[symbol].asset_class;
+                if venue.weekend.for_class(class).is_none() {
+                    return Err(invalid(
+                        format!("venues.{id}.weekend.energy"),
+                        format!("required: the venue costs energy instrument {symbol}"),
                     ));
                 }
                 validate_spread(&cost.spread, &at)?;
@@ -1603,6 +1621,89 @@ carry = {{ source = "test", placeholder = false, excluded = true, reason = "not 
             CostConfig::from_toml_str(&text),
             Err(ConfigError::Parse(_))
         ));
+    }
+
+    /// `minimal` plus a labelled example energy instrument (`EXAMPLEOIL`, not a cache
+    /// symbol) costed at venue `v`, with `weekend_energy` as the venue's energy rule line.
+    fn with_energy(weekend_energy: &str) -> String {
+        let instrument = r#"
+[instruments.EXAMPLEOIL]
+asset_class = "energy"
+quote_currency = "USD"
+raw_scale = 0.01
+pip_size = 0.01
+divergence_tolerance = 500.0"#;
+        let cost = format!(
+            r#"
+[venues.v.instruments.EXAMPLEOIL]
+price_side = "mid"
+{SPREAD}
+{SLIPPAGE}
+commission = {{ source = "test", placeholder = false }}
+financing = {{ long_rate = 0.03, short_rate = 0.01, day_count = 365, source = "test", placeholder = false }}
+carry = {{ source = "test", placeholder = false, excluded = true, reason = "not modelled" }}"#
+        );
+        minimal(instrument, &cost, LONDON).replace(
+            "weekend.index = { triple_day = \"friday\" }\n",
+            &format!("weekend.index = {{ triple_day = \"friday\" }}\n{weekend_energy}\n"),
+        )
+    }
+
+    #[test]
+    fn an_energy_instrument_loads_with_its_venue_weekend_rule() {
+        let text = with_energy(r#"weekend.energy = { triple_day = "friday", days_on_triple = 3 }"#);
+        let c = CostConfig::from_toml_str(&text).unwrap();
+        assert_eq!(
+            c.instrument("EXAMPLEOIL").unwrap().asset_class,
+            AssetClass::Energy
+        );
+        assert_eq!(
+            c.venue("v").unwrap().weekend.for_class(AssetClass::Energy),
+            Some(WeekendRule {
+                triple_day: TripleDay::Friday,
+                days_on_triple: 3
+            })
+        );
+    }
+
+    #[test]
+    fn the_energy_weekend_rule_is_required_only_where_an_energy_instrument_is_costed() {
+        // An existing config without the key and without energy instruments loads unchanged.
+        let c = CostConfig::from_toml_str(&minimal("", "", LONDON)).unwrap();
+        assert_eq!(c.venue("v").unwrap().weekend.energy, None);
+        assert_eq!(
+            c.venue("v").unwrap().weekend.for_class(AssetClass::Energy),
+            None
+        );
+        // A venue that costs an energy instrument and has no rule for it does not load.
+        assert_eq!(invalid_at(&with_energy("")), "venues.v.weekend.energy");
+        // When present, the rule is validated as the other classes are.
+        assert_eq!(
+            invalid_at(&with_energy(
+                r#"weekend.energy = { triple_day = "friday", days_on_triple = 0 }"#
+            )),
+            "venues.v.weekend.energy.days_on_triple"
+        );
+        assert_eq!(
+            invalid_at(&minimal("", "", LONDON).replace(
+                "weekend.index = { triple_day = \"friday\" }\n",
+                "weekend.index = { triple_day = \"friday\" }\n\
+                 weekend.energy = { triple_day = \"friday\", days_on_triple = 0 }\n",
+            )),
+            "venues.v.weekend.energy.days_on_triple"
+        );
+        for text in [
+            with_energy(r#"weekend.energy = { triple_day = "saturday" }"#),
+            with_energy(r#"weekend.energy = { triple_day = "friday", days = 3 }"#),
+            with_energy(r#"weekend.commodity = { triple_day = "friday" }"#),
+            with_energy(r#"weekend.energy = { triple_day = "friday" }"#)
+                .replace(r#"asset_class = "energy""#, r#"asset_class = "commodity""#),
+        ] {
+            assert!(
+                matches!(CostConfig::from_toml_str(&text), Err(ConfigError::Parse(_))),
+                "{text}"
+            );
+        }
     }
 
     #[test]

@@ -114,7 +114,7 @@ example is used.
 
 ```toml
 [instruments.EURUSD]
-asset_class = "fx"              # fx | metal | index: selects the weekend rule
+asset_class = "fx"              # fx | metal | index | energy: selects the weekend rule
 quote_currency = "USD"
 raw_scale = 0.0001              # quote price = raw cache price x raw_scale
 pip_size = 0.0001               # one pip/point in quote price
@@ -127,6 +127,7 @@ rollover = { tz = "Europe/London", time = "22:00" }
 weekend.fx = { triple_day = "wednesday", days_on_triple = 3 }
 weekend.metal = { triple_day = "friday" }
 weekend.index = { triple_day = "friday" }
+weekend.energy = { triple_day = "friday" }  # optional: required if the venue costs an energy instrument
 
 [venues.example_spread_bet.instruments.EURUSD]
 price_side = "mid"              # bid | ask | mid
@@ -150,10 +151,12 @@ source = "..."
 ```
 
 Unknown fields are load errors. Every load is validated: costs must be finite
-and non-negative, the zone and time must parse, every asset class needs a
-weekend rule, `day_count` must be 360 or 365, every venue instrument must be
-defined under `[instruments]`, and every component must have a non-empty
-`source`. The amounts inside `slippage` and `commission` default to zero; the
+and non-negative, the zone and time must parse, `fx`, `metal` and `index`
+each need a weekend rule, `energy` needs one in every venue that costs an
+energy instrument (a config without energy instruments needs no
+`weekend.energy`), every `days_on_triple` must be at least 1, `day_count`
+must be 360 or 365, every venue instrument must be defined under
+`[instruments]`, and every component must have a non-empty `source`. The amounts inside `slippage` and `commission` default to zero; the
 blocks themselves and their provenance do not, so a zero is always stated
 with a source.
 
@@ -229,10 +232,11 @@ instant moves with daylight saving through `chrono-tz`.
 
 In the builtin example:
 
-| Venue | Rollover | FX | Metals | Indices |
-|---|---|---|---|---|
-| `example_spread_bet` | 22:00 `Europe/London` | Wednesday x3 | Friday x3 | Friday x3 |
-| `example_ny_spread_bet`, `example_ny_cfd` | 17:00 `America/New_York` | Wednesday x3 | Wednesday x3 | Friday x3 |
+| Venue | Rollover | FX | Metals | Indices | Energy |
+|---|---|---|---|---|---|
+| `example_spread_bet` | 22:00 `Europe/London` | Wednesday x3 | Friday x3 | Friday x3 | Friday x3 |
+| `example_ny_spread_bet` | 17:00 `America/New_York` | Wednesday x3 | Wednesday x3 | Friday x3 | Wednesday x3 |
+| `example_ny_cfd` | 17:00 `America/New_York` | Wednesday x3 | Wednesday x3 | Friday x3 | none (optional) |
 
 A position is charged at a rollover when it is held across it, that is
 `entry < rollover < exit`. The triple day charges `days_on_triple` and every

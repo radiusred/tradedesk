@@ -106,6 +106,7 @@ rollover = { tz = "Europe/London", time = "22:00" }
 weekend.fx = { triple_day = "wednesday", days_on_triple = 3 }
 weekend.metal = { triple_day = "friday", days_on_triple = 3 }
 weekend.index = { triple_day = "friday", days_on_triple = 3 }
+weekend.energy = { triple_day = "friday", days_on_triple = 3 }
 
 [venues.example_spread_bet.instruments.EURUSD]
 price_side = "mid"
@@ -185,6 +186,7 @@ rollover = { tz = "America/New_York", time = "17:00" }
 weekend.fx = { triple_day = "wednesday", days_on_triple = 3 }
 weekend.metal = { triple_day = "wednesday", days_on_triple = 3 }
 weekend.index = { triple_day = "friday", days_on_triple = 3 }
+weekend.energy = { triple_day = "wednesday", days_on_triple = 3 }
 
 [venues.example_ny_spread_bet.instruments.EURUSD]
 price_side = "mid"
@@ -239,6 +241,8 @@ rollover = { tz = "America/New_York", time = "17:00" }
 weekend.fx = { triple_day = "wednesday", days_on_triple = 3 }
 weekend.metal = { triple_day = "wednesday", days_on_triple = 3 }
 weekend.index = { triple_day = "friday", days_on_triple = 3 }
+# No weekend.energy: it is optional, and required only in a venue that costs an energy
+# (asset_class = "energy") instrument.
 
 [venues.example_ny_cfd.instruments.EURUSD]
 price_side = "mid"
