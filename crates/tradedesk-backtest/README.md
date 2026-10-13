@@ -687,6 +687,10 @@ risk_free_rate = 0.0
 period = [10, 20, 40]
 take_profit = [8.0, 12.0]
 "filter.confirm_on" = [2]                  # dotted paths reach nested fields
+
+[provenance]                               # optional; any keys, string values
+authorised_by = "docs/plan.md"
+"document sha256" = "9f86d081…"
 ```
 
 A cell maps parameter paths to values. The grid expands as a cartesian product
@@ -706,6 +710,24 @@ anything runs (`validate_spec` runs the same checks on their own):
 - under `base = "explicit"`, every cell sets every field (below).
 
 A value the strategy rejects becomes that cell's recorded failure.
+
+#### Provenance
+
+The optional `[provenance]` table binds a registry to whatever authorised the
+sweep, for example a document and its hash. It maps string keys to string
+values.
+- Any key is accepted: the unknown-key check does not reach inside the table.
+  A value that is not a string (a number, a boolean, an array or a nested
+  table) is a parse error.
+- The engine gives no key a meaning and checks nothing inside the table.
+- It is echoed verbatim: in the `sweep` record as `spec.provenance`, and in
+  every `trial` record as `provenance`, so a trial line carries it without its
+  header.
+- It is in the `sweep_id`, because that hashes the whole spec. It is in no
+  `trial_id`, because it is not an input to a result: a trial keeps its id when
+  only the provenance changes.
+- Absent or empty, it is not written at all, so every record and id is the same
+  as for a spec without the table.
 
 #### Explicit base
 
@@ -782,8 +804,8 @@ records are:
 
 | `kind` | Fields |
 |---|---|
-| `sweep` | `schema_version` (1), `sweep_id`, `code_version`, `code_revision`, `spec`, `cost_config` `{source, blake3}`, `run` (`RunMetadata`), `cells`, `started_utc` |
-| `trial` | `schema_version`, `trial_id`, `sweep_id`, `index`, `code_version`, `code_revision`, `strategy`, `instrument`, `params` (the cell), `config` (the resolved strategy config, `null` if it did not resolve), `first_day`, `last_day`, `warmup_days`, `venue`, `cost_config`, `exit_evaluation`, `account_fx`, `sizing`, `end_of_run`, `starting_capital`, `risk_free_rate`, `run` (`RunMetadata`: placeholders, exclusions and the derived `costed` map), `started_utc`, `finished_utc`, `outcome` |
+| `sweep` | `schema_version` (1), `sweep_id`, `code_version`, `code_revision`, `spec` (as given, `provenance` included), `cost_config` `{source, blake3}`, `run` (`RunMetadata`), `cells`, `started_utc` |
+| `trial` | `schema_version`, `trial_id`, `sweep_id`, `index`, `code_version`, `code_revision`, `strategy`, `instrument`, `params` (the cell), `config` (the resolved strategy config, `null` if it did not resolve), `first_day`, `last_day`, `warmup_days`, `venue`, `cost_config`, `exit_evaluation`, `account_fx`, `sizing`, `end_of_run`, `starting_capital`, `risk_free_rate`, `run` (`RunMetadata`: placeholders, exclusions and the derived `costed` map), `provenance` (the spec's table; absent when it is empty), `started_utc`, `finished_utc`, `outcome` |
 
 `outcome` is one of:
 - `{status: "ok", engine: EngineStats, metrics: Metrics, trades}`, with the full
@@ -805,10 +827,10 @@ The ids are blake3 hashes:
   sweep re-run on newer code is not deduplicated against stale results. Ids
   written before the build was hashed (M1) differ from today's for the same
   inputs, and those records read back with `code_revision` absent.
-- The sweep's other cells and its `name` are not in the trial id, so a trial
-  keeps its id when the grid grows.
-- **`sweep_id`** hashes the code version and build, the whole spec and the cost
-  hash.
+- The sweep's other cells, its `name` and its `provenance` are not in the
+  trial id, so a trial keeps its id when the grid grows.
+- **`sweep_id`** hashes the code version and build, the whole spec (`name` and
+  `provenance` included) and the cost hash.
 
 Reading is strict:
 - **`schema_version`.** Every line's `schema_version` must be one this reader

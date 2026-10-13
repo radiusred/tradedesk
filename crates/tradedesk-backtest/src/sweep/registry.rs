@@ -65,7 +65,7 @@ pub struct SweepRecord {
     /// modified tree). `None` in records written before it was recorded.
     #[serde(default)]
     pub code_revision: Option<String>,
-    /// The spec as given.
+    /// The spec as given, its `provenance` table included.
     pub spec: SweepSpec,
     /// Where the cost config came from and its blake3.
     pub cost_config: CostConfigRef,
@@ -128,6 +128,10 @@ pub struct TrialRecord {
     pub risk_free_rate: f64,
     /// The venue, product, exit mode, FX and cost placeholders.
     pub run: RunMetadata,
+    /// The spec's `provenance` table, verbatim (#188); not in the trial id. Empty, and
+    /// not written, when the spec has none or the record predates it.
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub provenance: BTreeMap<String, String>,
     /// When the cell started.
     pub started_utc: DateTime<Utc>,
     /// When the cell finished.

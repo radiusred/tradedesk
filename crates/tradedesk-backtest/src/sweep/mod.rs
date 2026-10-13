@@ -39,6 +39,11 @@
 //! instrument's `raw_scale` from the cost config, so a signal that depends on the price
 //! scale is evaluated in quote units and the value is in the trial's recorded `config`.
 //! It is derived, so a grid or cell that names the path is a spec error.
+//!
+//! **Provenance.** A spec's optional `[provenance]` table (string keys to string
+//! values, any keys) is echoed verbatim: in the sweep record as part of its `spec`, and
+//! as the `provenance` field of every trial record. The engine gives no key a meaning.
+//! It is in the sweep id (the whole spec is) and in no trial id.
 
 pub mod cscv;
 pub mod dsr;
@@ -171,6 +176,12 @@ pub struct SweepSpec {
     /// An explicit list of cells. Exclusive with `grid`.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub cells: Vec<BTreeMap<String, Value>>,
+    /// Free-form provenance (#188): any string keys to string values, echoed verbatim
+    /// into the sweep record (as part of `spec`) and into every trial record. The
+    /// engine reads no key. Hashed into the sweep id with the rest of the spec, never
+    /// into a trial id. Absent (empty) by default, and then never serialised.
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub provenance: BTreeMap<String, String>,
 }
 
 /// Where a sweep's cost config came from, with the blake3 of its TOML text.
@@ -673,6 +684,7 @@ impl<'a> Prepared<'a> {
             starting_capital: spec.starting_capital,
             risk_free_rate: spec.risk_free_rate,
             run: self.run.clone(),
+            provenance: spec.provenance.clone(),
             started_utc: started,
             finished_utc: Utc::now(),
             outcome,
