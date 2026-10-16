@@ -160,6 +160,9 @@ fn golden_market_fill_buys_and_sells_at_the_mark_plus_half_spread_and_slippage()
     assert!(close(buy.slippage_cost, 10.0));
     assert_eq!(d.spread_ratio_status, SpreadRatioStatus::Absent);
     assert_eq!(buy.spread_excess_cost, 0.0);
+    // Spec revision 2: the venue half-spread is recorded; no spread excess, no baseline.
+    assert!(close(d.half_spread, HALF_SPREAD));
+    assert_eq!(d.spread_baseline, None);
     let sell = quote(
         &m,
         &bar,
@@ -415,6 +418,14 @@ fn the_spread_excess_charges_the_venue_half_spread_times_the_excess_ratio() {
     assert_eq!(d.spread_ratio, Some(3.0));
     assert_eq!(d.spread_ratio_status, SpreadRatioStatus::Ok);
     assert!(close(q.extra_half_spread, 2.0 * HALF_SPREAD));
+    // Spec revision 2: the baseline (2.0 raw = 0.0002) and the venue half-spread are
+    // recorded, and they recompute the charge.
+    assert!(close(d.spread_baseline.unwrap(), 0.000_2));
+    assert!(close(d.half_spread, HALF_SPREAD));
+    assert!(close(
+        d.extra_half_spread,
+        d.half_spread * (d.spread_ratio.unwrap().min(4.0) - 1.0)
+    ));
     assert!(close(q.spread_excess_cost, 2.0 * HALF_SPREAD * 10_000.0));
     assert!(close(q.fill_price, 1.1 + 3.0 * HALF_SPREAD));
     // The venue spread itself is unchanged; the extra is booked on its own.
@@ -424,6 +435,8 @@ fn the_spread_excess_charges_the_venue_half_spread_times_the_excess_ratio() {
     assert_eq!(d.spread_ratio, Some(10.0));
     assert_eq!(d.spread_ratio_status, SpreadRatioStatus::Capped);
     assert!(close(q.extra_half_spread, 3.0 * HALF_SPREAD));
+    assert!(close(d.spread_baseline.unwrap(), 0.000_2));
+    assert!(close(d.half_spread, HALF_SPREAD));
     // Narrower than usual: no credit.
     let (q, d) = excess_at(baseline_then(1.0, 20));
     assert_eq!(d.spread_ratio, Some(0.5));
@@ -438,6 +451,11 @@ fn every_spread_ratio_status_has_its_case() {
     let (q, d) = excess_at(baseline_then(6.0, 9));
     assert_eq!(d.spread_ratio_status, SpreadRatioStatus::BaselineMissing);
     assert_eq!((d.spread_ratio, q.extra_half_spread), (None, 0.0));
+    // Spec revision 2: no baseline exists, so `spread_baseline` is null in the JSON.
+    assert_eq!(d.spread_baseline, None);
+    assert!(close(d.half_spread, HALF_SPREAD));
+    let json = serde_json::to_value(d).unwrap();
+    assert_eq!(json.get("spread_baseline"), Some(&serde_json::Value::Null));
     // A baseline of zero.
     let zero: Vec<MinutePrices> = baseline_then(6.0, 20)
         .into_iter()
@@ -453,6 +471,7 @@ fn every_spread_ratio_status_has_its_case() {
         d.spread_ratio_status,
         SpreadRatioStatus::BaselineNonpositive
     );
+    assert_eq!(d.spread_baseline, Some(0.0));
     // A one-sided execution minute.
     let mut one_sided = baseline_then(6.0, 20);
     one_sided.last_mut().unwrap().ask = None;
@@ -750,7 +769,9 @@ fn a_round_trip_books_the_detail_and_nets_the_spread_excess() {
         "kappa",
         "slippage",
         "spread_ratio",
+        "spread_baseline",
         "spread_ratio_status",
+        "half_spread",
         "extra_half_spread",
         "spread_excess_cost",
     ] {
@@ -758,6 +779,10 @@ fn a_round_trip_books_the_detail_and_nets_the_spread_excess() {
     }
     assert_eq!(json["fill_kind"], "stop");
     assert_eq!(json["spread_ratio_status"], "ok");
+    assert!(close(
+        json["half_spread"].as_f64().unwrap(),
+        exit.half_spread
+    ));
     let back: crate::Fill = serde_json::from_value(json).unwrap();
     assert_eq!(back, fills[1]);
     assert_eq!(l.metadata().estimates.len(), 2);

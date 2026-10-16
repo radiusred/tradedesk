@@ -132,6 +132,8 @@ fn a_fixed_sweep_writes_none_of_the_new_keys() {
         "\"spread_excess\"",
         "\"spread_excess_cost\"",
         "\"fill_kind\"",
+        "\"spread_baseline\"",
+        "\"half_spread\"",
         "\"estimated\"",
     ] {
         assert!(!text.contains(key), "{key} in {text}");

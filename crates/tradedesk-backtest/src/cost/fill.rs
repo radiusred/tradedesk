@@ -127,7 +127,9 @@ pub enum SpreadRatioStatus {
 
 /// What a fill under the volatility slippage or the spread excess was priced from.
 /// Prices are quote units; `spread_excess_cost` is quote currency. A field that does not
-/// apply is `None` and left out of the JSON.
+/// apply is `None` and left out of the JSON, except `spread_baseline`, which is `null`.
+/// With the one-minute bars, the record holds every input of the fill's slippage and
+/// spread-excess charge.
 #[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
 pub struct FillCostDetail {
     /// Market, stop or limit.
@@ -154,8 +156,15 @@ pub struct FillCostDetail {
     /// `w`, when computed.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub spread_ratio: Option<f64>,
+    /// The baseline spread `w` divides by, quote price; `null` when no baseline exists
+    /// (no execution minute, a one-sided minute, too few baseline values, or no spread
+    /// excess).
+    #[serde(default)]
+    pub spread_baseline: Option<f64>,
     /// Why `w` was or was not computed.
     pub spread_ratio_status: SpreadRatioStatus,
+    /// The configured venue half-spread in force at `τ`, quote price.
+    pub half_spread: f64,
     /// `half_spread × (min(w, cap) − 1)⁺`, quote price.
     pub extra_half_spread: f64,
     /// `extra_half_spread × size`, quote currency.
@@ -492,7 +501,9 @@ impl FillModel {
                 0.0
             },
             spread_ratio: None,
+            spread_baseline: None,
             spread_ratio_status: SpreadRatioStatus::Absent,
+            half_spread: fixed.half_spread,
             extra_half_spread: 0.0,
             spread_excess_cost: 0.0,
         };
@@ -542,8 +553,9 @@ impl FillModel {
         }
         if let Some(x) = excess {
             let cap = x.cap;
-            let (ratio, status) = spread_ratio(minutes, exec, at, x.baseline_weekdays());
+            let (ratio, baseline, status) = spread_ratio(minutes, exec, at, x.baseline_weekdays());
             d.spread_ratio = ratio;
+            d.spread_baseline = baseline.map(|b| self.spec.to_quote(b));
             d.spread_ratio_status = match (ratio, status) {
                 (Some(w), _) if w > cap => SpreadRatioStatus::Capped,
                 (_, status) => status,
@@ -623,18 +635,19 @@ fn median(mut values: Vec<f64>) -> Option<f64> {
     })
 }
 
-/// `w` and its status for a fill at `at` with execution minute `exec`.
+/// `w`, the baseline (raw units) and the status for a fill at `at` with execution
+/// minute `exec`.
 fn spread_ratio(
     minutes: &MinuteCosts,
     exec: Option<usize>,
     at: DateTime<Utc>,
     baseline_weekdays: u32,
-) -> (Option<f64>, SpreadRatioStatus) {
+) -> (Option<f64>, Option<f64>, SpreadRatioStatus) {
     let Some(i) = exec else {
-        return (None, SpreadRatioStatus::NoExecMinute);
+        return (None, None, SpreadRatioStatus::NoExecMinute);
     };
     let Some(s) = minutes.spread(i) else {
-        return (None, SpreadRatioStatus::OneSided);
+        return (None, None, SpreadRatioStatus::OneSided);
     };
     let time = minutes.ts(i).time();
     let mut values = Vec::new();
@@ -656,11 +669,13 @@ fn spread_ratio(
         }
     }
     if values.len() < baseline_weekdays.div_ceil(2) as usize {
-        return (None, SpreadRatioStatus::BaselineMissing);
+        return (None, None, SpreadRatioStatus::BaselineMissing);
     }
     match median(values) {
-        Some(baseline) if baseline > 0.0 => (Some(s / baseline), SpreadRatioStatus::Ok),
-        _ => (None, SpreadRatioStatus::BaselineNonpositive),
+        Some(baseline) if baseline > 0.0 => {
+            (Some(s / baseline), Some(baseline), SpreadRatioStatus::Ok)
+        }
+        baseline => (None, baseline, SpreadRatioStatus::BaselineNonpositive),
     }
 }
 

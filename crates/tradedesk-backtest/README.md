@@ -301,8 +301,12 @@ The divergence check on the engine bar does not change.
 **Records.** Under either model every `Fill` carries `fill_kind`
 (`market`, `stop` or `limit`), `slippage_model`, `exec_minute`, `range_exec`,
 `range_floor`, `range_used`, `kappa`, `slippage`, `spread_ratio`,
-`spread_ratio_status`, `extra_half_spread` and `spread_excess_cost` (a field
-that does not apply is left out). `ClosedTrade.spread_excess_cost` is the sum
+`spread_baseline` (quote price; `null` when no baseline exists),
+`spread_ratio_status`, `half_spread` (the configured venue half-spread at the
+fill instant, quote price), `extra_half_spread` and `spread_excess_cost` (a
+field that does not apply is left out). With the one-minute bars, these fields
+hold every input of the fill's slippage and spread-excess charge. A fill with a
+fixed slippage and no spread excess has none of them. `ClosedTrade.spread_excess_cost` is the sum
 over both fills, and the net P&L includes it. The metrics cost breakdown has
 `spread_excess` beside `spread` and `slippage`. `RunMetadata.cost_models`
 gives each instrument's slippage model and `spread_excess: present | absent`.
