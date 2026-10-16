@@ -26,6 +26,8 @@ pub struct Joined {
     pub bars: Vec<JoinedBar>,
     /// Minutes present on one side only, ascending.
     pub one_sided: Vec<OneSidedMinute>,
+    /// The prices of each minute in `one_sided`, index for index, on the side it has.
+    pub one_sided_prices: Vec<Ohlcv>,
 }
 
 /// Why two per-side streams could not be joined.
@@ -121,11 +123,11 @@ where
         match (b, a) {
             (None, None) => break,
             (Some(x), None) => {
-                out.one_sided.push(one_sided(&x, Side::Bid));
+                out.push_one_sided(&x, Side::Bid);
                 b = bid.pull()?;
             }
             (None, Some(y)) => {
-                out.one_sided.push(one_sided(&y, Side::Ask));
+                out.push_one_sided(&y, Side::Ask);
                 a = ask.pull()?;
             }
             (Some(x), Some(y)) => match x.ts_open_utc.cmp(&y.ts_open_utc) {
@@ -139,11 +141,11 @@ where
                     a = ask.pull()?;
                 }
                 std::cmp::Ordering::Less => {
-                    out.one_sided.push(one_sided(&x, Side::Bid));
+                    out.push_one_sided(&x, Side::Bid);
                     b = bid.pull()?;
                 }
                 std::cmp::Ordering::Greater => {
-                    out.one_sided.push(one_sided(&y, Side::Ask));
+                    out.push_one_sided(&y, Side::Ask);
                     a = ask.pull()?;
                 }
             },
@@ -152,10 +154,13 @@ where
     Ok(out)
 }
 
-fn one_sided(bar: &RawBar, present: Side) -> OneSidedMinute {
-    OneSidedMinute {
-        ts_open_utc: bar.ts_open_utc,
-        present,
+impl Joined {
+    fn push_one_sided(&mut self, bar: &RawBar, present: Side) {
+        self.one_sided.push(OneSidedMinute {
+            ts_open_utc: bar.ts_open_utc,
+            present,
+        });
+        self.one_sided_prices.push(Ohlcv::from_raw(bar));
     }
 }
 
@@ -216,6 +221,9 @@ mod tests {
                 },
             ]
         );
+        // Each one-sided minute keeps the prices of the side it has.
+        let opens: Vec<f64> = joined.one_sided_prices.iter().map(|o| o.open).collect();
+        assert_eq!(opens, vec![100.0, 101.0, 101.0]);
     }
 
     #[test]

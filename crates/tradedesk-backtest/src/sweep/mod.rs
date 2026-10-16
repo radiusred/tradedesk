@@ -72,7 +72,9 @@ use crate::engine::{self, EndOfRun, EndOfRunRule, EngineConfig, SizingPolicy};
 use crate::exit::ExitEvaluation;
 use crate::ledger::{AccountFx, Ledger, RunMetadata};
 use crate::metrics::MetricsConfig;
-use crate::{BarTimeframe, CostConfig, LoadRequest, MarketData, OneSidedPolicy, load};
+use crate::{
+    BarTimeframe, CostConfig, LoadRequest, MarketData, MinuteLookback, OneSidedPolicy, load,
+};
 
 pub use registry::{
     FailureStage, JsonlRegistry, RegistryError, RegistryRecord, RegistrySink, SCHEMA_VERSION,
@@ -675,12 +677,23 @@ impl<'a> Prepared<'a> {
             .instruments
             .iter()
             .map(|symbol| {
-                LoadRequest::utc_days(
+                let request = LoadRequest::utc_days(
                     symbol.clone(),
                     self.load_first_day(),
                     self.spec.last_day,
                     self.timeframes.iter().copied(),
-                )
+                );
+                // The volatility slippage and the spread excess read one-minute cost data
+                // from before the window too.
+                match self
+                    .costs
+                    .venue(&self.spec.venue)
+                    .and_then(|v| v.instruments.get(symbol))
+                    .and_then(MinuteLookback::for_cost)
+                {
+                    Some(lookback) => request.with_minute_costs(lookback),
+                    None => request,
+                }
             })
             .collect()
     }

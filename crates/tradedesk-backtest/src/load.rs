@@ -10,14 +10,17 @@
 //! instruments fail, the first failure in request order is reported.
 
 use std::collections::{BTreeMap, BTreeSet};
+use std::sync::Arc;
 
-use chrono::{DateTime, Duration, NaiveDate, Utc};
+use chrono::{DateTime, Datelike, Duration, NaiveDate, Utc, Weekday};
 use rayon::prelude::*;
 use tradedesk_data::{ClosedRangeUtc, Reader, Side};
 
+use crate::cost::config::VenueInstrumentCost;
+use crate::cost::minutes::{MinuteCosts, MinutePrices};
 use crate::{
-    BarTimeframe, JoinError, JoinedAggregateError, JoinedSeries, OneSidedMinute, SeriesError,
-    aggregate_series, join_sides,
+    BarTimeframe, JoinError, JoinedAggregateError, JoinedBar, JoinedSeries, Ohlcv, OneSidedMinute,
+    SeriesError, aggregate_series, join_sides,
 };
 
 /// One instrument's slice of a run: which window to read and which timeframes to build.
@@ -29,6 +32,55 @@ pub struct LoadRequest {
     pub window: ClosedRangeUtc,
     /// Timeframes to build. The 1-minute series is always kept, listed or not.
     pub timeframes: Vec<BarTimeframe>,
+    /// With `Some`, also build the instrument's [`MinuteCosts`] over the window and a
+    /// look-back before it ([`LoadRequest::with_minute_costs`]).
+    pub minute_costs: Option<MinuteLookback>,
+}
+
+/// How far before a window the one-minute cost data must reach: the volatility
+/// slippage's floor and the spread excess's baseline.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct MinuteLookback {
+    /// The spread excess's `baseline_weekdays` (0 without a spread excess).
+    pub baseline_weekdays: u32,
+    /// The volatility slippage's `floor_minutes` (0 without one).
+    pub floor_minutes: u32,
+}
+
+impl MinuteLookback {
+    /// The look-back `cost` needs, or `None` when it uses neither the volatility
+    /// slippage nor a spread excess ([`VenueInstrumentCost::needs_minute_costs`]).
+    #[must_use]
+    pub fn for_cost(cost: &VenueInstrumentCost) -> Option<Self> {
+        cost.needs_minute_costs().then(|| Self {
+            baseline_weekdays: cost
+                .spread_excess
+                .as_ref()
+                .filter(|x| !x.excluded)
+                .map_or(0, crate::cost::config::SpreadExcess::baseline_weekdays),
+            floor_minutes: cost.slippage.floor_minutes(),
+        })
+    }
+
+    /// The first instant to read for a window opening at `start`: `00:00Z` of the day
+    /// that leaves `2 × baseline_weekdays` weekdays before `start`'s date, plus one
+    /// weekday per whole day of `floor_minutes` (rounded up) and one more as a margin.
+    #[must_use]
+    pub fn read_start(&self, start: DateTime<Utc>) -> DateTime<Utc> {
+        let weekdays = 2 * self.baseline_weekdays + self.floor_minutes.div_ceil(1440) + 1;
+        let mut day = start.date_naive();
+        let mut counted = 0;
+        while counted < weekdays {
+            let Some(previous) = day.pred_opt() else {
+                break;
+            };
+            day = previous;
+            if !matches!(day.weekday(), Weekday::Sat | Weekday::Sun) {
+                counted += 1;
+            }
+        }
+        day.and_time(chrono::NaiveTime::MIN).and_utc().min(start)
+    }
 }
 
 impl LoadRequest {
@@ -43,7 +95,18 @@ impl LoadRequest {
             symbol: symbol.into(),
             window,
             timeframes: timeframes.into_iter().collect(),
+            minute_costs: None,
         }
+    }
+
+    /// Also build the instrument's [`MinuteCosts`] ([`InstrumentSeries::minute_costs`])
+    /// from the window and `lookback` before it. The look-back is read in the same pass
+    /// as the window, and only the cost data sees it: the series, the one-sided policy
+    /// check and every timeframe are built from the window alone.
+    #[must_use]
+    pub fn with_minute_costs(mut self, lookback: MinuteLookback) -> Self {
+        self.minute_costs = Some(lookback);
+        self
     }
 
     /// Request whole UTC days `first..=last` (the Python engine's inclusive
@@ -170,6 +233,7 @@ pub struct InstrumentSeries {
     window: ClosedRangeUtc,
     frames: BTreeMap<BarTimeframe, JoinedSeries>,
     one_sided: Vec<OneSidedMinute>,
+    minute_costs: Option<Arc<MinuteCosts>>,
 }
 
 impl InstrumentSeries {
@@ -212,6 +276,14 @@ impl InstrumentSeries {
     #[must_use]
     pub fn one_sided(&self) -> &[OneSidedMinute] {
         &self.one_sided
+    }
+
+    /// The one-minute cost data, built when the request asked for it
+    /// ([`LoadRequest::with_minute_costs`]): every two-sided and one-sided minute of the
+    /// window and the look-back.
+    #[must_use]
+    pub fn minute_costs(&self) -> Option<&Arc<MinuteCosts>> {
+        self.minute_costs.as_ref()
     }
 }
 
@@ -298,37 +370,58 @@ fn load_one<R: Reader>(
         symbol: symbol.to_owned(),
         source,
     };
+    let read = ClosedRangeUtc {
+        start: request
+            .minute_costs
+            .map_or(window.start, |l| l.read_start(window.start)),
+        end: window.end,
+    };
     let open = |side| {
         reader
-            .read_1m_bars(symbol, side, window)
+            .read_1m_bars(symbol, side, read)
             .map_err(|source| read_err(JoinError::Reader { side, source }))
     };
-    let joined = join_sides(open(Side::Bid)?, open(Side::Ask)?).map_err(read_err)?;
-    if joined.bars.is_empty() && joined.one_sided.is_empty() {
+    let mut joined = join_sides(open(Side::Bid)?, open(Side::Ask)?).map_err(read_err)?;
+    // The look-back is the cost data's alone: the series start at `window.start`.
+    let lookback_bars = joined
+        .bars
+        .partition_point(|b| b.ts_open_utc < window.start);
+    let lookback_one_sided = joined
+        .one_sided
+        .partition_point(|m| m.ts_open_utc < window.start);
+    let one_sided = &joined.one_sided[lookback_one_sided..];
+    if joined.bars.len() == lookback_bars && one_sided.is_empty() {
         return Err(LoadError::NoData {
             symbol: symbol.to_owned(),
             start: window.start,
             end: window.end,
         });
     }
-    if !joined.one_sided.is_empty() {
+    if !one_sided.is_empty() {
         match policy {
             OneSidedPolicy::Reject => {
                 return Err(LoadError::OneSided {
                     symbol: symbol.to_owned(),
-                    minutes: joined.one_sided,
+                    minutes: one_sided.to_vec(),
                 });
             }
             OneSidedPolicy::Report => tracing::warn!(
                 symbol,
-                count = joined.one_sided.len(),
-                first = %joined.one_sided[0].ts_open_utc,
+                count = one_sided.len(),
+                first = %one_sided[0].ts_open_utc,
                 "minutes present on one side only are excluded from the joined series"
             ),
         }
     }
 
-    check_prices(symbol, &joined.bars)?;
+    check_prices(symbol, &joined.bars[lookback_bars..])?;
+    let minute_costs = match request.minute_costs {
+        None => None,
+        Some(_) => Some(Arc::new(minute_costs(symbol, &joined)?)),
+    };
+    joined.bars.drain(..lookback_bars);
+    joined.one_sided.drain(..lookback_one_sided);
+    joined.one_sided_prices.drain(..lookback_one_sided);
     let m1 = JoinedSeries::new(symbol, BarTimeframe::M1, joined.bars).map_err(|source| {
         LoadError::Series {
             symbol: symbol.to_owned(),
@@ -359,33 +452,75 @@ fn load_one<R: Reader>(
         window,
         frames,
         one_sided: joined.one_sided,
+        minute_costs,
     })
+}
+
+/// Every minute read, two-sided and one-sided, as [`MinuteCosts`]. Every price is
+/// checked as the window's joined minutes are.
+fn minute_costs<E: std::error::Error + 'static>(
+    symbol: &str,
+    joined: &crate::Joined,
+) -> Result<MinuteCosts, LoadError<E>> {
+    check_prices(symbol, &joined.bars)?;
+    let mut one_sided = Vec::with_capacity(joined.one_sided.len());
+    for (m, prices) in joined.one_sided.iter().zip(&joined.one_sided_prices) {
+        check_side(symbol, m.ts_open_utc, m.present, prices)?;
+        let (bid, ask) = match m.present {
+            Side::Bid => (Some(*prices), None),
+            Side::Ask => (None, Some(*prices)),
+        };
+        one_sided.push(MinutePrices {
+            ts_open_utc: m.ts_open_utc,
+            bid,
+            ask,
+        });
+    }
+    let mut two_sided = joined.bars.iter().map(MinutePrices::from).peekable();
+    let mut one_sided = one_sided.into_iter().peekable();
+    let merged = std::iter::from_fn(|| match (two_sided.peek(), one_sided.peek()) {
+        (Some(a), Some(b)) if b.ts_open_utc < a.ts_open_utc => one_sided.next(),
+        (Some(_), _) => two_sided.next(),
+        (None, _) => one_sided.next(),
+    });
+    // The join yields both lists ascending and disjoint, so the merge is ascending.
+    Ok(MinuteCosts::new(merged).expect("the join yields ascending, disjoint minutes"))
 }
 
 /// Every price of every joined minute must be finite and above zero.
 fn check_prices<E: std::error::Error + 'static>(
     symbol: &str,
-    bars: &[crate::JoinedBar],
+    bars: &[JoinedBar],
 ) -> Result<(), LoadError<E>> {
     for bar in bars {
         for (side, ohlcv) in [(Side::Bid, &bar.bid), (Side::Ask, &bar.ask)] {
-            let fields = [
-                ("open", ohlcv.open),
-                ("high", ohlcv.high),
-                ("low", ohlcv.low),
-                ("close", ohlcv.close),
-            ];
-            if let Some(&(field, value)) = fields.iter().find(|(_, v)| !(v.is_finite() && *v > 0.0))
-            {
-                return Err(LoadError::BadPrice {
-                    symbol: symbol.to_owned(),
-                    ts: bar.ts_open_utc,
-                    side,
-                    field,
-                    value,
-                });
-            }
+            check_side(symbol, bar.ts_open_utc, side, ohlcv)?;
         }
+    }
+    Ok(())
+}
+
+/// Every price of one side of one minute must be finite and above zero.
+fn check_side<E: std::error::Error + 'static>(
+    symbol: &str,
+    ts: DateTime<Utc>,
+    side: Side,
+    ohlcv: &Ohlcv,
+) -> Result<(), LoadError<E>> {
+    let fields = [
+        ("open", ohlcv.open),
+        ("high", ohlcv.high),
+        ("low", ohlcv.low),
+        ("close", ohlcv.close),
+    ];
+    if let Some(&(field, value)) = fields.iter().find(|(_, v)| !(v.is_finite() && *v > 0.0)) {
+        return Err(LoadError::BadPrice {
+            symbol: symbol.to_owned(),
+            ts,
+            side,
+            field,
+            value,
+        });
     }
     Ok(())
 }
@@ -686,6 +821,104 @@ mod tests {
         );
         let err = load(&reader, &[req], OneSidedPolicy::Reject).unwrap_err();
         assert!(matches!(err, LoadError::EmptyWindow { .. }));
+    }
+
+    #[test]
+    fn the_minute_cost_look_back_counts_weekdays_back_from_the_window() {
+        // 2024-01-02 is a Tuesday. Two baseline weekdays (4 back), one floor day and one
+        // margin: six weekdays back is Monday 2023-12-25.
+        let l = MinuteLookback {
+            baseline_weekdays: 2,
+            floor_minutes: 30,
+        };
+        assert_eq!(
+            l.read_start(t0()),
+            Utc.with_ymd_and_hms(2023, 12, 25, 0, 0, 0).unwrap()
+        );
+        // The default 20 weekdays and 30 minutes: 42 weekdays, 8 weeks back to Tuesday
+        // and two more to the Friday before.
+        let l = MinuteLookback {
+            baseline_weekdays: 20,
+            floor_minutes: 30,
+        };
+        assert_eq!(l.read_start(t0()), t0() - Duration::days(60));
+    }
+
+    #[test]
+    fn minute_costs_reach_back_without_changing_the_series_or_the_reads() {
+        // Minutes from three days before the window to its end, and a one-sided minute in
+        // the look-back that the Reject policy must not see.
+        let minutes: Vec<i64> = (-3 * 1440..2 * 1440).step_by(5).collect();
+        let mut ask = minutes.clone();
+        ask.push(-3 * 1440 + 1);
+        ask.sort_unstable();
+        let reader = CountingReader::default()
+            .with("EURUSD", Side::Bid, &minutes, 100.0)
+            .with("EURUSD", Side::Ask, &ask, 101.0);
+        let plain = load(
+            &reader,
+            &[two_days("EURUSD", &[BarTimeframe::H1])],
+            OneSidedPolicy::Reject,
+        )
+        .unwrap();
+        let lookback = MinuteLookback {
+            baseline_weekdays: 2,
+            floor_minutes: 30,
+        };
+        let with = load(
+            &reader,
+            &[two_days("EURUSD", &[BarTimeframe::H1]).with_minute_costs(lookback)],
+            OneSidedPolicy::Reject,
+        )
+        .unwrap();
+        let (a, b) = (plain.get("EURUSD").unwrap(), with.get("EURUSD").unwrap());
+        // The window's series are those of a load without the look-back.
+        assert_eq!(a.m1(), b.m1());
+        assert_eq!(a.series(BarTimeframe::H1), b.series(BarTimeframe::H1));
+        assert!(b.one_sided().is_empty());
+        assert!(a.minute_costs().is_none());
+        // The cost data holds every minute read, the look-back and the one-sided one too.
+        let costs = b.minute_costs().unwrap();
+        assert_eq!(costs.len(), minutes.len() + 1);
+        assert_eq!(costs.ts(0), t0() - Duration::days(3));
+        assert!(
+            costs
+                .find(t0() - Duration::days(3) + Duration::minutes(1))
+                .is_some()
+        );
+        // Each side was read once per load, the look-back in the same read.
+        assert!(
+            reader.reads().values().all(|&n| n == 2),
+            "{:?}",
+            reader.reads()
+        );
+    }
+
+    #[test]
+    fn a_bad_price_in_the_look_back_fails_a_load_that_asks_for_minute_costs() {
+        let minutes: Vec<i64> = (-1440..1440).step_by(60).collect();
+        let mut reader = CountingReader::default().both("EURUSD", &minutes);
+        reader
+            .bars
+            .get_mut(&("EURUSD".to_owned(), Side::Bid))
+            .unwrap()[0]
+            .low = f64::NAN;
+        let request = two_days("EURUSD", &[]);
+        assert!(load(&reader, &[request.clone()], OneSidedPolicy::Reject).is_ok());
+        let lookback = MinuteLookback {
+            baseline_weekdays: 2,
+            floor_minutes: 30,
+        };
+        let err = load(
+            &reader,
+            &[request.with_minute_costs(lookback)],
+            OneSidedPolicy::Reject,
+        )
+        .unwrap_err();
+        assert!(
+            matches!(err, LoadError::BadPrice { field: "low", .. }),
+            "{err}"
+        );
     }
 
     #[test]
