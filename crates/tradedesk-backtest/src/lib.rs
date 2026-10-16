@@ -71,6 +71,7 @@ pub use cost::config::{
 };
 pub use cost::fill::{FillError, FillModel, FillQuote, PricePoint, TradeSide};
 pub use cost::financing::{Direction, Rollover, RolloverCalendar, rollover_charge};
+pub use cost::minutes::{MinuteCosts, MinuteCostsError, MinutePrices};
 pub use engine::{
     EndOfRun, EndOfRunRule, EngineConfig, EngineError, EngineStats, FinalBarEntry, RunOutput,
     SizingPolicy,
@@ -81,7 +82,9 @@ pub use ledger::{
     AccountFx, ClosedTrade, Fill, FillAt, FinancingCharge, Ledger, LedgerError, MarkSource,
     OpenOrder, OpenPosition, PositionId, PositionMark, RunMetadata,
 };
-pub use load::{InstrumentSeries, LoadError, LoadRequest, MarketData, OneSidedPolicy, load};
+pub use load::{
+    InstrumentSeries, LoadError, LoadRequest, MarketData, MinuteLookback, OneSidedPolicy, load,
+};
 pub use metrics::{
     Conventions, CostBreakdown, DayConvention, Drawdown, EquityPoint, ExitReasonBreakdown,
     MarkConvention, MaxDrawdown, Metrics, MetricsConfig, MetricsError, OpenAtEnd,

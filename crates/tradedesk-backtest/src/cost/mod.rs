@@ -5,7 +5,10 @@
 //! - [`fill`]: fill simulation on a joined bar: configured side ± half the venue spread
 //!   ± slippage, then commission; a divergent bar is an error.
 //! - [`financing`]: the venue rollover calendar and the per-rollover charge.
+//! - [`minutes`]: one instrument's per-minute ranges and ask − bid, which the volatility
+//!   slippage and the spread excess read.
 
 pub mod config;
 pub mod fill;
 pub mod financing;
+pub mod minutes;
