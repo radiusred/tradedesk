@@ -11,7 +11,8 @@
 //!   The curve's last point is therefore always the window's close, and the final
 //!   equity reconciles with the closed trades and [`OpenAtEnd`].
 //! - **Mark.** Liquidation value: open positions are valued as if closed at the
-//!   configured-side close, with the exit half-spread, slippage and commission deducted.
+//!   configured-side close, with the exit half-spread, spread excess, slippage and
+//!   commission deducted.
 //! - **Sharpe.** `sqrt(252) × mean(r − rf/252) / std(r)`, sample std (ddof 1), over the
 //!   daily simple returns of the curve, reported with the number of observations.
 //!
@@ -138,8 +139,8 @@ pub enum DayConvention {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum MarkConvention {
-    /// As if closed at the configured-side close, net of exit spread, slippage and
-    /// commission.
+    /// As if closed at the configured-side close, net of exit spread, spread excess,
+    /// slippage and commission.
     Liquidation,
 }
 

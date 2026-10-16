@@ -5,8 +5,9 @@
 //! or Sunday ends with one more point at the window's close, so the curve's last point
 //! is always the window's close. A position is open at a close when
 //! `entry_ts <= close < exit_ts`. It is valued at liquidation: the configured-side close
-//! of the last bar closed by the instant, less the exit half-spread, slippage and exit
-//! commission, exactly as [`Ledger::close`] would book it there. Financing to date is
+//! of the last bar closed by the instant, less the exit half-spread, spread excess,
+//! slippage and exit commission, exactly as a market exit [`Ledger::close`] would book
+//! there. Financing to date is
 //! the position's own [`FinancingCharge`]s before the close.
 
 use std::collections::BTreeMap;
@@ -54,7 +55,8 @@ pub struct EquityPoint {
     pub unrealised_net: f64,
     /// Positions open at `at`.
     pub open_positions: usize,
-    /// The exit costs (half-spread, slippage, exit and round-trip commission) deducted
+    /// The exit costs (half-spread, spread excess, slippage, exit and round-trip
+    /// commission) deducted
     /// from `unrealised_net`. A mid (`Ledger::mark_to_market`) equity is
     /// `equity + open_exit_cost`.
     pub open_exit_cost: f64,
@@ -257,7 +259,8 @@ fn liquidation_value(
         mark_price: q.mark_price,
         unrealised_gross: gross * rate,
         unrealised_net: net * rate,
-        exit_cost: (q.spread_cost + q.slippage_cost) * rate + exit_commission,
+        exit_cost: (q.spread_cost + q.slippage_cost + q.spread_excess_cost) * rate
+            + exit_commission,
         financing: financing * rate,
     })
 }
@@ -296,7 +299,14 @@ pub(super) fn build_curve(
     let mut fill_costs = Vec::with_capacity(ledger.fills().len());
     for f in ledger.fills() {
         let r = rate(ledger, &f.instrument)?;
-        fill_costs.push((f.ts, f.spread_cost * r, f.slippage_cost * r, f.commission));
+        let excess = f.cost_detail.map_or(0.0, |d| d.spread_excess_cost);
+        fill_costs.push((
+            f.ts,
+            f.spread_cost * r,
+            f.slippage_cost * r,
+            f.commission,
+            excess * r,
+        ));
     }
     fill_costs.sort_by_key(|c| c.0);
     let mut financing = Vec::with_capacity(ledger.financing_charges().len());
@@ -314,13 +324,14 @@ pub(super) fn build_curve(
     let mut points = Vec::with_capacity(days.len());
     for &(date, kind) in days {
         let at = day_start(date + Days::new(1));
-        while let Some(&(ts, spread, slippage, commission)) = fill_costs.get(next_fill) {
+        while let Some(&(ts, spread, slippage, commission, excess)) = fill_costs.get(next_fill) {
             if ts > at {
                 break;
             }
             costs.spread += spread;
             costs.slippage += slippage;
             costs.commission += commission;
+            costs.spread_excess += excess;
             next_fill += 1;
         }
         while let Some(&(ts, charge)) = financing.get(next_charge) {

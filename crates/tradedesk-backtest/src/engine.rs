@@ -23,6 +23,11 @@
 //!      costed on its own, with no flat bar between. The old position closes at the bar
 //!      close through [`Ledger::close_signal`], or at the trigger point when the ledger's
 //!      stop or target fired on the bar (the strategy is not told: it already left it);
+//!
+//!    Each fill's kind follows its reason: entries, strategy exits and end-of-run closes
+//!    are market fills, a stop a stop fill and a target a limit fill. It selects the
+//!    volatility slippage coefficient when the venue cost uses one, and the engine then
+//!    attaches the instrument's one-minute cost data to the ledger before the first bar;
 //! 4. with a position still open, [`Ledger::accrue_financing`] charges every rollover
 //!    up to the bar close, marked from the instrument's 1-minute series;
 //! 5. the ledger's open position and [`Strategy::position`] must agree on the direction
@@ -63,6 +68,8 @@
 //! The loop holds no clock and no randomness, so a run is deterministic for a given
 //! (config, data).
 
+use std::sync::Arc;
+
 use chrono::{DateTime, NaiveTime, Utc};
 use serde::{Deserialize, Serialize};
 
@@ -76,7 +83,7 @@ use crate::strategy::{
     BarAction, BarFeed, BridgeError, Entry, FillBridge, PositionFeedback, RunError, Strategy,
     StrategyError, atr_normalised_size, resolve_bar,
 };
-use crate::{BarTimeframe, CostConfig, JoinedBar, MarketData};
+use crate::{BarTimeframe, CostConfig, InstrumentSeries, JoinedBar, MarketData};
 
 /// How an entry is sized, in instrument units. Recorded with every trial.
 #[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
@@ -275,6 +282,17 @@ pub enum EngineError {
     /// The metrics could not be computed.
     #[error(transparent)]
     Metrics(#[from] MetricsError),
+    /// The venue's cost for the instrument uses the volatility slippage or a spread
+    /// excess, and the market data has no one-minute cost data for it (load it with
+    /// [`crate::LoadRequest::with_minute_costs`]).
+    #[error(
+        "{instrument}: the cost needs one-minute cost data, and the market data was loaded \
+         without it"
+    )]
+    NoMinuteCosts {
+        /// Instrument.
+        instrument: String,
+    },
 }
 
 fn day_start(day: chrono::NaiveDate) -> DateTime<Utc> {
@@ -362,13 +380,25 @@ pub fn run<S: Strategy + ?Sized>(
         config.exit_evaluation,
         config.account_fx.clone(),
     )?;
-    let model = ledger
+    let unknown = || EngineError::UnknownInstrument {
+        venue: config.venue.clone(),
+        instrument: instrument.to_owned(),
+    };
+    if ledger
         .fill_model(instrument)
-        .ok_or_else(|| EngineError::UnknownInstrument {
-            venue: config.venue.clone(),
-            instrument: instrument.to_owned(),
-        })?
-        .clone();
+        .ok_or_else(unknown)?
+        .cost()
+        .needs_minute_costs()
+    {
+        let minutes = data
+            .get(instrument)
+            .and_then(InstrumentSeries::minute_costs)
+            .ok_or_else(|| EngineError::NoMinuteCosts {
+                instrument: instrument.to_owned(),
+            })?;
+        ledger.attach_minutes(instrument, Arc::clone(minutes), primary_tf)?;
+    }
+    let model = ledger.fill_model(instrument).ok_or_else(unknown)?.clone();
     let bridge = FillBridge::new(&model)?;
     let raw_scale = model.spec().raw_scale;
     if let Some(assumed) = strategy.price_scale() {

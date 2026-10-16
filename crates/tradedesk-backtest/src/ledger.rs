@@ -17,11 +17,16 @@ use std::collections::BTreeMap;
 use chrono::{DateTime, NaiveDate, Utc};
 use serde::{Deserialize, Serialize};
 
-use crate::cost::config::{CostConfig, Exclusion, InstrumentSpec, Placeholder, PriceSide, Product};
-use crate::cost::fill::{FillError, FillModel, PricePoint, TradeSide};
+use std::sync::Arc;
+
+use crate::cost::config::{
+    CostConfig, CostModels, Estimate, Exclusion, InstrumentSpec, Placeholder, PriceSide, Product,
+};
+use crate::cost::fill::{FillCostDetail, FillError, FillKind, FillModel, PricePoint, TradeSide};
 use crate::cost::financing::{Direction, RolloverCalendar, rollover_charge};
+use crate::cost::minutes::MinuteCosts;
 use crate::exit::{ExitEvaluation, ExitReason, ExitTrigger, SignalExitReason};
-use crate::{JoinedBar, JoinedSeries, MarketData};
+use crate::{BarTimeframe, JoinedBar, JoinedSeries, MarketData};
 
 /// Why the ledger refused an operation. A refused operation changes nothing.
 #[derive(Debug, Clone, PartialEq, thiserror::Error)]
@@ -218,6 +223,15 @@ pub struct RunMetadata {
     /// record written before task #58, which therefore reads back as uncosted.
     #[serde(default)]
     pub costed: BTreeMap<String, bool>,
+    /// Every estimated cost component configured for the venue, with its source. Left out
+    /// of the JSON when empty, and empty in a record written before task #195.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub estimates: Vec<Estimate>,
+    /// For each instrument at the venue, its slippage model and whether a spread excess is
+    /// configured (`absent` when not). `None`, and left out of the JSON, when no instrument
+    /// at the venue uses the volatility slippage or a spread excess.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub cost_models: Option<BTreeMap<String, CostModels>>,
 }
 
 impl RunMetadata {
@@ -342,6 +356,12 @@ pub struct Fill {
     /// [`Ledger::close_signal`]; absent otherwise.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub signal_reason: Option<SignalExitReason>,
+    /// The volatility slippage and spread excess detail (fill kind, execution minute,
+    /// ranges, coefficient, spread ratio, spread-excess cost), flattened into the fill's
+    /// JSON. `None`, and absent from the JSON, under a fixed slippage with no spread
+    /// excess.
+    #[serde(flatten, skip_serializing_if = "Option::is_none")]
+    pub cost_detail: Option<FillCostDetail>,
 }
 
 /// One rollover charge booked against a position.
@@ -392,6 +412,10 @@ pub struct OpenPosition {
     pub entry_slippage_cost: f64,
     /// Entry commission, account currency.
     pub entry_commission: f64,
+    /// Entry spread-excess cost, quote currency; `None`, and absent from the JSON, when
+    /// the cost has neither the volatility slippage nor a spread excess.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub entry_spread_excess_cost: Option<f64>,
     /// Stop level, raw units on the configured side.
     pub stop: Option<f64>,
     /// Target level, raw units on the configured side.
@@ -445,7 +469,8 @@ pub struct ClosedTrade {
     pub commission: f64,
     /// `(exit_mark − entry_mark) × direction × size`, quote currency: before any cost.
     pub gross_pnl_quote: f64,
-    /// Gross less spread, slippage, financing and commission, quote currency.
+    /// Gross less spread, spread excess, slippage, financing and commission, quote
+    /// currency.
     pub net_pnl_quote: f64,
     /// The quote → account rate used.
     pub fx_rate: f64,
@@ -459,6 +484,10 @@ pub struct ClosedTrade {
     /// [`Ledger::close_signal`]; absent otherwise.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub signal_reason: Option<SignalExitReason>,
+    /// Spread-excess cost over both fills, quote currency. `None`, and absent from the
+    /// JSON, when the cost has neither the volatility slippage nor a spread excess.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub spread_excess_cost: Option<f64>,
 }
 
 /// An open position valued at a mark.
@@ -587,6 +616,12 @@ impl Ledger {
                 costed: config
                     .costed(venue_id)
                     .map_err(|_| LedgerError::UnknownVenue(venue_id.to_owned()))?,
+                estimates: config
+                    .estimates(venue_id)
+                    .map_err(|_| LedgerError::UnknownVenue(venue_id.to_owned()))?,
+                cost_models: config
+                    .cost_models(venue_id)
+                    .map_err(|_| LedgerError::UnknownVenue(venue_id.to_owned()))?,
             },
             calendar: RolloverCalendar::new(venue.rollover, venue.weekend),
             models,
@@ -608,6 +643,29 @@ impl Ledger {
     /// its first bar), so they travel with the run's results.
     pub fn record_end_of_run(&mut self, mode: EndOfRun) {
         self.metadata.end_of_run = Some(EndOfRunRule::new(mode));
+    }
+
+    /// Attach `symbol`'s one-minute cost data to its fill model, with the timeframe of
+    /// the bars the engine fills on ([`FillModel::attach_minutes`]). A volatility
+    /// slippage or a spread excess cannot price a fill without it.
+    ///
+    /// # Errors
+    /// [`LedgerError::UnknownInstrument`] when the venue does not price `symbol`.
+    pub fn attach_minutes(
+        &mut self,
+        symbol: &str,
+        minutes: Arc<MinuteCosts>,
+        engine: BarTimeframe,
+    ) -> Result<(), LedgerError> {
+        let venue = &self.metadata.venue;
+        self.models
+            .get_mut(symbol)
+            .ok_or_else(|| LedgerError::UnknownInstrument {
+                venue: venue.clone(),
+                instrument: symbol.to_owned(),
+            })?
+            .attach_minutes(minutes, engine);
+        Ok(())
     }
 
     /// The fill model for `symbol` at this venue.
@@ -676,7 +734,7 @@ impl Ledger {
             Direction::Long => TradeSide::Buy,
             Direction::Short => TradeSide::Sell,
         };
-        let q = model.quote(at.bar, at.point, at.ts, side, order.size)?;
+        let q = model.quote_as(at.bar, at.point, at.ts, side, order.size, FillKind::Market)?;
         let price_side = model.price_side();
         let id = PositionId(self.next_id);
         self.next_id += 1;
@@ -697,6 +755,7 @@ impl Ledger {
             financing: 0.0,
             exit_reason: None,
             signal_reason: None,
+            cost_detail: q.detail,
         });
         self.open.push(OpenPosition {
             id,
@@ -711,6 +770,7 @@ impl Ledger {
             entry_spread_cost: q.spread_cost,
             entry_slippage_cost: q.slippage_cost,
             entry_commission: q.commission,
+            entry_spread_excess_cost: q.detail.map(|_| q.spread_excess_cost),
             stop: order.stop,
             target: order.target,
             financed_through: at.ts,
@@ -892,7 +952,14 @@ impl Ledger {
             Direction::Long => TradeSide::Sell,
             Direction::Short => TradeSide::Buy,
         };
-        let q = model.quote(at.bar, at.point, at.ts, side, p.size)?;
+        let q = model.quote_as(
+            at.bar,
+            at.point,
+            at.ts,
+            side,
+            p.size,
+            FillKind::for_exit(reason),
+        )?;
         let quote_currency = model.spec().quote_currency.clone();
         let price_side = model.price_side();
         let round_trip = model.cost().commission.per_round_trip;
@@ -924,7 +991,12 @@ impl Ledger {
             financing: p.financing,
             exit_reason: Some(reason),
             signal_reason,
+            cost_detail: q.detail,
         });
+        let spread_excess_cost = match (p.entry_spread_excess_cost, q.detail) {
+            (None, None) => None,
+            (entry, _) => Some(entry.unwrap_or_default() + q.spread_excess_cost),
+        };
         self.closed.push(ClosedTrade {
             id,
             instrument: p.instrument,
@@ -951,6 +1023,7 @@ impl Ledger {
             net_pnl_account: net_pnl_quote * fx_rate,
             exit_reason: reason,
             signal_reason,
+            spread_excess_cost,
         });
         Ok(&self.closed[self.closed.len() - 1])
     }

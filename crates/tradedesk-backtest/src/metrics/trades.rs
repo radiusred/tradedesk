@@ -16,13 +16,25 @@ pub struct CostBreakdown {
     pub commission: f64,
     /// Overnight financing (negative is a credit).
     pub financing: f64,
+    /// The spread excess's extra half-spread on every fill. Left out of the JSON when 0,
+    /// and 0 in a record written before task #195.
+    #[serde(default, skip_serializing_if = "is_zero")]
+    pub spread_excess: f64,
+}
+
+#[allow(
+    clippy::trivially_copy_pass_by_ref,
+    reason = "serde's skip_serializing_if"
+)]
+fn is_zero(v: &f64) -> bool {
+    *v == 0.0
 }
 
 impl CostBreakdown {
-    /// The sum of the four components.
+    /// The sum of the five components.
     #[must_use]
     pub fn total(&self) -> f64 {
-        self.spread + self.slippage + self.commission + self.financing
+        self.spread + self.slippage + self.commission + self.financing + self.spread_excess
     }
 }
 
@@ -147,6 +159,7 @@ pub fn trade_stats(trades: &[ClosedTrade]) -> TradeStats {
         costs.slippage += t.slippage_cost * t.fx_rate;
         costs.commission += t.commission;
         costs.financing += t.financing * t.fx_rate;
+        costs.spread_excess += t.spread_excess_cost.unwrap_or_default() * t.fx_rate;
         let r = by_reason.entry(t.exit_reason);
         r.count += 1;
         r.net_pnl += pnl;

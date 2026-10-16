@@ -165,6 +165,7 @@ fn trade(exit: &str, gross: f64, spread: f64) -> ClosedTrade {
         net_pnl_account: gross - spread,
         exit_reason: ExitReason::Signal,
         signal_reason: None,
+        spread_excess_cost: None,
     }
 }
 
