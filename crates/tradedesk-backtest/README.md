@@ -46,22 +46,23 @@ its strategy implementations, their goldens and their parity harness.
 | `OneSidedMinute` | A minute present on one side only, with the side that has it. |
 | `join_sides` | Merges the bid and ask `RawBar` streams on the bar open. |
 | `aggregate_series` | Turns a 1m `JoinedSeries` into a `JoinedSeries` at any timeframe. It wraps tradedesk-data's `aggregate`. |
-| `LoadRequest` | A symbol, a half-open UTC window and the timeframes to build. `utc_days` covers whole inclusive days. |
+| `LoadRequest` | A symbol, a half-open UTC window and the timeframes to build. `utc_days` covers whole inclusive days. `with_minute_costs(MinuteLookback)` also builds the instrument's `MinuteCosts`. |
 | `OneSidedPolicy` | `Reject` (the default) fails the load on any one-sided minute. `Report` keeps the two-sided bars and attaches the list. |
 | `load` → `MarketData` / `InstrumentSeries` | Reads each `(symbol, side)` once, in parallel across instruments, and returns read-only `Send + Sync` data. |
-| `CostConfig` | The validated cost configuration. `builtin()` loads the checked-in `config/costs.toml`, a labelled example with illustrative figures, and `from_path` / `from_toml_str` load a real file. Per venue, `placeholders` lists every unverified component, `exclusions` every excluded one, `minimum_spreads` the instruments whose spread is a published minimum, and `costed` which instruments can be reported as costed. |
+| `MinuteCosts` / `MinuteLookback` | One instrument's per-minute ranges and ask − bid over the window and a look-back before it, which the volatility slippage and the spread excess read (`InstrumentSeries::minute_costs`). |
+| `CostConfig` | The validated cost configuration. `builtin()` loads the checked-in `config/costs.toml`, a labelled example with illustrative figures, and `from_path` / `from_toml_str` load a real file. Per venue, `placeholders` lists every unverified component, `exclusions` every excluded one, `estimates` every estimated one, `minimum_spreads` the instruments whose spread is a published minimum, `costed` which instruments can be reported as costed, and `cost_models` each instrument's slippage model and spread excess. |
 | `InstrumentSpec` | Venue-independent units: `asset_class`, `quote_currency`, `raw_scale` (raw → quote), `pip_size`, and `divergence_tolerance`. |
-| `Venue` / `VenueInstrumentCost` | A venue's rollover clock, weekend rules and per-instrument `price_side`, `Spread`, `Slippage`, `Commission`, `Financing` and `Carry`. Each component (`CostComponent`) has its own `source` and a `ProvenanceStatus`: verified, placeholder or excluded (`provenance()`, `is_costed()`). |
+| `Venue` / `VenueInstrumentCost` | A venue's rollover clock, weekend rules and per-instrument `price_side`, `Spread`, `Slippage` (`SlippageModel` fixed or volatility), `Commission`, `Financing`, `Carry` and an optional `SpreadExcess`. Each component (`CostComponent`) has its own `source` and a `ProvenanceStatus`: verified, placeholder, excluded or estimated (`provenance()`, `is_costed()`). |
 | `Spread` / `SpreadBasis` / `SpreadWindow` | The venue spread: a flat `pips`, or a time-of-day `schedule` of local windows in `tz` (`pips_at(instant)`), with a `basis` of `average` or `minimum`. |
 | `Exclusion` / `ExclusionEffect` | An excluded component in a run's metadata, with its reason and whether results stay costed with the cost `omitted` or are `uncosted`. |
-| `FillModel` | One venue × instrument. `quote(bar, PricePoint, at, TradeSide, size)` prices a fill at instant `at` as a `FillQuote`. `reference(bar)` gives the configured side's OHLC, and `mark_close(bar)` gives the mark. |
+| `FillModel` | One venue × instrument. `quote(bar, PricePoint, at, TradeSide, size)` prices a market fill at instant `at` as a `FillQuote`, and `quote_as(…, FillKind)` a fill of any kind (`market`, `stop`, `limit`). `attach_minutes` gives it the `MinuteCosts` the volatility models read; the quote's `FillCostDetail` records what they used. `reference(bar)` gives the configured side's OHLC, and `mark_close(bar)` gives the mark. |
 | `PricePoint` | `Open`, `Close` or `Level(raw)`: where in the bar a fill happens. |
-| `FillError` | `Divergence` (the bar's ask − bid is beyond tolerance), `InvalidSize` or `NonFinite`. A fill error is never resolved by a fallback. |
+| `FillError` | `Divergence` (the bar's ask − bid is beyond tolerance), `InvalidSize`, `NonFinite`, `NoVolatility` (a volatility slippage with no minute to read) or `NoMinuteData` (no `MinuteCosts` attached). A fill error is never resolved by a fallback. |
 | `RolloverCalendar` / `Rollover` | A venue's local rollover instants between two UTC times, each with the days it charges. |
 | `ExitEvaluation` / `BothHit` | `Intrabar { both_hit: StopFirst \| Conservative }` or `CloseOnly`. `evaluate` returns an `ExitTrigger` with an `ExitReason` and a `PricePoint`. |
 | `Ledger` | The book for one run at one venue: `open`, `check_exit`, `set_levels`, `close`, `close_signal` (a strategy exit, booked as `Signal` with its `SignalExitReason` label), `accrue_financing` and `mark_to_market`, plus read access to `fills`, `financing_charges`, `open_positions` and `closed_trades`. |
 | `Fill` / `ClosedTrade` / `OpenPosition` / `FinancingCharge` / `PositionMark` | The ledger's records. All of them are `Serialize`. |
-| `RunMetadata` | The venue, product, `ExitEvaluation` and `AccountFx` of a run, and its venue's cost provenance: `placeholders`, `exclusions`, `minimum_spreads` and the derived per-instrument `costed` map (`is_costed(instrument)`), recorded with its results, and `end_of_run` (an `EndOfRunRule`: the `EndOfRun` mode and the `FinalBarEntry` rule) when the engine drove the run. |
+| `RunMetadata` | The venue, product, `ExitEvaluation` and `AccountFx` of a run, and its venue's cost provenance: `placeholders`, `exclusions`, `estimates`, `minimum_spreads`, `cost_models` and the derived per-instrument `costed` map (`is_costed(instrument)`), recorded with its results, and `end_of_run` (an `EndOfRunRule`: the `EndOfRun` mode and the `FinalBarEntry` rule) when the engine drove the run. |
 | `AccountFx` | Fixed quote → GBP rates for a run. `units_for_stake_per_point` converts a spread-bet stake to instrument units. |
 | `MarkSource` | Where marks come from. `MarketData` provides them from the 1m series, and a `JoinedSeries` from its own bars. |
 | `MetricsConfig` | The run window (inclusive UTC days), the starting capital in the account currency, and the annual risk-free rate (default 0). |
@@ -160,7 +161,7 @@ must be 360 or 365, every venue instrument must be defined under
 blocks themselves and their provenance do not, so a zero is always stated
 with a source.
 
-**Provenance.** Each component is in exactly one of three states:
+**Provenance.** Each component is in exactly one of four states:
 
 - **verified** (`placeholder = false`): a figure the venue publishes. The
   `source` names the page, its URL and the date it was read. (In the builtin
@@ -174,8 +175,14 @@ with a source.
   - An excluded **spread** or **commission** makes the venue × instrument
     **uncosted**. It still runs, at no spread or commission, so it can be used
     for signal work, but it is never reported as costed.
-  - Excluded **slippage**, **financing** or **carry** is **omitted**. The
-    result stays costed and lists what it leaves out.
+  - Excluded **slippage**, **spread excess**, **financing** or **carry** is
+    **omitted**. The result stays costed and lists what it leaves out.
+- **estimated** (`estimated = true`, on `slippage` and `spread_excess` only):
+  the figures are derived from data, not published. The component is charged
+  and costed, and `CostConfig::estimates` and `RunMetadata.estimates` list it
+  with its `source`, which names the inputs of the estimate.
+
+At most one of `placeholder`, `excluded` and `estimated` is `true`.
 
 `carry` is the benchmark-rate or tom-next part of overnight funding. It is not
 modelled, because the config holds no rate history, so it must be excluded.
@@ -190,7 +197,8 @@ round. Its windows must not overlap and must not be empty.
 **Costed.** An instrument at a venue is costed when no component is a
 placeholder and neither its spread nor its commission is excluded. Every run
 records `RunMetadata.costed`, a map from instrument to that flag, beside
-`placeholders` and `exclusions`. The sweep report carries `costed` per trial
+`placeholders`, `exclusions` and `estimates`. An estimated component counts as
+costed. The sweep report carries `costed` per trial
 and for the whole sweep: a sweep is costed when at least one trial completed
 and every completed trial is costed. A registry written before task #58 has no
 `costed` map and reads back as uncosted.
@@ -224,6 +232,98 @@ explains why. It is only compared with the instrument's
 `FillError::Divergence`. Nothing falls back to bid-only or a zero spread.
 The instant is the fill's own time (`FillAt::ts`): a close fill on an hourly
 bar pays the spread in force at the bar's close, not at its open.
+
+### Volatility slippage and spread excess
+
+Two optional cost models make a fill cost more when the market moves fast or
+the spread is wide. Both are off by default: with `model = "fixed"` (or no
+`model`) and no `spread_excess` block, every fill, ledger and registry record
+is the same as before them.
+
+```toml
+# The coefficients are dimensionless; floor_minutes and max_gap_minutes default to 30 and 5.
+slippage = { model = "volatility", market = 0.25, stop = 0.5, limit = 0.0, floor_minutes = 30, max_gap_minutes = 5, placeholder = false, estimated = true, source = "..." }
+# Optional; baseline_weekdays defaults to 20 (at least 2), cap is at least 1.
+spread_excess = { baseline_weekdays = 20, cap = 4.0, placeholder = false, estimated = true, source = "..." }
+```
+
+A `volatility` slippage takes no `points` or `bps` (absent or 0), and a
+`fixed` one takes none of the five volatility fields. Both models read the
+instrument's one-minute data, which the loader builds when the request asks
+for it (`LoadRequest::with_minute_costs`; a sweep does so for every
+instrument whose venue cost uses either model). The load then also reads
+`2 x baseline_weekdays` weekdays and the floor's minutes before the window.
+That look-back feeds only the cost data: the series, the warm-up and every
+other result stay as they are.
+
+The arithmetic, for a fill at instant `τ` (prices on the configured side
+unless stated, ranges in quote units through `raw_scale`):
+
+```
+R(m)       = ((ask.high + bid.high) - (ask.low + bid.low)) / 2      the range of the mid
+             (a one-sided minute: the range of the side it has)
+exec(τ)    = market fill (entry, signal or end-of-run exit, liquidation value,
+             a close-only stop or target):
+               the first minute opening in [τ, τ + max_gap_minutes)
+             stop or target inside the engine bar:
+               the first minute of the bar whose range reaches the level
+               (low <= level below the bar's open, high >= level above it;
+               the minute of nearest approach if none does)
+             stop or target filled at the bar open (a gap): the bar's first minute
+floor(τ)   = median R of the last floor_minutes minutes opening before τ
+R_used     = max(R(exec), floor)   (no exec minute: floor; neither: FillError::NoVolatility)
+slippage   = κ x R_used,  κ = market | stop | limit by fill kind, never negative
+
+s(m)       = max(ask.open - bid.open, ask.close - bid.close)
+baseline   = median s at exec's UTC minute of day over the last baseline_weekdays
+             weekdays before τ's UTC date with a two-sided minute there,
+             looking back at most 2 x baseline_weekdays weekdays
+w          = s(exec) / baseline
+extra      = spread(τ) x pip_size / 2 x (min(w, cap) - 1)+
+
+buy        = mark + spread x pip_size / 2 + extra + slippage
+sell       = mark - spread x pip_size / 2 - extra - slippage
+```
+
+`w` is not computed, and `extra` is 0, when there is no execution minute, the
+execution minute is one-sided, fewer than `baseline_weekdays / 2` (rounded up)
+baseline values exist, or the baseline is 0 or below. The fill records which
+case applied in `spread_ratio_status` (`ok`, `capped`, `no_exec_minute`,
+`one_sided`, `baseline_missing`, `baseline_nonpositive`, or `absent` without a
+spread excess).
+
+The store's ask − bid is used only as the ratio `w`, which scales the
+configured venue spread. It is never the cost itself, so the venue-cost
+Decision on #28 still holds
+([Decision on #195](https://github.com/radiusred/tradedesk/issues/195#issuecomment-6219124050)).
+The divergence check on the engine bar does not change.
+
+**Records.** Under either model every `Fill` carries `fill_kind`
+(`market`, `stop` or `limit`), `slippage_model`, `exec_minute`, `range_exec`,
+`range_floor`, `range_used`, `kappa`, `slippage`, `spread_ratio`,
+`spread_ratio_status`, `extra_half_spread` and `spread_excess_cost` (a field
+that does not apply is left out). `ClosedTrade.spread_excess_cost` is the sum
+over both fills, and the net P&L includes it. The metrics cost breakdown has
+`spread_excess` beside `spread` and `slippage`. `RunMetadata.cost_models`
+gives each instrument's slippage model and `spread_excess: present | absent`.
+
+**Worked example** (synthetic values; the unit test
+`a_round_trip_books_the_detail_and_nets_the_spread_excess`). EURUSD
+(`raw_scale` and pip 0.0001), a 1.0-pip venue spread, `market = 0.25`,
+`cap = 4.0`. A buy of 10,000 units at the close of the 13:00 bar, `τ` = 14:00,
+mark 1.1000:
+
+```
+exec       = the 14:00 minute: R = 40 raw = 0.0040, s = 6 raw
+floor      = median of the 30 minutes before 14:00 (ranges 1..30 raw) = 15.5 raw = 0.00155
+R_used     = max(0.0040, 0.00155) = 0.0040
+slippage   = 0.25 x 0.0040 = 0.0010
+baseline   = 2 raw (the 14:00 minute on each of the 20 weekdays before)
+w          = 6 / 2 = 3, below the cap
+extra      = 0.00005 x (3 - 1) = 0.0001
+buy        = 1.1000 + 0.00005 + 0.0001 + 0.0010 = 1.10115
+costs      = spread 0.50, spread excess 1.00, slippage 10.00 (USD)
+```
 
 ### Financing
 
@@ -1050,7 +1150,8 @@ market data is not interrupted: the flag is checked once the load returns.
 ## Tests
 
 `cargo test -p tradedesk-backtest` runs unit tests, proptests and golden tests
-over the join and aggregation, the loader, fills, financing, stops and targets,
+over the join and aggregation, the loader, fills (the volatility slippage and
+the spread excess included), financing, stops and targets,
 the ledger, the metrics, the indicators, the bridge, the engine, the sweep, the
 registry, the deflated Sharpe, the PBO, the walk-forward and the command line.
 None of them needs market data on disk: synthetic caches are written under
