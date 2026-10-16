@@ -64,8 +64,9 @@ pub use aggregate::{JoinedAggregateError, aggregate_series};
 pub use bar::{JoinedBar, Ohlcv};
 pub use cost::config::{
     AssetClass, Carry, Commission, ComponentProvenance, ConfigError, CostComponent, CostConfig,
-    Exclusion, ExclusionEffect, Financing, InstrumentSpec, Placeholder, PriceSide, Product,
-    ProvenanceStatus, RolloverSpec, Slippage, Spread, SpreadBasis, SpreadWindow, TripleDay, Venue,
+    CostModels, Estimate, Exclusion, ExclusionEffect, Financing, InstrumentSpec, Placeholder,
+    PriceSide, Product, ProvenanceStatus, RolloverSpec, Slippage, SlippageModel, Spread,
+    SpreadBasis, SpreadExcess, SpreadExcessState, SpreadWindow, TripleDay, Venue,
     VenueInstrumentCost, WeekendRule, WeekendRules,
 };
 pub use cost::fill::{FillError, FillModel, FillQuote, PricePoint, TradeSide};

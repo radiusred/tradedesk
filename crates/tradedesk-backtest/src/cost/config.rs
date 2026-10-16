@@ -15,11 +15,13 @@
 //!   positive for a charge to the trader and negative for a credit.
 //!
 //! Provenance is per component: the spread, slippage, commission, financing and carry of
-//! every venue × instrument each carry their own `source` and a status. A component is
-//! **verified** (a published venue figure), a **placeholder** (`placeholder = true`: an
-//! assumption or stand-in) or **excluded** (`excluded = true` with a `reason`: no published
-//! figure exists, so the component charges nothing). [`CostConfig::placeholders`] and
-//! [`CostConfig::exclusions`] list them, and [`CostConfig::costed`] says which instruments
+//! every venue × instrument, and its optional spread excess, each carry their own `source`
+//! and a status. A component is **verified** (a published venue figure), a **placeholder**
+//! (`placeholder = true`: an assumption or stand-in), **excluded** (`excluded = true` with
+//! a `reason`: no published figure exists, so the component charges nothing) or
+//! **estimated** (`estimated = true`, slippage and spread excess only: derived from data,
+//! and costed). [`CostConfig::placeholders`], [`CostConfig::exclusions`] and
+//! [`CostConfig::estimates`] list them, and [`CostConfig::costed`] says which instruments
 //! can be reported as costed (see [`CostComponent::exclusion_effect`]).
 
 use std::collections::BTreeMap;
@@ -335,16 +337,54 @@ impl Spread {
     }
 }
 
+/// How the per-fill slippage is computed.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum SlippageModel {
+    /// A fixed amount per fill: `points` pips/points plus `bps` basis points of the mark.
+    #[default]
+    Fixed,
+    /// A coefficient times the price range of the one-minute bar the order executes in
+    /// (see [`crate::cost::fill`]): `market`, `stop` or `limit` by fill kind.
+    Volatility,
+}
+
 /// Adverse slippage applied on every fill.
+///
+/// With [`SlippageModel::Fixed`] (the default) it is `points` and `bps`. With
+/// [`SlippageModel::Volatility`] it is `market`, `stop` or `limit` times the one-minute
+/// range at the execution minute, never less than the median range of the last
+/// `floor_minutes` minutes.
 #[derive(Debug, Clone, PartialEq, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Slippage {
+    /// `fixed` (default) or `volatility`.
+    #[serde(default)]
+    pub model: SlippageModel,
     /// Fixed slippage per fill, in pips/points.
     #[serde(default)]
     pub points: f64,
     /// Proportional slippage per fill, in basis points of the mark.
     #[serde(default)]
     pub bps: f64,
+    /// `volatility` only: the coefficient for market fills (entries, signal exits,
+    /// end-of-run closes and the liquidation valuation). Dimensionless.
+    #[serde(default)]
+    pub market: Option<f64>,
+    /// `volatility` only: the coefficient for stop fills, gap fills included.
+    #[serde(default)]
+    pub stop: Option<f64>,
+    /// `volatility` only: the coefficient for target (limit) fills, gap fills included.
+    #[serde(default)]
+    pub limit: Option<f64>,
+    /// `volatility` only: how many one-minute bars before the fill the floor's median
+    /// covers. Default 30.
+    #[serde(default)]
+    pub floor_minutes: Option<u32>,
+    /// `volatility` only: how many minutes after a market fill instant its execution
+    /// minute may open. Default 5.
+    #[serde(default)]
+    pub max_gap_minutes: Option<u32>,
     /// Where the figures come from.
     pub source: String,
     /// `true` when the figures are an assumption, not a verified venue number.
@@ -356,6 +396,66 @@ pub struct Slippage {
     /// Why the component is excluded. Required with `excluded`, and only then.
     #[serde(default)]
     pub reason: Option<String>,
+    /// `true` when the figures are estimated from data rather than published: still
+    /// costed, and listed by [`CostConfig::estimates`].
+    #[serde(default)]
+    pub estimated: bool,
+}
+
+/// Default of [`Slippage::floor_minutes`].
+pub const DEFAULT_FLOOR_MINUTES: u32 = 30;
+/// Default of [`Slippage::max_gap_minutes`].
+pub const DEFAULT_MAX_GAP_MINUTES: u32 = 5;
+/// Default of [`SpreadExcess::baseline_weekdays`].
+pub const DEFAULT_BASELINE_WEEKDAYS: u32 = 20;
+
+impl Slippage {
+    /// The floor window in one-minute bars ([`DEFAULT_FLOOR_MINUTES`] when unset).
+    #[must_use]
+    pub fn floor_minutes(&self) -> u32 {
+        self.floor_minutes.unwrap_or(DEFAULT_FLOOR_MINUTES)
+    }
+
+    /// The market-fill gap in minutes ([`DEFAULT_MAX_GAP_MINUTES`] when unset).
+    #[must_use]
+    pub fn max_gap_minutes(&self) -> u32 {
+        self.max_gap_minutes.unwrap_or(DEFAULT_MAX_GAP_MINUTES)
+    }
+}
+
+/// An extra charge when the fill minute's spread is wider than usual: the configured
+/// venue half-spread times `(min(w, cap) − 1)⁺`, where `w` is the store's ask − bid at the
+/// execution minute over its median at the same time of day on recent weekdays. The
+/// store's ask − bid is only that ratio; it is never the cost (see [`crate::cost::fill`]).
+#[derive(Debug, Clone, PartialEq, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct SpreadExcess {
+    /// Weekdays in the baseline median. Default 20, at least 2.
+    #[serde(default)]
+    pub baseline_weekdays: Option<u32>,
+    /// The largest ratio charged. Finite, at least 1.
+    pub cap: f64,
+    /// Where the figures come from.
+    pub source: String,
+    /// `true` when the figures are an assumption.
+    pub placeholder: bool,
+    /// `true` when the component is not modelled: nothing is charged.
+    #[serde(default)]
+    pub excluded: bool,
+    /// Why the component is excluded. Required with `excluded`, and only then.
+    #[serde(default)]
+    pub reason: Option<String>,
+    /// `true` when the figures are estimated from data.
+    #[serde(default)]
+    pub estimated: bool,
+}
+
+impl SpreadExcess {
+    /// The baseline's weekday count ([`DEFAULT_BASELINE_WEEKDAYS`] when unset).
+    #[must_use]
+    pub fn baseline_weekdays(&self) -> u32 {
+        self.baseline_weekdays.unwrap_or(DEFAULT_BASELINE_WEEKDAYS)
+    }
 }
 
 /// Commission, in account currency. Each amount defaults to zero; the provenance does
@@ -445,6 +545,9 @@ pub struct VenueInstrumentCost {
     pub financing: Financing,
     /// Overnight financing: the benchmark or tom-next carry.
     pub carry: Carry,
+    /// The optional spread-excess charge. Absent: nothing is charged.
+    #[serde(default)]
+    pub spread_excess: Option<SpreadExcess>,
 }
 
 /// A cost component of a venue × instrument entry.
@@ -461,6 +564,8 @@ pub enum CostComponent {
     Financing,
     /// Overnight financing: the benchmark or tom-next carry.
     Carry,
+    /// The optional spread-excess charge.
+    SpreadExcess,
 }
 
 impl CostComponent {
@@ -473,23 +578,27 @@ impl CostComponent {
             Self::Commission => "commission",
             Self::Financing => "financing",
             Self::Carry => "carry",
+            Self::SpreadExcess => "spread_excess",
         }
     }
 
     /// What excluding this component does to a result. A spread or commission is the
     /// dealing cost a strategy's edge is measured against, so without it the venue ×
-    /// instrument is [`ExclusionEffect::Uncosted`]. Slippage and the two financing parts
-    /// are [`ExclusionEffect::Omitted`]: the result stays costed and lists the omission.
+    /// instrument is [`ExclusionEffect::Uncosted`]. Slippage, the spread excess and the two
+    /// financing parts are [`ExclusionEffect::Omitted`]: the result stays costed and lists
+    /// the omission.
     #[must_use]
     pub fn exclusion_effect(self) -> ExclusionEffect {
         match self {
             Self::Spread | Self::Commission => ExclusionEffect::Uncosted,
-            Self::Slippage | Self::Financing | Self::Carry => ExclusionEffect::Omitted,
+            Self::Slippage | Self::Financing | Self::Carry | Self::SpreadExcess => {
+                ExclusionEffect::Omitted
+            }
         }
     }
 }
 
-/// Whether a component is a verified figure, a placeholder or excluded.
+/// Whether a component is a verified figure, a placeholder, excluded or estimated.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum ProvenanceStatus {
@@ -499,6 +608,8 @@ pub enum ProvenanceStatus {
     Placeholder,
     /// No published figure exists (`excluded = true`); the component charges nothing.
     Excluded,
+    /// Estimated from data (`estimated = true`): costed, and listed with its source.
+    Estimated,
 }
 
 /// What an excluded component does to a result.
@@ -516,7 +627,7 @@ pub enum ExclusionEffect {
 pub struct ComponentProvenance<'a> {
     /// Which component.
     pub component: CostComponent,
-    /// Verified, placeholder or excluded.
+    /// Verified, placeholder, excluded or estimated.
     pub status: ProvenanceStatus,
     /// The `source` note.
     pub source: &'a str,
@@ -524,17 +635,32 @@ pub struct ComponentProvenance<'a> {
     pub reason: Option<&'a str>,
 }
 
-fn entry<'a>(
-    component: CostComponent,
+/// A component's three provenance flags. Validation makes at most one of them `true`.
+#[derive(Debug, Clone, Copy)]
+struct Flags {
     placeholder: bool,
     excluded: bool,
+    estimated: bool,
+}
+
+impl Flags {
+    fn count(self) -> usize {
+        usize::from(self.placeholder) + usize::from(self.excluded) + usize::from(self.estimated)
+    }
+}
+
+fn entry<'a>(
+    component: CostComponent,
+    flags: Flags,
     source: &'a str,
     reason: Option<&'a String>,
 ) -> ComponentProvenance<'a> {
-    let status = if excluded {
+    let status = if flags.excluded {
         ProvenanceStatus::Excluded
-    } else if placeholder {
+    } else if flags.placeholder {
         ProvenanceStatus::Placeholder
+    } else if flags.estimated {
+        ProvenanceStatus::Estimated
     } else {
         ProvenanceStatus::Verified
     };
@@ -547,47 +673,89 @@ fn entry<'a>(
 }
 
 impl VenueInstrumentCost {
-    /// Each component's provenance, in schema order: spread, slippage, commission,
-    /// financing, carry.
-    #[must_use]
-    pub fn provenance(&self) -> [ComponentProvenance<'_>; 5] {
-        [
-            entry(
+    /// Each component's provenance and flags, in schema order: spread, slippage,
+    /// commission, financing, carry, then the spread excess when it is configured.
+    fn flagged(&self) -> Vec<(ComponentProvenance<'_>, Flags)> {
+        let plain = |placeholder, excluded| Flags {
+            placeholder,
+            excluded,
+            estimated: false,
+        };
+        let mut out = vec![
+            (
                 CostComponent::Spread,
-                self.spread.placeholder,
-                self.spread.excluded,
-                &self.spread.source,
+                plain(self.spread.placeholder, self.spread.excluded),
+                self.spread.source.as_str(),
                 self.spread.reason.as_ref(),
             ),
-            entry(
+            (
                 CostComponent::Slippage,
-                self.slippage.placeholder,
-                self.slippage.excluded,
-                &self.slippage.source,
+                Flags {
+                    placeholder: self.slippage.placeholder,
+                    excluded: self.slippage.excluded,
+                    estimated: self.slippage.estimated,
+                },
+                self.slippage.source.as_str(),
                 self.slippage.reason.as_ref(),
             ),
-            entry(
+            (
                 CostComponent::Commission,
-                self.commission.placeholder,
-                self.commission.excluded,
-                &self.commission.source,
+                plain(self.commission.placeholder, self.commission.excluded),
+                self.commission.source.as_str(),
                 self.commission.reason.as_ref(),
             ),
-            entry(
+            (
                 CostComponent::Financing,
-                self.financing.placeholder,
-                self.financing.excluded,
-                &self.financing.source,
+                plain(self.financing.placeholder, self.financing.excluded),
+                self.financing.source.as_str(),
                 self.financing.reason.as_ref(),
             ),
-            entry(
+            (
                 CostComponent::Carry,
-                self.carry.placeholder,
-                self.carry.excluded,
-                &self.carry.source,
+                plain(self.carry.placeholder, self.carry.excluded),
+                self.carry.source.as_str(),
                 self.carry.reason.as_ref(),
             ),
-        ]
+        ];
+        if let Some(x) = &self.spread_excess {
+            out.push((
+                CostComponent::SpreadExcess,
+                Flags {
+                    placeholder: x.placeholder,
+                    excluded: x.excluded,
+                    estimated: x.estimated,
+                },
+                x.source.as_str(),
+                x.reason.as_ref(),
+            ));
+        }
+        out.into_iter()
+            .map(|(c, f, source, reason)| (entry(c, f, source, reason), f))
+            .collect()
+    }
+
+    /// Each component's provenance, in schema order: spread, slippage, commission,
+    /// financing, carry, then the spread excess when it is configured.
+    #[must_use]
+    pub fn provenance(&self) -> Vec<ComponentProvenance<'_>> {
+        self.flagged().into_iter().map(|(p, _)| p).collect()
+    }
+
+    /// Whether a fill needs the instrument's one-minute cost data: the slippage is
+    /// [`SlippageModel::Volatility`] or a spread excess is configured, and that
+    /// component is not excluded.
+    #[must_use]
+    pub fn needs_minute_costs(&self) -> bool {
+        (self.slippage.model == SlippageModel::Volatility && !self.slippage.excluded)
+            || self.spread_excess.as_ref().is_some_and(|x| !x.excluded)
+    }
+
+    /// Whether the entry uses a cost model beyond the fixed slippage: a
+    /// [`SlippageModel::Volatility`] slippage or a `spread_excess` block (excluded or
+    /// not). Fills then carry their cost detail.
+    #[must_use]
+    pub fn uses_extended_models(&self) -> bool {
+        self.slippage.model == SlippageModel::Volatility || self.spread_excess.is_some()
     }
 
     /// Whether a result on this venue × instrument may be reported as costed: no
@@ -596,7 +764,7 @@ impl VenueInstrumentCost {
     #[must_use]
     pub fn is_costed(&self) -> bool {
         self.provenance().iter().all(|p| match p.status {
-            ProvenanceStatus::Verified => true,
+            ProvenanceStatus::Verified | ProvenanceStatus::Estimated => true,
             ProvenanceStatus::Placeholder => false,
             ProvenanceStatus::Excluded => {
                 p.component.exclusion_effect() == ExclusionEffect::Omitted
@@ -651,6 +819,39 @@ pub struct Exclusion {
     pub source: String,
     /// Why it is excluded and what results therefore omit.
     pub reason: String,
+}
+
+/// A component estimated from data (`estimated = true`): costed, and listed with its
+/// source in each run's metadata.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Estimate {
+    /// Venue id.
+    pub venue: String,
+    /// Instrument symbol.
+    pub instrument: String,
+    /// Which component is estimated.
+    pub component: CostComponent,
+    /// The provenance note from the config: the inputs of the estimate.
+    pub source: String,
+}
+
+/// Whether a venue × instrument configures a spread excess.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum SpreadExcessState {
+    /// A `spread_excess` block is configured (it may be excluded; the provenance lists say).
+    Present,
+    /// No `spread_excess` block: nothing is charged.
+    Absent,
+}
+
+/// The cost models one venue × instrument uses, recorded in run metadata.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub struct CostModels {
+    /// The slippage model.
+    pub slippage: SlippageModel,
+    /// Whether a spread excess is configured.
+    pub spread_excess: SpreadExcessState,
 }
 
 /// The whole cost configuration: instrument specs and venues, validated.
@@ -768,6 +969,69 @@ impl CostConfig {
         Ok(out)
     }
 
+    /// Every estimated cost component configured for `venue_id`, in the same order as
+    /// [`CostConfig::placeholders`].
+    ///
+    /// # Errors
+    /// [`ConfigError::UnknownVenue`] when the venue is not defined.
+    pub fn estimates(&self, venue_id: &str) -> Result<Vec<Estimate>, ConfigError> {
+        let venue = self.venue_or_err(venue_id)?;
+        let mut out = Vec::new();
+        for (symbol, cost) in &venue.instruments {
+            for p in cost.provenance() {
+                if p.status == ProvenanceStatus::Estimated {
+                    out.push(Estimate {
+                        venue: venue_id.to_owned(),
+                        instrument: symbol.clone(),
+                        component: p.component,
+                        source: p.source.to_owned(),
+                    });
+                }
+            }
+        }
+        Ok(out)
+    }
+
+    /// For each instrument at `venue_id`, its slippage model and whether it configures a
+    /// spread excess; `None` when no instrument there uses either beyond the default
+    /// (fixed slippage, no spread excess), so that such a run's metadata is unchanged.
+    ///
+    /// # Errors
+    /// [`ConfigError::UnknownVenue`] when the venue is not defined.
+    pub fn cost_models(
+        &self,
+        venue_id: &str,
+    ) -> Result<Option<BTreeMap<String, CostModels>>, ConfigError> {
+        let venue = self.venue_or_err(venue_id)?;
+        if !venue
+            .instruments
+            .values()
+            .any(VenueInstrumentCost::uses_extended_models)
+        {
+            return Ok(None);
+        }
+        Ok(Some(
+            venue
+                .instruments
+                .iter()
+                .map(|(s, c)| {
+                    let spread_excess = if c.spread_excess.is_some() {
+                        SpreadExcessState::Present
+                    } else {
+                        SpreadExcessState::Absent
+                    };
+                    (
+                        s.clone(),
+                        CostModels {
+                            slippage: c.slippage.model,
+                            spread_excess,
+                        },
+                    )
+                })
+                .collect(),
+        ))
+    }
+
     /// The instruments at `venue_id` whose spread is a published minimum
     /// ([`SpreadBasis::Minimum`]): a result costed on them is a lower bound on spread
     /// cost.
@@ -843,6 +1107,10 @@ impl CostConfig {
                 validate_spread(&cost.spread, &at)?;
                 non_negative(cost.slippage.points, &at("slippage.points"))?;
                 non_negative(cost.slippage.bps, &at("slippage.bps"))?;
+                validate_slippage_model(&cost.slippage, &at)?;
+                if let Some(x) = &cost.spread_excess {
+                    validate_spread_excess(x, &at)?;
+                }
                 non_negative(cost.commission.per_fill, &at("commission.per_fill"))?;
                 non_negative(
                     cost.commission.per_unit_per_fill,
@@ -913,13 +1181,90 @@ fn validate_spread(spread: &Spread, at: &impl Fn(&str) -> String) -> Result<(), 
     Ok(())
 }
 
-/// Every component: a non-empty source; not both a placeholder and excluded; a reason
-/// exactly when excluded; an excluded component's amounts all zero; the carry excluded.
+/// The model-specific slippage fields: §2.1 of task #195.
+fn validate_slippage_model(
+    slippage: &Slippage,
+    at: &impl Fn(&str) -> String,
+) -> Result<(), ConfigError> {
+    let volatility_fields = [
+        ("market", slippage.market.is_some()),
+        ("stop", slippage.stop.is_some()),
+        ("limit", slippage.limit.is_some()),
+        ("floor_minutes", slippage.floor_minutes.is_some()),
+        ("max_gap_minutes", slippage.max_gap_minutes.is_some()),
+    ];
+    match slippage.model {
+        SlippageModel::Fixed => {
+            if let Some((field, _)) = volatility_fields.iter().find(|(_, set)| *set) {
+                return Err(invalid(
+                    at(&format!("slippage.{field}")),
+                    "only a volatility slippage (model = \"volatility\") takes this field",
+                ));
+            }
+        }
+        SlippageModel::Volatility => {
+            for (field, value) in [("points", slippage.points), ("bps", slippage.bps)] {
+                if value != 0.0 {
+                    return Err(invalid(
+                        at(&format!("slippage.{field}")),
+                        "a volatility slippage has no fixed amount: absent or 0",
+                    ));
+                }
+            }
+            for (field, value) in [
+                ("market", slippage.market),
+                ("stop", slippage.stop),
+                ("limit", slippage.limit),
+            ] {
+                let here = at(&format!("slippage.{field}"));
+                let Some(v) = value else {
+                    return Err(invalid(here, "required by a volatility slippage"));
+                };
+                non_negative(v, &here)?;
+            }
+            for (field, value) in [
+                ("floor_minutes", slippage.floor_minutes),
+                ("max_gap_minutes", slippage.max_gap_minutes),
+            ] {
+                if value == Some(0) {
+                    return Err(invalid(
+                        at(&format!("slippage.{field}")),
+                        "must be at least 1",
+                    ));
+                }
+            }
+        }
+    }
+    Ok(())
+}
+
+/// A spread excess: §2.2 of task #195.
+fn validate_spread_excess(
+    x: &SpreadExcess,
+    at: &impl Fn(&str) -> String,
+) -> Result<(), ConfigError> {
+    if x.baseline_weekdays.is_some_and(|n| n < 2) {
+        return Err(invalid(
+            at("spread_excess.baseline_weekdays"),
+            "must be at least 2",
+        ));
+    }
+    let here = at("spread_excess.cap");
+    finite(x.cap, &here)?;
+    if x.cap < 1.0 {
+        return Err(invalid(here, format!("{} is below 1", x.cap)));
+    }
+    Ok(())
+}
+
+/// Every component: a non-empty source; at most one of placeholder, excluded and
+/// estimated; a reason exactly when excluded; an excluded component's amounts all zero;
+/// the carry excluded.
 fn validate_provenance(
     cost: &VenueInstrumentCost,
     at: &impl Fn(&str) -> String,
 ) -> Result<(), ConfigError> {
-    for p in cost.provenance() {
+    for (p, flags) in cost.flagged() {
         let key = p.component.key();
         let excluded = p.status == ProvenanceStatus::Excluded;
         if p.source.trim().is_empty() {
@@ -928,17 +1273,10 @@ fn validate_provenance(
                 "must say where the figure comes from",
             ));
         }
-        let placeholder = match p.component {
-            CostComponent::Spread => cost.spread.placeholder,
-            CostComponent::Slippage => cost.slippage.placeholder,
-            CostComponent::Commission => cost.commission.placeholder,
-            CostComponent::Financing => cost.financing.placeholder,
-            CostComponent::Carry => cost.carry.placeholder,
-        };
-        if excluded && placeholder {
+        if flags.count() > 1 {
             return Err(invalid(
                 at(key),
-                "is verified, a placeholder or excluded, never two of them",
+                "is verified, a placeholder, excluded or estimated, never two of them",
             ));
         }
         match (excluded, p.reason) {
@@ -967,7 +1305,13 @@ fn validate_provenance(
     let charges = [
         (
             cost.slippage.excluded,
-            zero(&[cost.slippage.points, cost.slippage.bps]),
+            zero(&[
+                cost.slippage.points,
+                cost.slippage.bps,
+                cost.slippage.market.unwrap_or_default(),
+                cost.slippage.stop.unwrap_or_default(),
+                cost.slippage.limit.unwrap_or_default(),
+            ]),
             "slippage",
         ),
         (
@@ -1703,6 +2047,206 @@ carry = {{ source = "test", placeholder = false, excluded = true, reason = "not 
                 matches!(CostConfig::from_toml_str(&text), Err(ConfigError::Parse(_))),
                 "{text}"
             );
+        }
+    }
+
+    /// A synthetic volatility slippage (test values, not venue figures).
+    const VOLATILITY: &str = r#"slippage = { model = "volatility", market = 0.25, stop = 0.5, limit = 0.0, source = "synthetic", placeholder = false, estimated = true }"#;
+    /// A synthetic spread excess.
+    const EXCESS: &str = r#"spread_excess = { cap = 4.0, source = "synthetic", placeholder = false, estimated = true }"#;
+
+    #[test]
+    fn a_volatility_slippage_and_a_spread_excess_load_with_their_defaults() {
+        let text = minimal("", EXCESS, LONDON).replace(SLIPPAGE, VOLATILITY);
+        let c = CostConfig::from_toml_str(&text).unwrap();
+        let cost = &c.venue("v").unwrap().instruments["EURUSD"];
+        assert_eq!(cost.slippage.model, SlippageModel::Volatility);
+        assert_eq!(
+            (
+                cost.slippage.market,
+                cost.slippage.stop,
+                cost.slippage.limit
+            ),
+            (Some(0.25), Some(0.5), Some(0.0))
+        );
+        assert_eq!(cost.slippage.floor_minutes(), 30);
+        assert_eq!(cost.slippage.max_gap_minutes(), 5);
+        let x = cost.spread_excess.as_ref().unwrap();
+        assert_eq!((x.baseline_weekdays(), x.cap), (20, 4.0));
+        assert!(cost.needs_minute_costs());
+        // The model is fixed by default, and a config without the new keys has no
+        // spread excess and needs no minute data.
+        let plain = CostConfig::from_toml_str(&minimal("", "", LONDON)).unwrap();
+        let cost = &plain.venue("v").unwrap().instruments["EURUSD"];
+        assert_eq!(cost.slippage.model, SlippageModel::Fixed);
+        assert!(cost.spread_excess.is_none());
+        assert!(!cost.needs_minute_costs() && !cost.uses_extended_models());
+        assert_eq!(plain.cost_models("v").unwrap(), None);
+    }
+
+    #[test]
+    fn the_new_models_reject_invalid_configs() {
+        // §4.7 of task #195.
+        let vol = |from: &str, to: &str| {
+            minimal("", "", LONDON).replace(SLIPPAGE, &VOLATILITY.replace(from, to))
+        };
+        let excess = |from: &str, to: &str| minimal("", &EXCESS.replace(from, to), LONDON);
+        let cases = [
+            (vol("market = 0.25", "market = 0.25, points = 0.2"), "slippage.points"),
+            (vol("market = 0.25", "market = 0.25, bps = 1.0"), "slippage.bps"),
+            (vol("market = 0.25", "market = -0.25"), "slippage.market"),
+            (vol("stop = 0.5", "stop = inf"), "slippage.stop"),
+            (vol("limit = 0.0", "limit = nan"), "slippage.limit"),
+            (vol("limit = 0.0, ", ""), "slippage.limit"),
+            (vol("market = 0.25", "market = 0.25, floor_minutes = 0"), "slippage.floor_minutes"),
+            (
+                vol("market = 0.25", "market = 0.25, max_gap_minutes = 0"),
+                "slippage.max_gap_minutes",
+            ),
+            (
+                minimal("", "", LONDON).replace(
+                    SLIPPAGE,
+                    r#"slippage = { points = 0.2, stop = 0.5, source = "t", placeholder = false }"#,
+                ),
+                "slippage.stop",
+            ),
+            (
+                minimal("", "", LONDON).replace(
+                    SLIPPAGE,
+                    r#"slippage = { model = "fixed", floor_minutes = 30, source = "t", placeholder = false }"#,
+                ),
+                "slippage.floor_minutes",
+            ),
+            (
+                vol("placeholder = false, estimated = true", "placeholder = true, estimated = true"),
+                "slippage",
+            ),
+            (excess("cap = 4.0", "cap = 0.5"), "spread_excess.cap"),
+            (excess("cap = 4.0", "cap = nan"), "spread_excess.cap"),
+            (
+                excess("cap = 4.0", "cap = 4.0, baseline_weekdays = 1"),
+                "spread_excess.baseline_weekdays",
+            ),
+            (
+                excess("estimated = true", "estimated = true, excluded = true, reason = \"r\""),
+                "spread_excess",
+            ),
+            (excess("source = \"synthetic\"", "source = \" \""), "spread_excess.source"),
+            // An excluded volatility slippage charges nothing.
+            (
+                vol("estimated = true", "excluded = true, reason = \"r\""),
+                "slippage",
+            ),
+        ];
+        for (text, field) in cases {
+            assert_eq!(
+                invalid_at(&text),
+                format!("venues.v.instruments.EURUSD.{field}"),
+                "{text}"
+            );
+        }
+        // An unknown model, a fractional minute count and a spread excess with no cap do
+        // not parse.
+        for text in [
+            vol("model = \"volatility\"", "model = \"atr\""),
+            vol("market = 0.25", "market = 0.25, floor_minutes = 2.5"),
+            excess("cap = 4.0, ", ""),
+        ] {
+            assert!(
+                matches!(CostConfig::from_toml_str(&text), Err(ConfigError::Parse(_))),
+                "{text}"
+            );
+        }
+    }
+
+    #[test]
+    fn an_estimated_component_is_costed_and_listed_by_estimates_only() {
+        // §4.9 of task #195.
+        let text = minimal("", EXCESS, LONDON).replace(SLIPPAGE, VOLATILITY);
+        let c = CostConfig::from_toml_str(&text).unwrap();
+        let p = c.venue("v").unwrap().instruments["EURUSD"].provenance();
+        assert_eq!(p.len(), 6);
+        assert_eq!(p[1].status, ProvenanceStatus::Estimated);
+        assert_eq!(p[5].component, CostComponent::SpreadExcess);
+        assert_eq!(p[5].status, ProvenanceStatus::Estimated);
+        assert!(c.costed("v").unwrap()["EURUSD"]);
+        let listed: Vec<(CostComponent, &str)> = c
+            .estimates("v")
+            .unwrap()
+            .iter()
+            .map(|e| (e.component, "synthetic"))
+            .collect();
+        assert_eq!(
+            listed,
+            [
+                (CostComponent::Slippage, "synthetic"),
+                (CostComponent::SpreadExcess, "synthetic")
+            ]
+        );
+        assert!(
+            c.estimates("v")
+                .unwrap()
+                .iter()
+                .all(|e| e.source == "synthetic")
+        );
+        assert!(c.placeholders("v").unwrap().is_empty());
+        assert!(
+            c.exclusions("v")
+                .unwrap()
+                .iter()
+                .all(|e| e.component == CostComponent::Carry)
+        );
+        assert_eq!(
+            c.cost_models("v").unwrap().unwrap()["EURUSD"],
+            CostModels {
+                slippage: SlippageModel::Volatility,
+                spread_excess: SpreadExcessState::Present,
+            }
+        );
+        assert!(matches!(
+            c.estimates("nowhere"),
+            Err(ConfigError::UnknownVenue(_))
+        ));
+        // A placeholder spread excess makes the instrument uncosted, as any placeholder
+        // does; an excluded one is omitted and stays costed.
+        let placeholder = minimal(
+            "",
+            &EXCESS.replace(
+                "placeholder = false, estimated = true",
+                "placeholder = true",
+            ),
+            LONDON,
+        );
+        assert!(
+            !CostConfig::from_toml_str(&placeholder)
+                .unwrap()
+                .costed("v")
+                .unwrap()["EURUSD"]
+        );
+        let excluded = minimal(
+            "",
+            &EXCESS.replace("estimated = true", "excluded = true, reason = \"none\""),
+            LONDON,
+        );
+        let c = CostConfig::from_toml_str(&excluded).unwrap();
+        assert!(c.costed("v").unwrap()["EURUSD"]);
+        assert_eq!(
+            c.exclusions("v").unwrap()[2].effect,
+            ExclusionEffect::Omitted
+        );
+        assert_eq!(
+            c.cost_models("v").unwrap().unwrap()["EURUSD"].spread_excess,
+            SpreadExcessState::Present
+        );
+        assert!(!c.venue("v").unwrap().instruments["EURUSD"].needs_minute_costs());
+    }
+
+    #[test]
+    fn the_builtin_example_keeps_the_fixed_slippage_and_no_spread_excess() {
+        let c = CostConfig::builtin();
+        for venue in VENUES {
+            assert_eq!(c.cost_models(venue).unwrap(), None, "{venue}");
+            assert!(c.estimates(venue).unwrap().is_empty(), "{venue}");
         }
     }
 
