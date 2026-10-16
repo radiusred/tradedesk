@@ -69,7 +69,10 @@ pub use cost::config::{
     SpreadBasis, SpreadExcess, SpreadExcessState, SpreadWindow, TripleDay, Venue,
     VenueInstrumentCost, WeekendRule, WeekendRules,
 };
-pub use cost::fill::{FillError, FillModel, FillQuote, PricePoint, TradeSide};
+pub use cost::fill::{
+    FillCostDetail, FillError, FillKind, FillModel, FillQuote, PricePoint, SpreadRatioStatus,
+    TradeSide,
+};
 pub use cost::financing::{Direction, Rollover, RolloverCalendar, rollover_charge};
 pub use cost::minutes::{MinuteCosts, MinuteCostsError, MinutePrices};
 pub use engine::{

@@ -8,14 +8,44 @@
 //! venue-cost Decision on issue #28). It is only checked against the instrument's
 //! `divergence_tolerance`, and a bar beyond the tolerance makes the fill an error.
 //! There is no fallback to a narrower or zero spread.
+//!
+//! **Volatility slippage and spread excess** (task #195). With
+//! [`SlippageModel::Volatility`] the slippage is `κ × R_used` in quote price, `κ` the
+//! `market`, `stop` or `limit` coefficient by [`FillKind`], and with a `spread_excess`
+//! block the fill pays an extra half-spread. Both read the instrument's one-minute data
+//! ([`MinuteCosts`], attached with [`FillModel::attach_minutes`]):
+//!
+//! - `R(m)`: the one-minute range of the mid (one side's range for a one-sided minute).
+//! - **Execution minute** of a fill at instant `τ`: for a market fill (entries, signal
+//!   and end-of-run exits, the liquidation valuation, and a close-only stop or target),
+//!   the first minute opening in `[τ, τ + max_gap_minutes)`; for a level fill, the first
+//!   minute of the engine bar whose range on the configured side reaches the level (the
+//!   minute of nearest approach when none does); for a gap fill at the bar open, the
+//!   engine bar's first minute.
+//! - `floor(τ)`: the median `R` of the last `floor_minutes` minutes opening before `τ`.
+//!   `R_used = max(R(execution minute), floor)`; with no execution minute the floor
+//!   alone; with neither, [`FillError::NoVolatility`].
+//! - `w = s(execution minute) / baseline`, `s` the minute's
+//!   `max(ask.open − bid.open, ask.close − bid.close)` and the baseline its median at the
+//!   same UTC minute of day over the last `baseline_weekdays` weekdays before `τ`'s date
+//!   that have a two-sided minute there (looking back at most twice that many weekdays).
+//!   The extra half-spread is `half_spread × (min(w, cap) − 1)⁺`, half the configured
+//!   venue spread in force at `τ` times the excess ratio. The store's ask − bid is only
+//!   that ratio; it is never the cost, so the Decision on issue #28 holds (Decision on
+//!   issue #195: <https://github.com/radiusred/tradedesk/issues/195#issuecomment-6219124050>).
+//!
+//! Every such fill records the detail in its [`FillCostDetail`].
 
-use chrono::{DateTime, Utc};
+use std::sync::Arc;
+
+use chrono::{DateTime, Datelike, Duration, NaiveDate, Utc, Weekday};
 use serde::{Deserialize, Serialize};
 
-use crate::JoinedBar;
-use crate::Ohlcv;
+use crate::exit::ExitReason;
+use crate::{BarTimeframe, JoinedBar, Ohlcv};
 
-use super::config::{InstrumentSpec, PriceSide, VenueInstrumentCost};
+use super::config::{InstrumentSpec, PriceSide, SlippageModel, VenueInstrumentCost};
+use super::minutes::MinuteCosts;
 
 /// Buy or sell.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
@@ -51,6 +81,87 @@ pub enum PricePoint {
     Level(f64),
 }
 
+/// What kind of order a fill executes, which selects the volatility slippage coefficient.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum FillKind {
+    /// A market order: entries, signal and end-of-run exits, the liquidation valuation.
+    Market,
+    /// A stop, gap fills included.
+    Stop,
+    /// A target (a limit order), gap fills included.
+    Limit,
+}
+
+impl FillKind {
+    /// The kind of a closing fill booked for `reason`.
+    #[must_use]
+    pub fn for_exit(reason: ExitReason) -> Self {
+        match reason {
+            ExitReason::Stop => Self::Stop,
+            ExitReason::Target => Self::Limit,
+            ExitReason::Signal | ExitReason::EndOfRun => Self::Market,
+        }
+    }
+}
+
+/// Why the spread ratio `w` was or was not computed for a fill.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum SpreadRatioStatus {
+    /// Computed, at or below the cap.
+    Ok,
+    /// Computed and above the cap: `cap` was charged.
+    Capped,
+    /// No execution minute: no extra.
+    NoExecMinute,
+    /// The execution minute is one-sided: no extra.
+    OneSided,
+    /// Fewer than `baseline_weekdays / 2` (rounded up) baseline values: no extra.
+    BaselineMissing,
+    /// The baseline is zero or below: no extra.
+    BaselineNonpositive,
+    /// No spread excess is configured, or it is excluded: no extra.
+    Absent,
+}
+
+/// What a fill under the volatility slippage or the spread excess was priced from.
+/// Prices are quote units; `spread_excess_cost` is quote currency. A field that does not
+/// apply is `None` and left out of the JSON.
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+pub struct FillCostDetail {
+    /// Market, stop or limit.
+    pub fill_kind: FillKind,
+    /// The slippage model.
+    pub slippage_model: SlippageModel,
+    /// The execution minute's open.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub exec_minute: Option<DateTime<Utc>>,
+    /// `R` of the execution minute (volatility slippage only).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub range_exec: Option<f64>,
+    /// The floor, the median `R` before the fill (volatility slippage only).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub range_floor: Option<f64>,
+    /// `max(range_exec, range_floor)` (volatility slippage only).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub range_used: Option<f64>,
+    /// The coefficient applied (volatility slippage only).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub kappa: Option<f64>,
+    /// The slippage charged, quote price.
+    pub slippage: f64,
+    /// `w`, when computed.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub spread_ratio: Option<f64>,
+    /// Why `w` was or was not computed.
+    pub spread_ratio_status: SpreadRatioStatus,
+    /// `half_spread × (min(w, cap) − 1)⁺`, quote price.
+    pub extra_half_spread: f64,
+    /// `extra_half_spread × size`, quote currency.
+    pub spread_excess_cost: f64,
+}
+
 /// Why a fill cannot be priced.
 #[derive(Debug, Clone, PartialEq, thiserror::Error)]
 pub enum FillError {
@@ -83,6 +194,23 @@ pub enum FillError {
         /// Bar open.
         ts: DateTime<Utc>,
     },
+    /// A volatility slippage found neither an execution minute nor any earlier minute.
+    #[error("{symbol} at {at}: no one-minute bar to take a volatility from")]
+    NoVolatility {
+        /// Instrument.
+        symbol: String,
+        /// The fill instant.
+        at: DateTime<Utc>,
+    },
+    /// The cost needs one-minute data and none is attached to the fill model.
+    #[error(
+        "{symbol}: the volatility slippage or spread excess needs one-minute cost data, \
+         and none is attached"
+    )]
+    NoMinuteData {
+        /// Instrument.
+        symbol: String,
+    },
 }
 
 /// A priced fill, before it is booked into a ledger.
@@ -97,7 +225,7 @@ pub struct FillQuote {
     pub raw_price: f64,
     /// `raw_price` in quote units: the mark.
     pub mark_price: f64,
-    /// The executed price: mark ± half spread ± slippage.
+    /// The executed price: mark ± (half spread + extra half-spread + slippage).
     pub fill_price: f64,
     /// Half the venue spread, in quote price.
     pub half_spread: f64,
@@ -109,6 +237,21 @@ pub struct FillQuote {
     pub slippage_cost: f64,
     /// `per_fill + per_unit_per_fill × size`, account currency.
     pub commission: f64,
+    /// The spread excess's extra half-spread, quote price (0 without one).
+    pub extra_half_spread: f64,
+    /// `extra_half_spread × size`, quote currency.
+    pub spread_excess_cost: f64,
+    /// What the volatility slippage and the spread excess were priced from; `None` when
+    /// the cost uses neither (a fixed slippage and no spread excess).
+    pub detail: Option<FillCostDetail>,
+}
+
+/// One instrument's one-minute data and the engine bar length its level and gap fills
+/// scan.
+#[derive(Debug, Clone, PartialEq)]
+struct Attached {
+    minutes: Arc<MinuteCosts>,
+    engine_bar: Duration,
 }
 
 /// One venue's costs for one instrument.
@@ -117,6 +260,7 @@ pub struct FillModel {
     symbol: String,
     spec: InstrumentSpec,
     cost: VenueInstrumentCost,
+    attached: Option<Attached>,
 }
 
 impl FillModel {
@@ -127,7 +271,24 @@ impl FillModel {
             symbol: symbol.into(),
             spec,
             cost,
+            attached: None,
         }
+    }
+
+    /// Attach the instrument's one-minute data, which a volatility slippage or a spread
+    /// excess reads, and the timeframe of the bars the engine fills on (a level or gap
+    /// fill scans the minutes of that bar).
+    pub fn attach_minutes(&mut self, minutes: Arc<MinuteCosts>, engine: BarTimeframe) {
+        self.attached = Some(Attached {
+            minutes,
+            engine_bar: engine.duration(),
+        });
+    }
+
+    /// The attached one-minute data, if any.
+    #[must_use]
+    pub fn minutes(&self) -> Option<&MinuteCosts> {
+        self.attached.as_ref().map(|a| a.minutes.as_ref())
     }
 
     /// Instrument symbol.
@@ -211,14 +372,13 @@ impl FillModel {
         Ok(())
     }
 
-    /// Price a fill of `size` instrument units, buying or selling per `trade`, at `point` of
-    /// `bar`. `at` is the fill instant: it selects the spread when the spread has a
-    /// time-of-day schedule (a close fill happens at the bar's close, not its open).
+    /// Price a market fill of `size` instrument units, buying or selling per `trade`, at
+    /// `point` of `bar`. `at` is the fill instant: it selects the spread when the spread
+    /// has a time-of-day schedule (a close fill happens at the bar's close, not its open).
+    /// [`FillModel::quote_as`] with [`FillKind::Market`].
     ///
     /// # Errors
-    /// [`FillError::InvalidSize`] for a size that is not finite and positive,
-    /// [`FillError::Divergence`] when the bar's sides diverge beyond the tolerance, and
-    /// [`FillError::NonFinite`] when a price input is not finite.
+    /// As [`FillModel::quote_as`].
     pub fn quote(
         &self,
         bar: &JoinedBar,
@@ -226,6 +386,28 @@ impl FillModel {
         at: DateTime<Utc>,
         trade: TradeSide,
         size: f64,
+    ) -> Result<FillQuote, FillError> {
+        self.quote_as(bar, point, at, trade, size, FillKind::Market)
+    }
+
+    /// Price a fill of `kind`, as [`FillModel::quote`]. The kind selects the volatility
+    /// slippage coefficient and how the execution minute is found (see the module docs).
+    ///
+    /// # Errors
+    /// [`FillError::InvalidSize`] for a size that is not finite and positive,
+    /// [`FillError::Divergence`] when the bar's sides diverge beyond the tolerance,
+    /// [`FillError::NonFinite`] when a price input is not finite,
+    /// [`FillError::NoMinuteData`] when the cost needs one-minute data and none is
+    /// attached, and [`FillError::NoVolatility`] when a volatility slippage has no minute
+    /// to read.
+    pub fn quote_as(
+        &self,
+        bar: &JoinedBar,
+        point: PricePoint,
+        at: DateTime<Utc>,
+        trade: TradeSide,
+        size: f64,
+        kind: FillKind,
     ) -> Result<FillQuote, FillError> {
         if !size.is_finite() || size <= 0.0 {
             return Err(FillError::InvalidSize(size));
@@ -240,16 +422,26 @@ impl FillModel {
         if !raw_price.is_finite() {
             return Err(self.non_finite(bar));
         }
-        Ok(self.price(raw_price, at, trade, size))
+        let mut q = self.price(raw_price, at, trade, size);
+        if self.cost.uses_extended_models() {
+            let detail = self.detail(bar, point, at, kind, &q, size)?;
+            q.slippage = detail.slippage;
+            q.slippage_cost = detail.slippage * size;
+            q.extra_half_spread = detail.extra_half_spread;
+            q.spread_excess_cost = detail.spread_excess_cost;
+            q.fill_price = q.mark_price
+                + trade.sign() * (q.half_spread + detail.extra_half_spread + detail.slippage);
+            q.detail = Some(detail);
+        }
+        Ok(q)
     }
 
-    /// The cost arithmetic on an already-chosen raw reference price. No divergence check:
-    /// callers go through [`FillModel::quote`].
+    /// The cost arithmetic on an already-chosen raw reference price, under the fixed
+    /// slippage. No divergence check: callers go through [`FillModel::quote_as`].
     fn price(&self, raw_price: f64, at: DateTime<Utc>, trade: TradeSide, size: f64) -> FillQuote {
         let mark_price = self.spec.to_quote(raw_price);
         let half_spread = self.spec.pips_to_quote(self.cost.spread.pips_at(at)) / 2.0;
-        let slippage = self.spec.pips_to_quote(self.cost.slippage.points)
-            + mark_price.abs() * self.cost.slippage.bps / 10_000.0;
+        let slippage = self.fixed_slippage(mark_price);
         let fill_price = mark_price + trade.sign() * (half_spread + slippage);
         let commission =
             self.cost.commission.per_fill + self.cost.commission.per_unit_per_fill * size;
@@ -262,6 +454,150 @@ impl FillModel {
             spread_cost: half_spread * size,
             slippage_cost: slippage * size,
             commission,
+            extra_half_spread: 0.0,
+            spread_excess_cost: 0.0,
+            detail: None,
+        }
+    }
+
+    fn fixed_slippage(&self, mark_price: f64) -> f64 {
+        self.spec.pips_to_quote(self.cost.slippage.points)
+            + mark_price.abs() * self.cost.slippage.bps / 10_000.0
+    }
+
+    /// The volatility slippage and the spread excess of one fill (see the module docs).
+    fn detail(
+        &self,
+        bar: &JoinedBar,
+        point: PricePoint,
+        at: DateTime<Utc>,
+        kind: FillKind,
+        fixed: &FillQuote,
+        size: f64,
+    ) -> Result<FillCostDetail, FillError> {
+        let slip = &self.cost.slippage;
+        let volatility = slip.model == SlippageModel::Volatility && !slip.excluded;
+        let excess = self.cost.spread_excess.as_ref().filter(|x| !x.excluded);
+        let mut d = FillCostDetail {
+            fill_kind: kind,
+            slippage_model: slip.model,
+            exec_minute: None,
+            range_exec: None,
+            range_floor: None,
+            range_used: None,
+            kappa: None,
+            slippage: if slip.model == SlippageModel::Fixed {
+                fixed.slippage
+            } else {
+                0.0
+            },
+            spread_ratio: None,
+            spread_ratio_status: SpreadRatioStatus::Absent,
+            extra_half_spread: 0.0,
+            spread_excess_cost: 0.0,
+        };
+        if !volatility && excess.is_none() {
+            return Ok(d);
+        }
+        let attached = self
+            .attached
+            .as_ref()
+            .ok_or_else(|| FillError::NoMinuteData {
+                symbol: self.symbol.clone(),
+            })?;
+        let minutes = attached.minutes.as_ref();
+        let exec = self.exec_minute(minutes, attached.engine_bar, bar, point, at, kind);
+        d.exec_minute = exec.map(|i| minutes.ts(i));
+        if volatility {
+            let range_exec = exec.map(|i| self.spec.to_quote(minutes.range(i)));
+            let before = minutes.before(at);
+            let n = usize::try_from(slip.floor_minutes()).unwrap_or(usize::MAX);
+            let floor = median(
+                (before.saturating_sub(n)..before)
+                    .map(|i| minutes.range(i))
+                    .collect(),
+            )
+            .map(|r| self.spec.to_quote(r));
+            let range_used = match (range_exec, floor) {
+                (Some(e), Some(f)) => e.max(f),
+                (Some(r), None) | (None, Some(r)) => r,
+                (None, None) => {
+                    return Err(FillError::NoVolatility {
+                        symbol: self.symbol.clone(),
+                        at,
+                    });
+                }
+            };
+            let kappa = match kind {
+                FillKind::Market => slip.market,
+                FillKind::Stop => slip.stop,
+                FillKind::Limit => slip.limit,
+            }
+            .unwrap_or_default();
+            d.range_exec = range_exec;
+            d.range_floor = floor;
+            d.range_used = Some(range_used);
+            d.kappa = Some(kappa);
+            d.slippage = (kappa * range_used).max(0.0);
+        }
+        if let Some(x) = excess {
+            let cap = x.cap;
+            let (ratio, status) = spread_ratio(minutes, exec, at, x.baseline_weekdays());
+            d.spread_ratio = ratio;
+            d.spread_ratio_status = match (ratio, status) {
+                (Some(w), _) if w > cap => SpreadRatioStatus::Capped,
+                (_, status) => status,
+            };
+            if let Some(w) = ratio {
+                d.extra_half_spread = fixed.half_spread * (w.min(cap) - 1.0).max(0.0);
+                d.spread_excess_cost = d.extra_half_spread * size;
+            }
+        }
+        Ok(d)
+    }
+
+    /// The execution minute's index (see the module docs), or `None` when there is none.
+    fn exec_minute(
+        &self,
+        minutes: &MinuteCosts,
+        engine_bar: Duration,
+        bar: &JoinedBar,
+        point: PricePoint,
+        at: DateTime<Utc>,
+        kind: FillKind,
+    ) -> Option<usize> {
+        let open = bar.ts_open_utc;
+        let in_bar = minutes.before(open)..minutes.before(open + engine_bar);
+        match (point, kind) {
+            (PricePoint::Level(level), _) => {
+                let side = self.cost.price_side;
+                let below = level < self.reference(bar).open;
+                let above = level > self.reference(bar).open;
+                let reaches = |i: &usize| {
+                    let (high, low) = minutes.high_low(*i, side);
+                    (!below || low <= level) && (!above || high >= level)
+                };
+                in_bar.clone().find(reaches).or_else(|| {
+                    // No minute reaches it (the bar's mid extreme can lie beyond every
+                    // minute's): the minute of nearest approach, the earliest on a tie.
+                    let distance = |i: usize| {
+                        let (high, low) = minutes.high_low(i, side);
+                        if below { low - level } else { level - high }
+                    };
+                    in_bar.fold(None, |best: Option<usize>, i| match best {
+                        Some(b) if distance(b) <= distance(i) => Some(b),
+                        _ => Some(i),
+                    })
+                })
+            }
+            (PricePoint::Open, FillKind::Stop | FillKind::Limit) => {
+                (!in_bar.is_empty()).then_some(in_bar.start)
+            }
+            _ => {
+                let gap = Duration::minutes(i64::from(self.cost.slippage.max_gap_minutes()));
+                let i = minutes.before(at);
+                (i < minutes.len() && minutes.ts(i) < at + gap).then_some(i)
+            }
         }
     }
 
@@ -270,6 +606,61 @@ impl FillModel {
             symbol: self.symbol.clone(),
             ts: bar.ts_open_utc,
         }
+    }
+}
+
+/// The median of `values`; `None` when empty.
+fn median(mut values: Vec<f64>) -> Option<f64> {
+    if values.is_empty() {
+        return None;
+    }
+    values.sort_by(f64::total_cmp);
+    let mid = values.len() / 2;
+    Some(if values.len() % 2 == 0 {
+        f64::midpoint(values[mid - 1], values[mid])
+    } else {
+        values[mid]
+    })
+}
+
+/// `w` and its status for a fill at `at` with execution minute `exec`.
+fn spread_ratio(
+    minutes: &MinuteCosts,
+    exec: Option<usize>,
+    at: DateTime<Utc>,
+    baseline_weekdays: u32,
+) -> (Option<f64>, SpreadRatioStatus) {
+    let Some(i) = exec else {
+        return (None, SpreadRatioStatus::NoExecMinute);
+    };
+    let Some(s) = minutes.spread(i) else {
+        return (None, SpreadRatioStatus::OneSided);
+    };
+    let time = minutes.ts(i).time();
+    let mut values = Vec::new();
+    let mut day: NaiveDate = at.date_naive();
+    let mut weekdays = 0;
+    while weekdays < 2 * baseline_weekdays && values.len() < baseline_weekdays as usize {
+        let Some(previous) = day.pred_opt() else {
+            break;
+        };
+        day = previous;
+        if matches!(day.weekday(), Weekday::Sat | Weekday::Sun) {
+            continue;
+        }
+        weekdays += 1;
+        if let Some(j) = minutes.find(day.and_time(time).and_utc()) {
+            if let Some(v) = minutes.spread(j) {
+                values.push(v);
+            }
+        }
+    }
+    if values.len() < baseline_weekdays.div_ceil(2) as usize {
+        return (None, SpreadRatioStatus::BaselineMissing);
+    }
+    match median(values) {
+        Some(baseline) if baseline > 0.0 => (Some(s / baseline), SpreadRatioStatus::Ok),
+        _ => (None, SpreadRatioStatus::BaselineNonpositive),
     }
 }
 
