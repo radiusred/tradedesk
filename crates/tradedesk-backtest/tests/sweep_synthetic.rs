@@ -119,8 +119,11 @@ fn the_data_is_loaded_once_and_failed_cells_are_recorded() {
                 engine,
                 metrics,
                 trades,
+                fills,
             } => {
                 assert_eq!(stop, 5000.0);
+                // Fixed slippage and no spread excess: no fill has cost detail (#199).
+                assert!(fills.is_none());
                 assert!(engine.entries > 0, "cell {} never traded", t.index);
                 // Every closed trade is recorded (#62), the ones `TradeStats` counts.
                 let trades = trades.as_ref().expect("trades recorded");

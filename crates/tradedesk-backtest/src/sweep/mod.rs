@@ -776,11 +776,18 @@ impl<'a> Prepared<'a> {
             },
         };
         match engine::run(strategy.as_mut(), data, &self.costs, &engine_config) {
-            Ok(out) => TrialOutcome::Ok {
-                engine: out.stats,
-                metrics: Box::new(out.metrics),
-                trades: Some(out.ledger.closed_trades().to_vec()),
-            },
+            Ok(out) => {
+                let fills = out.ledger.fills();
+                TrialOutcome::Ok {
+                    engine: out.stats,
+                    metrics: Box::new(out.metrics),
+                    trades: Some(out.ledger.closed_trades().to_vec()),
+                    fills: fills
+                        .iter()
+                        .any(|f| f.cost_detail.is_some())
+                        .then(|| fills.to_vec()),
+                }
+            }
             Err(e) => failed(FailureStage::Run, e.to_string()),
         }
     }

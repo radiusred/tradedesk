@@ -2,7 +2,8 @@
 //!
 //! Each synthetic **day** is four 1-minute bars at 10:00–10:03Z whose prices walk
 //! open → high → low → close, so the day's aggregated D1 bar has exactly that OHLC and
-//! every rollover (22:00 London) is marked at the day's close. Bid and ask are equal.
+//! every rollover (22:00 London) is marked at the day's close. Bid and ask are equal,
+//! unless [`MemReader::with_textured_days`] gives the minutes a range and a spread.
 //! The reader counts `read_1m_bars` calls per `(symbol, side)`.
 #![allow(dead_code)]
 
@@ -28,13 +29,13 @@ pub fn first_day() -> NaiveDate {
     NaiveDate::from_ymd_opt(2024, 1, 1).unwrap()
 }
 
-fn minute(ts: DateTime<Utc>, price: f64) -> RawBar {
+fn minute(ts: DateTime<Utc>, price: f64, range: f64) -> RawBar {
     RawBar {
         ts_open_utc: ts,
         ts_close_utc: ts + Duration::minutes(1),
         open: price,
-        high: price,
-        low: price,
+        high: price + range,
+        low: price - range,
         close: price,
         tick_volume: 1.0,
     }
@@ -43,21 +44,37 @@ fn minute(ts: DateTime<Utc>, price: f64) -> RawBar {
 impl MemReader {
     /// Add `days` for `symbol`, one per calendar day from `start`.
     #[must_use]
-    pub fn with_days(mut self, symbol: &str, start: NaiveDate, days: &[Day]) -> Self {
-        let mut bars = Vec::with_capacity(days.len() * 4);
+    pub fn with_days(self, symbol: &str, start: NaiveDate, days: &[Day]) -> Self {
+        self.with_textured_days(symbol, start, days, 0.0, |_| 0.0)
+    }
+
+    /// As [`Self::with_days`], but each minute's high and low are `range` raw units above
+    /// and below its price, and the ask is `spread(i)` raw units above the bid on day
+    /// `i`. With a `range` above zero the volatility slippage charges a non-zero amount;
+    /// with a spread that varies by day the spread ratio moves away from 1.
+    #[must_use]
+    pub fn with_textured_days(
+        mut self,
+        symbol: &str,
+        start: NaiveDate,
+        days: &[Day],
+        range: f64,
+        spread: impl Fn(usize) -> f64,
+    ) -> Self {
+        let mut bid = Vec::with_capacity(days.len() * 4);
+        let mut ask = Vec::with_capacity(days.len() * 4);
         for (i, &(o, h, l, c)) in days.iter().enumerate() {
             let date = start + Duration::days(i64::try_from(i).unwrap());
             let ten = Utc.from_utc_datetime(&date.and_hms_opt(10, 0, 0).unwrap());
+            let s = spread(i);
             for (m, price) in [o, h, l, c].into_iter().enumerate() {
-                bars.push(minute(
-                    ten + Duration::minutes(i64::try_from(m).unwrap()),
-                    price,
-                ));
+                let ts = ten + Duration::minutes(i64::try_from(m).unwrap());
+                bid.push(minute(ts, price, range));
+                ask.push(minute(ts, price + s, range));
             }
         }
-        for side in [Side::Bid, Side::Ask] {
-            self.bars.insert((symbol.to_owned(), side), bars.clone());
-        }
+        self.bars.insert((symbol.to_owned(), Side::Bid), bid);
+        self.bars.insert((symbol.to_owned(), Side::Ask), ask);
         self
     }
 
