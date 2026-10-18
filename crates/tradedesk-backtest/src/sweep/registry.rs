@@ -30,7 +30,7 @@ use serde_json::Value;
 use super::{CostConfigRef, SweepSpec};
 use crate::engine::{EndOfRun, EngineStats, SizingPolicy};
 use crate::exit::ExitEvaluation;
-use crate::ledger::{AccountFx, ClosedTrade, RunMetadata};
+use crate::ledger::{AccountFx, ClosedTrade, Fill, RunMetadata};
 use crate::metrics::Metrics;
 
 /// The registry schema version written in every record, and the only one
@@ -156,6 +156,14 @@ pub enum TrialOutcome {
         /// records written before trades were recorded.
         #[serde(default)]
         trades: Option<Vec<ClosedTrade>>,
+        /// Every fill of the run's ledger, in booking order (`Ledger::fills`), each with
+        /// its cost detail: written only when at least one fill has `cost_detail` (the
+        /// volatility slippage or a spread excess), so that every charge can be
+        /// recomputed. `Fill::position` is the `ClosedTrade::id` it belongs to. `None`,
+        /// and absent from the JSON, otherwise and in records written before fills were
+        /// recorded.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        fills: Option<Vec<Fill>>,
     },
     /// The cell failed.
     Failed {
@@ -195,6 +203,16 @@ impl TrialRecord {
     pub fn trades(&self) -> Option<&[ClosedTrade]> {
         match &self.outcome {
             TrialOutcome::Ok { trades, .. } => trades.as_deref(),
+            TrialOutcome::Failed { .. } => None,
+        }
+    }
+
+    /// The fills of a completed trial; `None` for a failed cell, a trial with no cost
+    /// detail on any fill, or a record written before fills were recorded.
+    #[must_use]
+    pub fn fills(&self) -> Option<&[Fill]> {
+        match &self.outcome {
+            TrialOutcome::Ok { fills, .. } => fills.as_deref(),
             TrialOutcome::Failed { .. } => None,
         }
     }
