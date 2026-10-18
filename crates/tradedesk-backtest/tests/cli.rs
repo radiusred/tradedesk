@@ -546,47 +546,217 @@ fn an_interrupted_sweep_exits_130_and_records_nothing() {
 
 /// SIGINT exits 130 with whole lines only, whatever the command was doing. The spec is
 /// read from a FIFO, so the test knows the binary is past its handler install (it is
-/// blocked reading the spec) when the signal is sent. The shipped binary then refuses
-/// the spec (it registers no strategy), and SIGINT still decides the exit code.
+/// blocked reading the spec) when the signal is sent. The spec goes in only after the
+/// binary logs the signal; the shipped binary then refuses it (it registers no strategy),
+/// and SIGINT still decides the exit code. The FIFO and the signal use `nix`, not the
+/// `mkfifo` and `kill` executables, and every wait is bounded (`sigint_child`).
 #[cfg(unix)]
 #[test]
 fn sigint_exits_130_and_leaves_whole_lines_only() {
+    use nix::sys::signal::{Signal, kill};
+    use nix::unistd::Pid;
+
     let s = Scratch::new("sigint");
     let fifo = s.path("spec.fifo");
-    let made = std::process::Command::new("mkfifo")
-        .arg(&fifo)
-        .status()
-        .unwrap();
-    assert!(made.success());
+    sigint_child::make_fifo(&fifo);
     let out = s.path("registry.jsonl");
-    let child = std::process::Command::new(assert_cmd::cargo::cargo_bin("tradedesk-backtest"))
-        .arg("sweep")
+    let mut cmd = std::process::Command::new(assert_cmd::cargo::cargo_bin("tradedesk-backtest"));
+    cmd.arg("sweep")
         .arg(&fifo)
         .arg("--out")
         .arg(&out)
         .arg("--cache-root")
         .arg(s.path("cache"))
-        .env_remove("RUST_LOG")
-        .stdout(std::process::Stdio::piped())
-        .stderr(std::process::Stdio::piped())
-        .spawn()
-        .unwrap();
-    // Opening the FIFO for writing waits until the binary opens it to read the spec.
-    let mut writer = std::fs::OpenOptions::new().write(true).open(&fifo).unwrap();
-    let killed = std::process::Command::new("kill")
-        .args(["-INT", &child.id().to_string()])
-        .status()
-        .unwrap();
-    assert!(killed.success());
-    std::thread::sleep(std::time::Duration::from_millis(200));
+        .env_remove("TRADEDESK_CACHE_ROOT")
+        .env_remove("RUST_LOG");
+    let mut child = sigint_child::Watched::spawn(&mut cmd);
+    let limit = sigint_child::STAGE_LIMIT;
+    let mut writer = child
+        .open_fifo_writer(&fifo, limit)
+        .unwrap_or_else(|e| panic!("{e}"));
+    let pid = Pid::from_raw(i32::try_from(child.id()).unwrap());
+    kill(pid, Signal::SIGINT).unwrap();
+    child
+        .wait_for_stderr("SIGINT received", limit)
+        .unwrap_or_else(|e| panic!("{e}"));
     writer.write_all(spec("").as_bytes()).unwrap();
     drop(writer);
-    let run = child.wait_with_output().unwrap();
-    let stderr = String::from_utf8(run.stderr).unwrap();
-    assert_eq!(run.status.code(), Some(130), "{stderr}");
-    assert!(stderr.contains("SIGINT received"), "{stderr}");
-    assert!(json_lines(&run.stdout).is_empty());
+    let (status, stdout, stderr) = child.wait(limit).unwrap_or_else(|e| panic!("{e}"));
+    assert_eq!(status.code(), Some(130), "{stderr}");
+    assert!(json_lines(&stdout).is_empty());
     assert!(!out.exists());
+}
+
+/// The bound holds when the child never opens the FIFO: the wait ends with a message that
+/// names the stage, not a hang. The child here is this test binary listing its tests.
+#[cfg(unix)]
+#[test]
+fn a_child_that_exits_before_opening_the_fifo_fails_the_wait() {
+    let s = Scratch::new("sigint-no-reader");
+    let fifo = s.path("spec.fifo");
+    sigint_child::make_fifo(&fifo);
+    let mut cmd = std::process::Command::new(std::env::current_exe().unwrap());
+    cmd.arg("--list");
+    let mut child = sigint_child::Watched::spawn(&mut cmd);
+    let err = child
+        .open_fifo_writer(&fifo, sigint_child::STAGE_LIMIT)
+        .unwrap_err();
+    assert!(err.contains("exited before it opened"), "{err}");
+}
+
+/// A child process for the SIGINT test, with a time limit on every wait. Without these
+/// limits the test blocks for ever when the child does not open the spec or does not exit.
+#[cfg(unix)]
+mod sigint_child {
+    use std::fs::File;
+    use std::io::{BufRead, BufReader, Read};
+    use std::os::unix::fs::OpenOptionsExt;
+    use std::path::Path;
+    use std::process::{Child, Command, ExitStatus, Stdio};
+    use std::sync::mpsc::{Receiver, channel};
+    use std::time::{Duration, Instant};
+
+    use nix::errno::Errno;
+    use nix::fcntl::{FcntlArg, OFlag, fcntl};
+    use nix::sys::stat::Mode;
+    use nix::unistd::mkfifo;
+
+    /// How long each stage may wait for the child.
+    pub const STAGE_LIMIT: Duration = Duration::from_secs(20);
+    const POLL: Duration = Duration::from_millis(10);
+
+    /// A FIFO at `path`, read and write for the owner.
+    pub fn make_fifo(path: &Path) {
+        mkfifo(path, Mode::S_IRUSR | Mode::S_IWUSR).unwrap();
+    }
+
+    /// The child, with stdout piped and stderr read line by line on a thread. Dropped
+    /// while it still runs, it is killed and reaped.
+    pub struct Watched {
+        child: Child,
+        lines: Receiver<String>,
+        stderr: Vec<String>,
+    }
+
+    impl Watched {
+        pub fn spawn(cmd: &mut Command) -> Self {
+            let mut child = cmd
+                .stdin(Stdio::null())
+                .stdout(Stdio::piped())
+                .stderr(Stdio::piped())
+                .spawn()
+                .unwrap();
+            let pipe = child.stderr.take().unwrap();
+            let (tx, lines) = channel();
+            std::thread::spawn(move || {
+                for line in BufReader::new(pipe).lines().map_while(Result::ok) {
+                    if tx.send(line).is_err() {
+                        break;
+                    }
+                }
+            });
+            Self {
+                child,
+                lines,
+                stderr: Vec::new(),
+            }
+        }
+
+        pub fn id(&self) -> u32 {
+            self.child.id()
+        }
+
+        /// Open `fifo` for writing once the child has opened it for reading. A
+        /// non-blocking open fails with `ENXIO` while there is no reader, so the test
+        /// polls instead of blocking; the file is then set back to blocking writes.
+        pub fn open_fifo_writer(&mut self, fifo: &Path, limit: Duration) -> Result<File, String> {
+            let deadline = Instant::now() + limit;
+            loop {
+                match std::fs::OpenOptions::new()
+                    .write(true)
+                    .custom_flags(OFlag::O_NONBLOCK.bits())
+                    .open(fifo)
+                {
+                    Ok(file) => {
+                        fcntl(&file, FcntlArg::F_SETFL(OFlag::empty())).unwrap();
+                        return Ok(file);
+                    }
+                    Err(e) if e.raw_os_error() == Some(Errno::ENXIO as i32) => {}
+                    Err(e) => return Err(self.failure(&format!("opening the FIFO: {e}"))),
+                }
+                if let Some(status) = self.child.try_wait().unwrap() {
+                    return Err(self.failure(&format!(
+                        "the child exited before it opened the spec ({status})"
+                    )));
+                }
+                if Instant::now() >= deadline {
+                    return Err(
+                        self.failure(&format!("the child did not open the spec within {limit:?}"))
+                    );
+                }
+                std::thread::sleep(POLL);
+            }
+        }
+
+        /// Wait for a stderr line that contains `text`.
+        pub fn wait_for_stderr(&mut self, text: &str, limit: Duration) -> Result<(), String> {
+            let deadline = Instant::now() + limit;
+            while !self.stderr.iter().any(|l| l.contains(text)) {
+                let left = deadline.saturating_duration_since(Instant::now());
+                match self.lines.recv_timeout(left) {
+                    Ok(line) => self.stderr.push(line),
+                    Err(e) => {
+                        return Err(self.failure(&format!(
+                            "no stderr line with {text:?} within {limit:?} ({e})"
+                        )));
+                    }
+                }
+            }
+            Ok(())
+        }
+
+        /// Wait for the child to exit; then its status, its stdout and its whole stderr.
+        pub fn wait(&mut self, limit: Duration) -> Result<(ExitStatus, Vec<u8>, String), String> {
+            let deadline = Instant::now() + limit;
+            let status = loop {
+                if let Some(status) = self.child.try_wait().unwrap() {
+                    break status;
+                }
+                if Instant::now() >= deadline {
+                    return Err(self.failure(&format!("the child did not exit within {limit:?}")));
+                }
+                std::thread::sleep(POLL);
+            };
+            let mut stdout = Vec::new();
+            self.child
+                .stdout
+                .take()
+                .unwrap()
+                .read_to_end(&mut stdout)
+                .unwrap();
+            // The reader thread ends at EOF, which the exit has caused.
+            self.stderr.extend(self.lines.iter());
+            Ok((status, stdout, self.stderr.join("\n")))
+        }
+
+        /// A failure message: the stage, then the child's stderr so far.
+        fn failure(&mut self, stage: &str) -> String {
+            self.stderr.extend(self.lines.try_iter());
+            format!(
+                "SIGINT test: {stage}. The child's stderr so far:\n{}",
+                self.stderr.join("\n")
+            )
+        }
+    }
+
+    impl Drop for Watched {
+        fn drop(&mut self) {
+            if let Ok(None) = self.child.try_wait() {
+                let _ = self.child.kill();
+                let _ = self.child.wait();
+            }
+        }
+    }
 }
 
 #[test]

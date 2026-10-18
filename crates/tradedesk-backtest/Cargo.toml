@@ -68,5 +68,10 @@ tempfile.workspace = true
 assert_cmd = "2"
 predicates = "3"
 
+# The SIGINT test makes its FIFO and sends the signal through `nix`, not the `mkfifo` and
+# `kill` executables, which some runners lack. `ctrlc` already locks this version.
+[target.'cfg(unix)'.dev-dependencies]
+nix = { version = "0.31", default-features = false, features = ["fs", "signal"] }
+
 [lints]
 workspace = true
