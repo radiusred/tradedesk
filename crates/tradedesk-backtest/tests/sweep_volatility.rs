@@ -310,8 +310,8 @@ fn without_fills(records: &[RegistryRecord]) -> String {
 #[cfg(feature = "cli")]
 #[test]
 fn the_report_and_the_walkforward_ignore_the_fills() {
-    use std::sync::atomic::AtomicBool;
-    use tradedesk_backtest::cli;
+    // The built binary, as a user runs it (task #201).
+    use assert_cmd::Command;
 
     let spec = HEAD.replace(
         "stop_distance = [5000.0]",
@@ -327,19 +327,16 @@ fn the_report_and_the_walkforward_ignore_the_fills() {
     let run = |text: &str, args: &[&str]| {
         let path = dir.path().join("registry.jsonl");
         std::fs::write(&path, text).unwrap();
-        let mut stdout = Vec::new();
-        let code = cli::run(
-            ["tradedesk-backtest"]
-                .iter()
-                .chain(args)
-                .map(std::ffi::OsString::from)
-                .chain([path.into_os_string()]),
-            &toy::registry(),
-            &mut stdout,
-            &AtomicBool::new(false),
-        );
-        assert_eq!(code, 0, "{args:?}");
-        String::from_utf8(stdout).unwrap()
+        let out = Command::cargo_bin("tradedesk-backtest")
+            .unwrap()
+            .env_remove("TRADEDESK_CACHE_ROOT")
+            .env_remove("RUST_LOG")
+            .args(args)
+            .arg(&path)
+            .output()
+            .unwrap();
+        assert_eq!(out.status.code(), Some(0), "{args:?}");
+        String::from_utf8(out.stdout).unwrap()
     };
     let months = [
         "--train-months",
