@@ -1813,6 +1813,7 @@ dependencies = [
  "chrono-tz",
  "clap",
  "ctrlc",
+ "nix",
  "predicates",
  "proptest",
  "rayon",
