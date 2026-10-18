@@ -310,6 +310,11 @@ fixed slippage and no spread excess has none of them. `ClosedTrade.spread_excess
 over both fills, and the net P&L includes it. The metrics cost breakdown has
 `spread_excess` beside `spread` and `slippage`. `RunMetadata.cost_models`
 gives each instrument's slippage model and `spread_excess: present | absent`.
+Each `Fill` links to its round trip: `Fill.position` equals `ClosedTrade.id`.
+The sweep registry writes a trial's fills (`outcome.fills`, every fill in
+booking order) when at least one fill has this detail, so that every charge can
+be recomputed from the registry. A trial with fixed slippage and no spread
+excess has no `fills` key.
 
 **Worked example** (synthetic values; the unit test
 `a_round_trip_books_the_detail_and_nets_the_spread_excess`). EURUSD
@@ -932,11 +937,14 @@ records are:
 | `trial` | `schema_version`, `trial_id`, `sweep_id`, `index`, `code_version`, `code_revision`, `strategy`, `instrument`, `params` (the cell), `config` (the resolved strategy config, `null` if it did not resolve), `first_day`, `last_day`, `warmup_days`, `venue`, `cost_config`, `exit_evaluation`, `account_fx`, `sizing`, `end_of_run`, `starting_capital`, `risk_free_rate`, `run` (`RunMetadata`: placeholders, exclusions and the derived `costed` map), `provenance` (the spec's table; absent when it is empty), `started_utc`, `finished_utc`, `outcome` |
 
 `outcome` is one of:
-- `{status: "ok", engine: EngineStats, metrics: Metrics, trades}`, with the full
-  metrics, the equity curve and every closed trade (`ClosedTrade`, in closing order;
-  the walk-forward attributes them to its test windows). A ruined run is `ok`, and its
-  metrics say it was ruined. A record written before task #62 has no `trades` and reads
-  back with `None`;
+- `{status: "ok", engine: EngineStats, metrics: Metrics, trades, fills}`, with the
+  full metrics, the equity curve and every closed trade (`ClosedTrade`, in closing
+  order; the walk-forward attributes them to its test windows). A ruined run is `ok`,
+  and its metrics say it was ruined. A record written before task #62 has no `trades`
+  and reads back with `None`. `fills` is every ledger `Fill` in booking order, written
+  only when at least one fill has the volatility slippage or spread excess detail
+  (task #199); otherwise it is absent and reads back with `None`. The report and the
+  walk-forward do not read it;
 - `{status: "failed", stage: "config" | "run" | "panic", error}`.
 
 The ids are blake3 hashes:
