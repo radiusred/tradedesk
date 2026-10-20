@@ -39,6 +39,9 @@ tracing.workspace = true
 blake3.workspace = true
 serde_json.workspace = true
 statrs.workspace = true
+# A modelled carry's rate table: a CSV pinned by its sha256 in the cost file.
+csv.workspace = true
+sha2.workspace = true
 
 # The command line uses three crates the library never needs: the argument parser, the
 # stderr log subscriber and the SIGINT handler. They are optional and enabled only by the

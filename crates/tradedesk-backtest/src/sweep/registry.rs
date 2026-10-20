@@ -30,7 +30,7 @@ use serde_json::Value;
 use super::{CostConfigRef, SweepSpec};
 use crate::engine::{EndOfRun, EngineStats, SizingPolicy};
 use crate::exit::ExitEvaluation;
-use crate::ledger::{AccountFx, ClosedTrade, Fill, RunMetadata};
+use crate::ledger::{AccountFx, ClosedTrade, Fill, FinancingCharge, RunMetadata};
 use crate::metrics::Metrics;
 
 /// The registry schema version written in every record, and the only one
@@ -164,6 +164,14 @@ pub enum TrialOutcome {
         /// recorded.
         #[serde(default, skip_serializing_if = "Option::is_none")]
         fills: Option<Vec<Fill>>,
+        /// Every rollover charge of the run's ledger, in booking order
+        /// (`Ledger::financing_charges`), each split into its financing and carry parts
+        /// with the carry table row used: written only when a charge has `components`
+        /// (a modelled carry, task #203), so that every charge can be recomputed.
+        /// `FinancingCharge::position` is the `ClosedTrade::id` it belongs to. `None`, and
+        /// absent from the JSON, otherwise and in records written before task #203.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        rollovers: Option<Vec<FinancingCharge>>,
     },
     /// The cell failed.
     Failed {
@@ -213,6 +221,16 @@ impl TrialRecord {
     pub fn fills(&self) -> Option<&[Fill]> {
         match &self.outcome {
             TrialOutcome::Ok { fills, .. } => fills.as_deref(),
+            TrialOutcome::Failed { .. } => None,
+        }
+    }
+
+    /// The rollover charges of a completed trial, split by component; `None` for a failed
+    /// cell, a trial with no modelled carry, or a record written before task #203.
+    #[must_use]
+    pub fn rollovers(&self) -> Option<&[FinancingCharge]> {
+        match &self.outcome {
+            TrialOutcome::Ok { rollovers, .. } => rollovers.as_deref(),
             TrialOutcome::Failed { .. } => None,
         }
     }
