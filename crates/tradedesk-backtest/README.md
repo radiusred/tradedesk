@@ -138,6 +138,8 @@ slippage = { placeholder = false, excluded = true, reason = "...", source = "...
 commission = { per_fill = 0.0, per_unit_per_fill = 0.0, per_round_trip = 0.0, placeholder = false, source = "..." }  # account currency
 financing = { long_rate = 0.02, short_rate = 0.02, day_count = 360, placeholder = false, source = "..." }
 carry = { placeholder = false, excluded = true, reason = "...", source = "..." }
+# or modelled from a dated rate table (see "Carry" below):
+# carry = { placeholder = false, estimated = true, table = "carry/eurusd.csv", sha256 = "...", day_count = 365, source = "..." }
 
 [venues.example_spread_bet.instruments.USA500IDXUSD.spread]   # a spread by time of day
 pips = 1.0                      # outside every window
@@ -177,15 +179,16 @@ with a source.
     for signal work, but it is never reported as costed.
   - Excluded **slippage**, **spread excess**, **financing** or **carry** is
     **omitted**. The result stays costed and lists what it leaves out.
-- **estimated** (`estimated = true`, on `slippage` and `spread_excess` only):
+- **estimated** (`estimated = true`, on `slippage`, `spread_excess` and `carry` only):
   the figures are derived from data, not published. The component is charged
   and costed, and `CostConfig::estimates` and `RunMetadata.estimates` list it
   with its `source`, which names the inputs of the estimate.
 
 At most one of `placeholder`, `excluded` and `estimated` is `true`.
 
-`carry` is the benchmark-rate or tom-next part of overnight funding. It is not
-modelled, because the config holds no rate history, so it must be excluded.
+`carry` is the benchmark-rate or tom-next part of overnight funding. It is
+excluded (the default in the builtin example) or modelled from a dated rate
+table (see "Carry" under "Financing").
 
 **Spreads.** `basis` is required on every spread that is not excluded:
 `average` for a venue average over a stated period, and `minimum` for a
@@ -355,8 +358,46 @@ calendar day is charged once. The charge is
 close of the last 1m bar closed by the rollover instant. Long and short
 rates are separate, and a positive rate is a charge.
 
-The charge uses the configured annual rate alone, because the benchmark or
-tom-next carry is excluded (see below).
+With the carry excluded, the charge uses the configured annual rate alone.
+
+### Carry
+
+A modelled carry is a dated rate table that the ledger charges at each
+rollover, beside the financing:
+
+```toml
+carry = { placeholder = false, estimated = true, table = "carry/eurusd.csv", sha256 = "<64 hex digits>", day_count = 365, source = "the inputs of the table" }
+```
+
+- **The table** is a CSV file with the header
+  `date,long_rate,short_rate,long_rate_date,short_rate_date,flag`. `date` is
+  the venue-local trading date a rollover closes, ISO format, one row per
+  date, ascending. The rates are annual fractions with the cost file's sign
+  rule: positive is a charge to the trader, negative a credit.
+  `long_rate_date` and `short_rate_date` are the publication dates of the
+  inputs behind each rate; neither may be after `date` (a look-ahead).
+  `flag` is free text (for example `stale`) and may be empty.
+- **Load.** A relative `table` path resolves against the cost file's
+  directory (`CostConfig::from_path`, a sweep's `cost_config`, or
+  `CostConfig::from_toml_str_at`; `from_toml_str` uses the current
+  directory). The file's sha256 must equal `sha256`, or the config does not
+  load. `day_count` is the carry's own divisor, 360 or 365.
+- **Charge.** At each rollover the financing is charged on (same instant,
+  calendar and triple-day rules), the carry charges
+  `|size| x mark x rate / day_count x days`, with the long or short rate of
+  the row for the rollover's local date. A rollover whose date has no row
+  stops the run with `LedgerError::NoCarryRate`: a missing rate is never a
+  zero.
+- **Records.** Each `FinancingCharge` then has `components`: the
+  `financing` and `carry` parts, the `carry_rate` and `carry_day_count` used
+  and the whole `carry_row`; `charge` is the sum of the two parts.
+  `RunMetadata.carry_tables` lists, per instrument, the table's configured
+  `path`, its `sha256`, `day_count`, `rows`, `first_date` and `last_date`.
+  The carry is listed in `RunMetadata.estimates`, and the instrument stays
+  costed. The sweep registry writes every rollover charge
+  (`outcome.rollovers`, in booking order) when one has `components`, so that
+  every charge can be recomputed. With every carry excluded none of these
+  keys is written.
 
 ### The builtin example
 
@@ -369,7 +410,8 @@ Two exclusions apply at every example venue and to all five instruments:
 - **Slippage is excluded (omitted).** Costed results charge no slippage, so
   execution cost is a lower bound.
 - **Carry is excluded (omitted).** Results charge the annual rate to longs and
-  shorts alike; the benchmark or tom-next part is not modelled.
+  shorts alike; the benchmark or tom-next part is not charged. The file has
+  no carry table.
 
 | Component | `example_spread_bet` | `example_ny_spread_bet` | `example_ny_cfd` |
 |---|---|---|---|
@@ -937,21 +979,24 @@ records are:
 | `trial` | `schema_version`, `trial_id`, `sweep_id`, `index`, `code_version`, `code_revision`, `strategy`, `instrument`, `params` (the cell), `config` (the resolved strategy config, `null` if it did not resolve), `first_day`, `last_day`, `warmup_days`, `venue`, `cost_config`, `exit_evaluation`, `account_fx`, `sizing`, `end_of_run`, `starting_capital`, `risk_free_rate`, `run` (`RunMetadata`: placeholders, exclusions and the derived `costed` map), `provenance` (the spec's table; absent when it is empty), `started_utc`, `finished_utc`, `outcome` |
 
 `outcome` is one of:
-- `{status: "ok", engine: EngineStats, metrics: Metrics, trades, fills}`, with the
+- `{status: "ok", engine: EngineStats, metrics: Metrics, trades, fills, rollovers}`, with the
   full metrics, the equity curve and every closed trade (`ClosedTrade`, in closing
   order; the walk-forward attributes them to its test windows). A ruined run is `ok`,
   and its metrics say it was ruined. A record written before task #62 has no `trades`
   and reads back with `None`. `fills` is every ledger `Fill` in booking order, written
   only when at least one fill has the volatility slippage or spread excess detail
-  (task #199); otherwise it is absent and reads back with `None`. The report and the
-  walk-forward do not read it;
+  (task #199); otherwise it is absent and reads back with `None`. `rollovers` is
+  every `FinancingCharge` in booking order, written only when a charge has
+  `components` (a modelled carry, task #203); otherwise it is absent and reads
+  back with `None`. The report and the walk-forward read neither;
 - `{status: "failed", stage: "config" | "run" | "panic", error}`.
 
 The ids are blake3 hashes:
 - **`trial_id`** hashes the canonical JSON of everything the result depends on:
   the code version (`CARGO_PKG_VERSION`) and build (`code_revision`), the
   strategy, the params and resolved config, the instrument, the window and
-  warm-up, the venue, the blake3 of the cost config's TOML text, the exit mode,
+  warm-up, the venue, the blake3 of the cost config's TOML text (which pins
+  each carry table by its sha256), the exit mode,
   the FX, the sizing, the end-of-run rule, the capital and the risk-free rate.
 - **`code_revision`** is `tradedesk_data::CODE_REVISION`: the git commit the
   workspace was built from, prefixed `dirty-` for a modified tree, or `unknown`

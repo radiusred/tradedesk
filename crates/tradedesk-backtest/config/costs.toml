@@ -38,9 +38,10 @@
 # optional `schedule` of local [from, to) windows in `tz` sets the spread by time of day;
 # `pips` applies outside every window.
 #
-# Carry: the benchmark-rate or tom-next part of overnight funding. It is not modelled (no
-# rate history), so it is excluded here: results charge the annual rate below to longs
-# and shorts alike.
+# Carry: the benchmark-rate or tom-next part of overnight funding. It is excluded here:
+# results charge the annual rate below to longs and shorts alike. A real file can model
+# it from a dated rate table instead (estimated = true, table, sha256, day_count; see
+# the crate README, "Carry").
 #
 # The fill is the configured price side +/- half the `spread` below, +/- slippage, then
 # commission. The data's own ask - bid is never the venue cost.
