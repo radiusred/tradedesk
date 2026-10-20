@@ -19,17 +19,19 @@
 //! and a status. A component is **verified** (a published venue figure), a **placeholder**
 //! (`placeholder = true`: an assumption or stand-in), **excluded** (`excluded = true` with
 //! a `reason`: no published figure exists, so the component charges nothing) or
-//! **estimated** (`estimated = true`, slippage and spread excess only: derived from data,
-//! and costed). [`CostConfig::placeholders`], [`CostConfig::exclusions`] and
+//! **estimated** (`estimated = true`, slippage, spread excess and carry only: derived from
+//! data, and costed). [`CostConfig::placeholders`], [`CostConfig::exclusions`] and
 //! [`CostConfig::estimates`] list them, and [`CostConfig::costed`] says which instruments
 //! can be reported as costed (see [`CostComponent::exclusion_effect`]).
 
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
 
-use chrono::{DateTime, NaiveTime, Timelike, Utc, Weekday};
+use chrono::{DateTime, NaiveDate, NaiveTime, Timelike, Utc, Weekday};
 use chrono_tz::Tz;
 use serde::{Deserialize, Deserializer, Serialize};
+use sha2::{Digest, Sha256};
 
 /// The checked-in example cost configuration (see the module docs).
 pub const BUILTIN_COSTS_TOML: &str = include_str!("../../config/costs.toml");
@@ -510,21 +512,184 @@ pub struct Financing {
 }
 
 /// The benchmark-rate or tom-next part of overnight financing: the signed interest carry
-/// a venue adds to or subtracts from its admin fee. It is not modelled (there is no rate
-/// history in the config), so every entry must declare it `excluded` with a reason, and
-/// costed results omit it.
+/// a venue adds to or subtracts from its admin fee.
+///
+/// Two forms are valid. **Excluded** (`excluded = true` with a `reason`): nothing is
+/// charged, and costed results omit it. **Modelled** (`estimated = true` with `table`,
+/// `sha256` and `day_count`): a dated rate table ([`CarryTable`]) that the ledger charges
+/// at each rollover, on the same calendar as [`Financing`]. The table's sha256 is checked
+/// when the config loads.
 #[derive(Debug, Clone, PartialEq, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Carry {
-    /// Where the venue states how the carry is set.
+    /// Where the venue states how the carry is set, or the inputs of the table.
     pub source: String,
-    /// Must be `false`: an excluded component is not a placeholder.
+    /// Must be `false`: an excluded or modelled carry is not a placeholder.
     pub placeholder: bool,
-    /// Must be `true` (see the type docs).
+    /// `true` when the carry is not modelled: nothing is charged.
+    #[serde(default)]
     pub excluded: bool,
     /// Why it is excluded and what costed results therefore omit.
     #[serde(default)]
     pub reason: Option<String>,
+    /// `true` for the modelled form: the table is an estimate. Still costed, and listed by
+    /// [`CostConfig::estimates`].
+    #[serde(default)]
+    pub estimated: bool,
+    /// Modelled form: the rate table's CSV file. A relative path resolves against the
+    /// cost file's directory (see [`CostConfig::from_toml_str_at`]).
+    #[serde(default)]
+    pub table: Option<PathBuf>,
+    /// Modelled form: the sha256 of the table file, 64 hex digits (either case).
+    #[serde(default)]
+    pub sha256: Option<String>,
+    /// Modelled form: the carry's own day-count divisor, 365 or 360.
+    #[serde(default)]
+    pub day_count: Option<u32>,
+    /// The table, read and checked at load. `None` for an excluded carry.
+    #[serde(skip)]
+    pub rates: Option<Arc<CarryTable>>,
+}
+
+impl Carry {
+    /// Whether the carry is the modelled form (a loaded rate table).
+    #[must_use]
+    pub fn is_modelled(&self) -> bool {
+        self.rates.is_some()
+    }
+}
+
+/// The CSV header a carry table must have, in this order.
+pub const CARRY_TABLE_HEADER: [&str; 6] = [
+    "date",
+    "long_rate",
+    "short_rate",
+    "long_rate_date",
+    "short_rate_date",
+    "flag",
+];
+
+/// One row of a carry table: the annual rates charged at the rollover that closes the
+/// venue-local trading date `date`.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct CarryRow {
+    /// The venue-local trading date of the rollover.
+    pub date: NaiveDate,
+    /// Annual rate on a long position (positive is a charge, negative a credit).
+    pub long_rate: f64,
+    /// Annual rate on a short position (positive is a charge, negative a credit).
+    pub short_rate: f64,
+    /// The publication date of the input behind `long_rate`; never after `date`.
+    pub long_rate_date: NaiveDate,
+    /// The publication date of the input behind `short_rate`; never after `date`.
+    pub short_rate_date: NaiveDate,
+    /// A free-text note from the table's maker (for example `stale`); may be empty.
+    pub flag: String,
+}
+
+/// A carry table: rows by date, ascending, one per date.
+#[derive(Debug, Clone, PartialEq)]
+pub struct CarryTable {
+    sha256: String,
+    rows: Vec<CarryRow>,
+}
+
+impl CarryTable {
+    /// Parse a table from its file bytes and check them against `sha256` (lower-case or
+    /// upper-case hex).
+    ///
+    /// # Errors
+    /// A message for a sha256 mismatch, a file that is not UTF-8, a header other than
+    /// [`CARRY_TABLE_HEADER`], a row that does not parse, a non-finite rate, a date that
+    /// is not after the row before it, or a rate date after its row's date.
+    pub fn from_bytes(bytes: &[u8], sha256: &str) -> Result<Self, String> {
+        let found = sha256_hex(bytes);
+        if !found.eq_ignore_ascii_case(sha256) {
+            return Err(format!("sha256 is {found}, but the config says {sha256}"));
+        }
+        let mut reader = csv::ReaderBuilder::new()
+            .has_headers(true)
+            .trim(csv::Trim::All)
+            .from_reader(bytes);
+        let header = reader.headers().map_err(|e| format!("header: {e}"))?;
+        if header.iter().ne(CARRY_TABLE_HEADER) {
+            return Err(format!(
+                "header is {:?}, expected {:?}",
+                header.iter().collect::<Vec<_>>().join(","),
+                CARRY_TABLE_HEADER.join(",")
+            ));
+        }
+        let mut rows: Vec<CarryRow> = Vec::new();
+        for (i, record) in reader.deserialize::<CarryRow>().enumerate() {
+            // Line 1 is the header.
+            let line = i + 2;
+            let row = record.map_err(|e| format!("line {line}: {e}"))?;
+            for (name, rate) in [("long_rate", row.long_rate), ("short_rate", row.short_rate)] {
+                if !rate.is_finite() {
+                    return Err(format!("line {line}: {name} {rate} is not finite"));
+                }
+            }
+            for (name, d) in [
+                ("long_rate_date", row.long_rate_date),
+                ("short_rate_date", row.short_rate_date),
+            ] {
+                if d > row.date {
+                    return Err(format!(
+                        "line {line}: {name} {d} is after the row's date {}",
+                        row.date
+                    ));
+                }
+            }
+            if let Some(prev) = rows.last() {
+                if row.date <= prev.date {
+                    return Err(format!(
+                        "line {line}: date {} is not after the previous row's {}",
+                        row.date, prev.date
+                    ));
+                }
+            }
+            rows.push(row);
+        }
+        if rows.is_empty() {
+            return Err("the table has no rows".to_owned());
+        }
+        Ok(Self {
+            sha256: found,
+            rows,
+        })
+    }
+
+    /// The file's sha256, lower-case hex.
+    #[must_use]
+    pub fn sha256(&self) -> &str {
+        &self.sha256
+    }
+
+    /// Every row, by date.
+    #[must_use]
+    pub fn rows(&self) -> &[CarryRow] {
+        &self.rows
+    }
+
+    /// The row for venue-local trading date `date`, if the table has one.
+    #[must_use]
+    pub fn row(&self, date: NaiveDate) -> Option<&CarryRow> {
+        self.rows
+            .binary_search_by_key(&date, |r| r.date)
+            .ok()
+            .map(|i| &self.rows[i])
+    }
+}
+
+/// The sha256 of `bytes`, lower-case hex.
+pub(crate) fn sha256_hex(bytes: &[u8]) -> String {
+    use std::fmt::Write as _;
+    Sha256::digest(bytes)
+        .iter()
+        .fold(String::new(), |mut s, b| {
+            let _ = write!(s, "{b:02x}");
+            s
+        })
 }
 
 /// Dealing costs and financing for one instrument at one venue. Each of the five cost
@@ -712,7 +877,11 @@ impl VenueInstrumentCost {
             ),
             (
                 CostComponent::Carry,
-                plain(self.carry.placeholder, self.carry.excluded),
+                Flags {
+                    placeholder: self.carry.placeholder,
+                    excluded: self.carry.excluded,
+                    estimated: self.carry.estimated,
+                },
                 self.carry.source.as_str(),
                 self.carry.reason.as_ref(),
             ),
@@ -835,6 +1004,23 @@ pub struct Estimate {
     pub source: String,
 }
 
+/// A modelled carry's table, recorded in run metadata.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct CarryTableRef {
+    /// The `table` path as configured.
+    pub path: String,
+    /// The file's sha256, lower-case hex, as checked at load.
+    pub sha256: String,
+    /// The carry's day-count divisor.
+    pub day_count: u32,
+    /// Rows in the table.
+    pub rows: usize,
+    /// The first row's date.
+    pub first_date: NaiveDate,
+    /// The last row's date.
+    pub last_date: NaiveDate,
+}
+
 /// Whether a venue × instrument configures a spread excess.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -873,30 +1059,107 @@ impl CostConfig {
         Self::from_toml_str(BUILTIN_COSTS_TOML).expect("the checked-in costs.toml is valid")
     }
 
-    /// Parse and validate a configuration.
+    /// Parse and validate a configuration. A modelled carry's relative `table` path
+    /// resolves against the current directory.
     ///
     /// # Errors
-    /// [`ConfigError::Parse`] when the TOML does not match the schema, and
-    /// [`ConfigError::Invalid`] when a value is out of range or references an undefined
-    /// instrument.
+    /// As [`CostConfig::from_toml_str_at`].
     pub fn from_toml_str(text: &str) -> Result<Self, ConfigError> {
-        let config: Self = toml::from_str(text)?;
+        Self::from_toml_str_at(text, Path::new(""))
+    }
+
+    /// Parse and validate a configuration whose modelled carry tables, when their path is
+    /// relative, are in or under `dir` (the cost file's own directory). Each table is
+    /// read and checked against its `sha256` here, so a config in hand charges from the
+    /// bytes it was configured with.
+    ///
+    /// # Errors
+    /// [`ConfigError::Parse`] when the TOML does not match the schema;
+    /// [`ConfigError::Invalid`] when a value is out of range or references an undefined
+    /// instrument, or a carry table does not match its sha256 or does not parse; and
+    /// [`ConfigError::Io`] when a carry table cannot be read.
+    pub fn from_toml_str_at(text: &str, dir: &Path) -> Result<Self, ConfigError> {
+        let mut config: Self = toml::from_str(text)?;
         config.validate()?;
+        config.load_carry_tables(dir)?;
         Ok(config)
     }
 
-    /// Read, parse and validate a configuration file.
+    /// Read, parse and validate a configuration file. A modelled carry's relative
+    /// `table` path resolves against the file's directory.
     ///
     /// # Errors
     /// [`ConfigError::Io`] when the file cannot be read; otherwise as
-    /// [`CostConfig::from_toml_str`].
+    /// [`CostConfig::from_toml_str_at`].
     pub fn from_path(path: impl AsRef<Path>) -> Result<Self, ConfigError> {
         let path = path.as_ref();
         let text = std::fs::read_to_string(path).map_err(|source| ConfigError::Io {
             path: path.to_path_buf(),
             source,
         })?;
-        Self::from_toml_str(&text)
+        Self::from_toml_str_at(&text, path.parent().unwrap_or(Path::new("")))
+    }
+
+    /// Read and check every modelled carry's table (validation has checked its fields).
+    fn load_carry_tables(&mut self, dir: &Path) -> Result<(), ConfigError> {
+        for (id, venue) in &mut self.venues {
+            for (symbol, cost) in &mut venue.instruments {
+                let carry = &mut cost.carry;
+                let (Some(table), Some(sha256)) = (&carry.table, &carry.sha256) else {
+                    continue;
+                };
+                let path = dir.join(table);
+                let bytes = std::fs::read(&path).map_err(|source| ConfigError::Io {
+                    path: path.clone(),
+                    source,
+                })?;
+                let rates = CarryTable::from_bytes(&bytes, sha256).map_err(|reason| {
+                    invalid(
+                        format!("venues.{id}.instruments.{symbol}.carry.table"),
+                        format!("{}: {reason}", path.display()),
+                    )
+                })?;
+                carry.rates = Some(Arc::new(rates));
+            }
+        }
+        Ok(())
+    }
+
+    /// For each instrument at `venue_id` with a modelled carry, its table: the path as
+    /// configured, the sha256, the row count and the first and last date. Empty when
+    /// every carry there is excluded.
+    ///
+    /// # Errors
+    /// [`ConfigError::UnknownVenue`] when the venue is not defined.
+    pub fn carry_tables(
+        &self,
+        venue_id: &str,
+    ) -> Result<BTreeMap<String, CarryTableRef>, ConfigError> {
+        let venue = self.venue_or_err(venue_id)?;
+        Ok(venue
+            .instruments
+            .iter()
+            .filter_map(|(symbol, cost)| {
+                let rates = cost.carry.rates.as_ref()?;
+                let (first, last) = (rates.rows().first()?, rates.rows().last()?);
+                Some((
+                    symbol.clone(),
+                    CarryTableRef {
+                        path: cost
+                            .carry
+                            .table
+                            .as_ref()
+                            .map(|p| p.display().to_string())
+                            .unwrap_or_default(),
+                        sha256: rates.sha256().to_owned(),
+                        day_count: cost.carry.day_count.unwrap_or_default(),
+                        rows: rates.rows().len(),
+                        first_date: first.date,
+                        last_date: last.date,
+                    },
+                ))
+            })
+            .collect())
     }
 
     /// The spec for `symbol`.
@@ -1259,7 +1522,7 @@ fn validate_spread_excess(
 
 /// Every component: a non-empty source; at most one of placeholder, excluded and
 /// estimated; a reason exactly when excluded; an excluded component's amounts all zero;
-/// the carry excluded.
+/// the carry excluded or modelled.
 fn validate_provenance(
     cost: &VenueInstrumentCost,
     at: &impl Fn(&str) -> String,
@@ -1337,10 +1600,49 @@ fn validate_provenance(
             ));
         }
     }
-    if !cost.carry.excluded {
+    validate_carry(&cost.carry, at)
+}
+
+/// The carry is excluded (and has none of the modelled fields) or modelled (`estimated`
+/// with a `table`, a `sha256` and a `day_count`).
+fn validate_carry(carry: &Carry, at: &impl Fn(&str) -> String) -> Result<(), ConfigError> {
+    let modelled_fields = [
+        ("table", carry.table.is_some()),
+        ("sha256", carry.sha256.is_some()),
+        ("day_count", carry.day_count.is_some()),
+    ];
+    if carry.excluded {
+        if let Some((field, _)) = modelled_fields.iter().find(|(_, set)| *set) {
+            return Err(invalid(
+                at(&format!("carry.{field}")),
+                "an excluded carry charges nothing: only a modelled carry takes this field",
+            ));
+        }
+        return Ok(());
+    }
+    if !carry.estimated {
         return Err(invalid(
             at("carry"),
-            "the benchmark or tom-next carry is not modelled: it must be excluded with a reason",
+            "a carry is excluded with a reason, or modelled from a rate table with \
+             estimated = true",
+        ));
+    }
+    for (field, set) in modelled_fields {
+        if !set {
+            return Err(invalid(
+                at(&format!("carry.{field}")),
+                "required by a modelled carry",
+            ));
+        }
+    }
+    if !matches!(carry.day_count, Some(360 | 365)) {
+        return Err(invalid(at("carry.day_count"), "must be 360 or 365"));
+    }
+    let sha = carry.sha256.as_deref().unwrap_or_default();
+    if sha.len() != 64 || !sha.bytes().all(|b| b.is_ascii_hexdigit()) {
+        return Err(invalid(
+            at("carry.sha256"),
+            format!("{sha:?} is not 64 hex digits"),
         ));
     }
     Ok(())
@@ -1456,6 +1758,43 @@ pub(crate) fn arithmetic_fixture() -> CostConfig {
     }
     c.validate().expect("the fixture is valid");
     c
+}
+
+#[cfg(test)]
+impl CostConfig {
+    /// This config with `symbol`'s carry at `venue` modelled from the synthetic table
+    /// `csv`, as if loaded from a file `carry.csv` pinned by its sha256.
+    pub(crate) fn with_modelled_carry(
+        mut self,
+        venue: &str,
+        symbol: &str,
+        csv: &str,
+        day_count: u32,
+    ) -> Self {
+        let sha256 = sha256_hex(csv.as_bytes());
+        let table = CarryTable::from_bytes(csv.as_bytes(), &sha256).expect("a valid table");
+        let carry = &mut self
+            .venues
+            .get_mut(venue)
+            .expect("venue")
+            .instruments
+            .get_mut(symbol)
+            .expect("instrument")
+            .carry;
+        *carry = Carry {
+            source: "synthetic test table".to_owned(),
+            placeholder: false,
+            excluded: false,
+            reason: None,
+            estimated: true,
+            table: Some(PathBuf::from("carry.csv")),
+            sha256: Some(sha256),
+            day_count: Some(day_count),
+            rates: Some(Arc::new(table)),
+        };
+        self.validate().expect("the config is valid");
+        self
+    }
 }
 
 #[cfg(test)]
@@ -1818,11 +2157,83 @@ carry = {{ source = "test", placeholder = false, excluded = true, reason = "not 
                 ),
                 "spread",
             ),
-            // The carry is not modelled: it must be excluded.
+        ];
+        for (text, field) in cases {
+            assert_eq!(
+                invalid_at(&text),
+                format!("venues.v.instruments.EURUSD.{field}"),
+                "{text}"
+            );
+        }
+    }
+
+    #[test]
+    fn the_carry_forms_are_validated() {
+        let base = minimal("", "", LONDON);
+        let with = |from: &str, to: &str| base.replace(from, to);
+        let cases = [
+            // A carry neither excluded nor modelled.
             (
                 with(
-                    r#"carry = { source = "test", placeholder = false, excluded = true, reason = "not modelled" }"#,
+                    CARRY_EXCLUDED,
                     r#"carry = { source = "test", placeholder = false, excluded = false }"#,
+                ),
+                "carry",
+            ),
+            // An excluded carry takes none of the modelled fields.
+            (
+                with(
+                    CARRY_EXCLUDED,
+                    r#"carry = { source = "test", placeholder = false, excluded = true, reason = "r", table = "t.csv" }"#,
+                ),
+                "carry.table",
+            ),
+            (
+                with(
+                    CARRY_EXCLUDED,
+                    r#"carry = { source = "test", placeholder = false, excluded = true, reason = "r", day_count = 365 }"#,
+                ),
+                "carry.day_count",
+            ),
+            // A modelled carry needs its table, sha256 and day count.
+            (
+                with(
+                    CARRY_EXCLUDED,
+                    r#"carry = { source = "test", placeholder = false, estimated = true }"#,
+                ),
+                "carry.table",
+            ),
+            (
+                with(
+                    CARRY_EXCLUDED,
+                    r#"carry = { source = "test", placeholder = false, estimated = true, table = "t.csv", day_count = 365 }"#,
+                ),
+                "carry.sha256",
+            ),
+            (
+                with(
+                    CARRY_EXCLUDED,
+                    &modelled_carry("t.csv", &"0".repeat(64)).replace(", day_count = 365", ""),
+                ),
+                "carry.day_count",
+            ),
+            (
+                with(
+                    CARRY_EXCLUDED,
+                    &modelled_carry("t.csv", &"0".repeat(64)).replace("365", "364"),
+                ),
+                "carry.day_count",
+            ),
+            (
+                with(CARRY_EXCLUDED, &modelled_carry("t.csv", "not-hex")),
+                "carry.sha256",
+            ),
+            // Estimated and a placeholder at once.
+            (
+                with(
+                    CARRY_EXCLUDED,
+                    &modelled_carry("t.csv", &"0".repeat(64))
+                        .replace("placeholder = false", "placeholder = true"),
                 ),
                 "carry",
             ),
@@ -1834,6 +2245,178 @@ carry = {{ source = "test", placeholder = false, excluded = true, reason = "not 
                 "{text}"
             );
         }
+    }
+
+    const CARRY_EXCLUDED: &str = r#"carry = { source = "test", placeholder = false, excluded = true, reason = "not modelled" }"#;
+
+    /// A labelled synthetic carry table: test values, not any venue's or any benchmark's.
+    const CARRY_CSV: &str = "\
+date,long_rate,short_rate,long_rate_date,short_rate_date,flag
+2024-01-16,0.05,-0.04,2024-01-16,2024-01-16,
+2024-01-17,0.06,-0.03,2024-01-16,2024-01-17,stale
+";
+
+    fn modelled_carry(table: &str, sha256: &str) -> String {
+        format!(
+            r#"carry = {{ source = "synthetic test table", placeholder = false, estimated = true, table = "{table}", sha256 = "{sha256}", day_count = 365 }}"#
+        )
+    }
+
+    /// `minimal` with EURUSD's carry modelled from `table` (path as configured) pinned by
+    /// `sha256`.
+    fn with_modelled_carry(table: &str, sha256: &str) -> String {
+        minimal("", "", LONDON).replace(CARRY_EXCLUDED, &modelled_carry(table, sha256))
+    }
+
+    #[test]
+    fn the_table_hash_is_sha256_in_lower_case_hex() {
+        assert_eq!(
+            sha256_hex(b"abc"),
+            "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad"
+        );
+    }
+
+    #[test]
+    fn a_modelled_carry_loads_its_table_beside_the_cost_file_and_is_estimated() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::create_dir(dir.path().join("carry")).unwrap();
+        std::fs::write(dir.path().join("carry/eurusd.csv"), CARRY_CSV).unwrap();
+        let sha = sha256_hex(CARRY_CSV.as_bytes());
+        let path = dir.path().join("costs.toml");
+        // Upper-case hex in the file is accepted; the record keeps lower case.
+        std::fs::write(
+            &path,
+            with_modelled_carry("carry/eurusd.csv", &sha.to_uppercase()),
+        )
+        .unwrap();
+        let c = CostConfig::from_path(&path).unwrap();
+        let carry = &c.venue("v").unwrap().instruments["EURUSD"].carry;
+        assert!(carry.is_modelled());
+        let table = carry.rates.as_ref().unwrap();
+        assert_eq!(table.sha256(), sha);
+        assert_eq!(table.rows().len(), 2);
+        let d = |day| NaiveDate::from_ymd_opt(2024, 1, day).unwrap();
+        assert_eq!(
+            table.row(d(17)),
+            Some(&CarryRow {
+                date: d(17),
+                long_rate: 0.06,
+                short_rate: -0.03,
+                long_rate_date: d(16),
+                short_rate_date: d(17),
+                flag: "stale".to_owned(),
+            })
+        );
+        assert_eq!(table.row(d(16)).unwrap().flag, "");
+        assert_eq!(table.row(d(18)), None);
+        // Provenance: estimated, costed, not an exclusion.
+        let listed: Vec<_> = c
+            .estimates("v")
+            .unwrap()
+            .into_iter()
+            .map(|e| (e.component, e.source))
+            .collect();
+        assert_eq!(
+            listed,
+            [(CostComponent::Carry, "synthetic test table".to_owned())]
+        );
+        assert!(
+            c.exclusions("v")
+                .unwrap()
+                .iter()
+                .all(|e| e.component != CostComponent::Carry)
+        );
+        assert!(c.costed("v").unwrap()["EURUSD"]);
+        assert_eq!(
+            c.carry_tables("v").unwrap()["EURUSD"],
+            CarryTableRef {
+                path: "carry/eurusd.csv".to_owned(),
+                sha256: sha.clone(),
+                day_count: 365,
+                rows: 2,
+                first_date: d(16),
+                last_date: d(17),
+            }
+        );
+        // The same text with the directory given.
+        let text = std::fs::read_to_string(&path).unwrap();
+        assert_eq!(CostConfig::from_toml_str_at(&text, dir.path()).unwrap(), c);
+        // Every carry excluded: no table is listed.
+        let builtin = CostConfig::builtin();
+        for (id, _) in builtin.venues() {
+            assert!(builtin.carry_tables(id).unwrap().is_empty());
+        }
+    }
+
+    #[test]
+    fn a_table_that_is_missing_altered_or_malformed_does_not_load() {
+        let dir = tempfile::tempdir().unwrap();
+        let load = |csv: &str, sha: &str| {
+            std::fs::write(dir.path().join("t.csv"), csv).unwrap();
+            CostConfig::from_toml_str_at(&with_modelled_carry("t.csv", sha), dir.path())
+        };
+        let refused = |csv: &str, expect: &str| {
+            let sha = sha256_hex(csv.as_bytes());
+            match load(csv, &sha) {
+                Err(ConfigError::Invalid { at, reason }) => {
+                    assert_eq!(at, "venues.v.instruments.EURUSD.carry.table");
+                    assert!(reason.contains(expect), "{reason} lacks {expect:?}");
+                }
+                other => panic!("expected Invalid for\n{csv}, got {other:?}"),
+            }
+        };
+        let header = "date,long_rate,short_rate,long_rate_date,short_rate_date,flag\n";
+        // One byte changed after the hash was taken.
+        let sha = sha256_hex(CARRY_CSV.as_bytes());
+        match load(&CARRY_CSV.replace("0.06", "0.07"), &sha) {
+            Err(ConfigError::Invalid { reason, .. }) => {
+                assert!(reason.contains("sha256"), "{reason}");
+            }
+            other => panic!("expected a sha256 mismatch, got {other:?}"),
+        }
+        refused(
+            &CARRY_CSV.replace("long_rate,short_rate", "short_rate,long_rate"),
+            "header",
+        );
+        refused(header, "no rows");
+        refused(
+            &format!(
+                "{header}2024-01-16,0.05,-0.04,2024-01-16,2024-01-16,\n2024-01-16,0.05,-0.04,2024-01-16,2024-01-16,\n"
+            ),
+            "not after",
+        );
+        refused(
+            &format!(
+                "{header}2024-01-17,0.05,-0.04,2024-01-17,2024-01-17,\n2024-01-16,0.05,-0.04,2024-01-16,2024-01-16,\n"
+            ),
+            "not after",
+        );
+        refused(
+            &format!("{header}2024-01-16,NaN,-0.04,2024-01-16,2024-01-16,\n"),
+            "not finite",
+        );
+        refused(
+            &format!("{header}2024-01-16,0.05,inf,2024-01-16,2024-01-16,\n"),
+            "not finite",
+        );
+        // A rate published after the rollover it is charged at is a look-ahead.
+        refused(
+            &format!("{header}2024-01-16,0.05,-0.04,2024-01-16,2024-01-17,\n"),
+            "after the row's date",
+        );
+        refused(
+            &format!("{header}2024-01-16,0.05,-0.04,16/01/2024,2024-01-16,\n"),
+            "line 2",
+        );
+        refused(
+            &format!("{header}2024-01-16,0.05,-0.04,2024-01-16\n"),
+            "line 2",
+        );
+        // A table that is not there.
+        assert!(matches!(
+            CostConfig::from_toml_str_at(&with_modelled_carry("absent.csv", &sha), dir.path()),
+            Err(ConfigError::Io { .. })
+        ));
     }
 
     #[test]

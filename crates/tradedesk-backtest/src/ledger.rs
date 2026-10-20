@@ -20,10 +20,11 @@ use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 
 use crate::cost::config::{
-    CostConfig, CostModels, Estimate, Exclusion, InstrumentSpec, Placeholder, PriceSide, Product,
+    CarryRow, CarryTableRef, CostConfig, CostModels, Estimate, Exclusion, InstrumentSpec,
+    Placeholder, PriceSide, Product,
 };
 use crate::cost::fill::{FillCostDetail, FillError, FillKind, FillModel, PricePoint, TradeSide};
-use crate::cost::financing::{Direction, RolloverCalendar, rollover_charge};
+use crate::cost::financing::{Direction, RolloverCalendar, carry_charge, rollover_charge};
 use crate::cost::minutes::MinuteCosts;
 use crate::exit::{ExitEvaluation, ExitReason, ExitTrigger, SignalExitReason};
 use crate::{BarTimeframe, JoinedBar, JoinedSeries, MarketData};
@@ -86,6 +87,17 @@ pub enum LedgerError {
         /// Instrument.
         instrument: String,
         /// The instant needing a mark.
+        at: DateTime<Utc>,
+    },
+    /// A modelled carry's table has no row for a rollover's local date. The run stops:
+    /// a missing rate is never charged as zero.
+    #[error("{instrument} carry table has no row for the rollover closing {local_date} (at {at})")]
+    NoCarryRate {
+        /// Instrument.
+        instrument: String,
+        /// The rollover's venue-local trading date.
+        local_date: NaiveDate,
+        /// The rollover instant.
         at: DateTime<Utc>,
     },
     /// The exit is before the entry.
@@ -232,6 +244,12 @@ pub struct RunMetadata {
     /// at the venue uses the volatility slippage or a spread excess.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub cost_models: Option<BTreeMap<String, CostModels>>,
+    /// For each instrument at the venue with a modelled carry, its rate table: the path as
+    /// configured, the sha256 checked at load, the day count, the row count and the date
+    /// range. Left out of the JSON when empty, and empty in a record written before task
+    /// #203.
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub carry_tables: BTreeMap<String, CarryTableRef>,
 }
 
 impl RunMetadata {
@@ -381,8 +399,32 @@ pub struct FinancingCharge {
     pub mark_bar_open: DateTime<Utc>,
     /// Mark, quote units.
     pub mark_price: f64,
-    /// Charge, quote currency (negative is a credit).
+    /// Charge, quote currency (negative is a credit): the financing and carry parts
+    /// together.
     pub charge: f64,
+    /// The charge per component, with the carry table row used. `None`, and absent from
+    /// the JSON, when the instrument's carry is excluded (the charge is then all
+    /// financing).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub components: Option<ChargeComponents>,
+}
+
+/// One rollover's charge split by component, when the carry is modelled. A verifier
+/// recomputes each part from the charge's `mark_price` and `days`, the cost file's
+/// financing rate and day count, and the row and day count here:
+/// `|size| × mark × rate / day_count × days`.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct ChargeComponents {
+    /// The financing part (the venue's annual charge), quote currency.
+    pub financing: f64,
+    /// The carry part, quote currency (negative is a credit).
+    pub carry: f64,
+    /// The annual carry rate applied: the row's long or short rate.
+    pub carry_rate: f64,
+    /// The carry's day-count divisor.
+    pub carry_day_count: u32,
+    /// The carry table row for the rollover's local date.
+    pub carry_row: CarryRow,
 }
 
 /// A position on the book.
@@ -622,6 +664,9 @@ impl Ledger {
                 cost_models: config
                     .cost_models(venue_id)
                     .map_err(|_| LedgerError::UnknownVenue(venue_id.to_owned()))?,
+                carry_tables: config
+                    .carry_tables(venue_id)
+                    .map_err(|_| LedgerError::UnknownVenue(venue_id.to_owned()))?,
             },
             calendar: RolloverCalendar::new(venue.rollover, venue.weekend),
             models,
@@ -841,6 +886,32 @@ impl Ledger {
                         at: r.at_utc,
                     })?;
                 let mark = checked_mark(model, bar)?;
+                let financing =
+                    rollover_charge(&model.cost().financing, p.direction, p.size, mark, r.days);
+                let carry = &model.cost().carry;
+                let components = match &carry.rates {
+                    None => None,
+                    Some(table) => {
+                        let row =
+                            table
+                                .row(r.local_date)
+                                .ok_or_else(|| LedgerError::NoCarryRate {
+                                    instrument: p.instrument.clone(),
+                                    local_date: r.local_date,
+                                    at: r.at_utc,
+                                })?;
+                        let day_count = carry.day_count.unwrap_or_default();
+                        let (rate, charge) =
+                            carry_charge(row, day_count, p.direction, p.size, mark, r.days);
+                        Some(ChargeComponents {
+                            financing,
+                            carry: charge,
+                            carry_rate: rate,
+                            carry_day_count: day_count,
+                            carry_row: row.clone(),
+                        })
+                    }
+                };
                 Ok(FinancingCharge {
                     position: p.id,
                     instrument: p.instrument.clone(),
@@ -849,13 +920,8 @@ impl Ledger {
                     days: r.days,
                     mark_bar_open: bar.ts_open_utc,
                     mark_price: mark,
-                    charge: rollover_charge(
-                        &model.cost().financing,
-                        p.direction,
-                        p.size,
-                        mark,
-                        r.days,
-                    ),
+                    charge: financing + components.as_ref().map_or(0.0, |c| c.carry),
+                    components,
                 })
             })
             .collect()
@@ -875,9 +941,10 @@ impl Ledger {
     /// including) `now`. Calling it again for the same span charges nothing more.
     ///
     /// # Errors
-    /// [`LedgerError::NoMark`] when no bar has closed by a rollover to mark from, and
-    /// [`LedgerError::BadMark`] when that bar's mark is not a finite price above zero;
-    /// nothing is booked in either case.
+    /// [`LedgerError::NoMark`] when no bar has closed by a rollover to mark from,
+    /// [`LedgerError::BadMark`] when that bar's mark is not a finite price above zero, and
+    /// [`LedgerError::NoCarryRate`] when a modelled carry's table has no row for a
+    /// rollover's date; nothing is booked in any case.
     pub fn accrue_financing(
         &mut self,
         now: DateTime<Utc>,
@@ -898,8 +965,9 @@ impl Ledger {
     ///
     /// # Errors
     /// [`LedgerError::UnknownPosition`], [`LedgerError::ExitBeforeEntry`],
-    /// [`LedgerError::Fill`] (including a divergent bar) or [`LedgerError::NoMark`]. On
-    /// error the position stays open and nothing is booked.
+    /// [`LedgerError::Fill`] (including a divergent bar), [`LedgerError::NoMark`] or
+    /// [`LedgerError::NoCarryRate`]. On error the position stays open and nothing is
+    /// booked.
     pub fn close(
         &mut self,
         id: PositionId,
@@ -1370,6 +1438,230 @@ mod tests {
         assert!(close_to(t.financing, 4791.0 * -0.01 / 360.0 * 3.0));
         assert!(t.gross_pnl_quote > 0.0);
         assert_eq!(t.exit_reason, ExitReason::EndOfRun);
+    }
+
+    /// A labelled synthetic carry table for 2024-01-15 to 2024-01-19: test values, not
+    /// any venue's or any benchmark's. Thursday the 18th is absent.
+    const CARRY_CSV: &str = "\
+date,long_rate,short_rate,long_rate_date,short_rate_date,flag
+2024-01-15,0.05,-0.04,2024-01-15,2024-01-15,
+2024-01-16,0.05,-0.04,2024-01-16,2024-01-16,
+2024-01-17,0.06,-0.03,2024-01-16,2024-01-17,stale
+2024-01-19,0.07,-0.02,2024-01-19,2024-01-19,
+";
+
+    fn carry_ledger(symbol: &str, day_count: u32) -> Ledger {
+        let c = crate::cost::config::arithmetic_fixture().with_modelled_carry(
+            "example_spread_bet",
+            symbol,
+            CARRY_CSV,
+            day_count,
+        );
+        Ledger::new(&c, "example_spread_bet", STOP_FIRST, fx()).unwrap()
+    }
+
+    fn open_at(l: &mut Ledger, o: &OpenOrder, s: &JoinedSeries) -> PositionId {
+        let b0 = &s.bars()[0];
+        l.open(
+            o,
+            FillAt {
+                bar: b0,
+                point: PricePoint::Open,
+                ts: b0.ts_open_utc,
+                bar_index: 0,
+            },
+        )
+        .unwrap()
+    }
+
+    fn close_last(l: &mut Ledger, id: PositionId, s: &JoinedSeries) -> ClosedTrade {
+        let i = s.bars().len() - 1;
+        let last = &s.bars()[i];
+        l.close(
+            id,
+            FillAt {
+                bar: last,
+                point: PricePoint::Close,
+                ts: last.ts_close_utc(BarTimeframe::H1),
+                bar_index: i,
+            },
+            ExitReason::Signal,
+            s,
+        )
+        .unwrap()
+        .clone()
+    }
+
+    #[test]
+    fn a_modelled_carry_is_charged_at_each_rollover_beside_the_financing() {
+        // Long 2 USA500, Tuesday 2024-01-16 12:00Z to Thursday 12:00Z: rollovers Tue and
+        // Wed 22:00Z, marks 4809 and 4833, one day each (as the financing test above).
+        let s = spx_series(utc(2024, 1, 16, 12, 0), 49, 4800.0, 1.0);
+        let mut l = carry_ledger("USA500IDXUSD", 365);
+        let id = open_at(&mut l, &order(Direction::Long, 2.0), &s);
+        let trade = close_last(&mut l, id, &s);
+        let charges = l.financing_charges();
+        assert_eq!(charges.len(), 2);
+        let d = |day| NaiveDate::from_ymd_opt(2024, 1, day).unwrap();
+        // Financing 3.4% / 360; carry the row's long rate / 365.
+        for (c, mark, date, rate, flag) in [
+            (&charges[0], 4809.0, d(16), 0.05, ""),
+            (&charges[1], 4833.0, d(17), 0.06, "stale"),
+        ] {
+            let parts = c.components.as_ref().expect("the carry is modelled");
+            assert!(close_to(parts.financing, 2.0 * mark * 0.034 / 360.0));
+            assert!(close_to(parts.carry, 2.0 * mark * rate / 365.0));
+            assert!(close_to(c.charge, parts.financing + parts.carry));
+            assert_eq!(parts.carry_rate, rate);
+            assert_eq!(parts.carry_day_count, 365);
+            assert_eq!(parts.carry_row.date, date);
+            assert_eq!(c.local_date, date);
+            assert_eq!(parts.carry_row.flag, flag);
+        }
+        // The stale row keeps its rate dates.
+        assert_eq!(
+            charges[1]
+                .components
+                .as_ref()
+                .unwrap()
+                .carry_row
+                .long_rate_date,
+            d(16)
+        );
+        // The trade's financing is both parts of both rollovers, and net P&L pays it.
+        let carry = 2.0 * (4809.0 * 0.05 + 4833.0 * 0.06) / 365.0;
+        let financing = 2.0 * (4809.0 + 4833.0) * 0.034 / 360.0;
+        assert!(close_to(trade.financing, financing + carry));
+        assert_eq!(trade.financing_days, 2);
+        assert!(close_to(
+            trade.net_pnl_quote,
+            96.0 - 0.8 - 0.4 - financing - carry
+        ));
+        assert!(close_to(l.fills()[1].financing, trade.financing));
+        // The run metadata lists the table and the carry as estimated.
+        let m = l.metadata();
+        let table = &m.carry_tables["USA500IDXUSD"];
+        assert_eq!(
+            table.sha256,
+            crate::cost::config::sha256_hex(CARRY_CSV.as_bytes())
+        );
+        assert_eq!(
+            (table.rows, table.first_date, table.last_date),
+            (4, d(15), d(19))
+        );
+        assert_eq!(m.carry_tables.len(), 1);
+        assert!(
+            m.estimates
+                .iter()
+                .any(|e| e.instrument == "USA500IDXUSD" && e.component == CostComponent::Carry)
+        );
+        assert!(m.is_costed("USA500IDXUSD"));
+    }
+
+    #[test]
+    fn a_short_index_receives_a_negative_carry_rate_for_the_friday_weekend() {
+        // Short 1 USA500, Friday 2024-01-19 12:00Z to Monday: one rollover, Friday 22:00Z,
+        // three days, mark 4791 (mid falling 1 an hour). The 19th's short rate is -2%.
+        let s = spx_series(utc(2024, 1, 19, 12, 0), 75, 4800.0, -1.0);
+        let mut l = carry_ledger("USA500IDXUSD", 365);
+        let id = open_at(&mut l, &order(Direction::Short, 1.0), &s);
+        let trade = close_last(&mut l, id, &s);
+        let c = &l.financing_charges()[0];
+        assert_eq!(l.financing_charges().len(), 1);
+        assert_eq!(c.days, 3);
+        let parts = c.components.as_ref().unwrap();
+        assert_eq!(parts.carry_rate, -0.02);
+        // A credit: negative.
+        assert!(close_to(parts.carry, 4791.0 * -0.02 / 365.0 * 3.0));
+        assert!(parts.carry < 0.0);
+        assert!(close_to(parts.financing, 4791.0 * 0.034 / 360.0 * 3.0));
+        assert!(close_to(trade.financing, parts.financing + parts.carry));
+    }
+
+    #[test]
+    fn an_fx_long_pays_three_days_of_carry_on_wednesday() {
+        // Long 100,000 EURUSD, Wednesday 2024-01-17 12:00Z to Thursday 12:00Z: one
+        // rollover, Wednesday 22:00Z, three days (the FX triple day), mark 1.1000.
+        let bars = (0..24)
+            .map(|h| JoinedBar {
+                ts_open_utc: utc(2024, 1, 17, 12, 0) + Duration::hours(h),
+                bid: flat(10_999.75),
+                ask: flat(11_000.25),
+            })
+            .collect();
+        let s = JoinedSeries::new("EURUSD", BarTimeframe::H1, bars).unwrap();
+        let mut l = carry_ledger("EURUSD", 360);
+        let eurusd = OpenOrder {
+            instrument: "EURUSD".to_owned(),
+            ..order(Direction::Long, 100_000.0)
+        };
+        let id = open_at(&mut l, &eurusd, &s);
+        let trade = close_last(&mut l, id, &s);
+        let c = &l.financing_charges()[0];
+        assert_eq!((l.financing_charges().len(), c.days), (1, 3));
+        let parts = c.components.as_ref().unwrap();
+        assert!(close_to(c.mark_price, 1.1));
+        assert!(close_to(parts.carry, 100_000.0 * 1.1 * 0.06 / 360.0 * 3.0));
+        assert!(close_to(
+            parts.financing,
+            100_000.0 * 1.1 * 0.015 / 360.0 * 3.0
+        ));
+        assert!(close_to(trade.financing, parts.financing + parts.carry));
+        assert_eq!(trade.financing_days, 3);
+    }
+
+    #[test]
+    fn a_rollover_date_missing_from_the_table_fails_and_books_nothing() {
+        // Long 1 USA500 from Wednesday 2024-01-17 12:00Z: rollovers Wed (in the table) and
+        // Thu 18th (absent).
+        let s = spx_series(utc(2024, 1, 17, 12, 0), 49, 4800.0, 1.0);
+        let mut l = carry_ledger("USA500IDXUSD", 365);
+        let id = open_at(&mut l, &order(Direction::Long, 1.0), &s);
+        let err = l.accrue_financing(utc(2024, 1, 19, 0, 0), &s).unwrap_err();
+        assert_eq!(
+            err,
+            LedgerError::NoCarryRate {
+                instrument: "USA500IDXUSD".to_owned(),
+                local_date: NaiveDate::from_ymd_opt(2024, 1, 18).unwrap(),
+                at: utc(2024, 1, 18, 22, 0),
+            }
+        );
+        assert!(l.financing_charges().is_empty(), "never a silent zero");
+        assert_eq!(l.open_positions()[0].financing, 0.0);
+        // Closing across the gap fails the same way and leaves the position open.
+        let last = &s.bars()[48];
+        let close = l.close(
+            id,
+            FillAt {
+                bar: last,
+                point: PricePoint::Close,
+                ts: last.ts_close_utc(BarTimeframe::H1),
+                bar_index: 48,
+            },
+            ExitReason::Signal,
+            &s,
+        );
+        assert!(matches!(close, Err(LedgerError::NoCarryRate { .. })));
+        assert_eq!(l.open_positions().len(), 1);
+        assert!(l.closed_trades().is_empty());
+        // Up to the last rollover the table covers, it charges.
+        l.accrue_financing(utc(2024, 1, 18, 12, 0), &s).unwrap();
+        assert_eq!(l.financing_charges().len(), 1);
+    }
+
+    #[test]
+    fn an_excluded_carry_splits_nothing_and_lists_no_table() {
+        let s = spx_series(utc(2024, 1, 16, 12, 0), 49, 4800.0, 1.0);
+        let mut l = ledger(STOP_FIRST);
+        let id = open_at(&mut l, &order(Direction::Long, 2.0), &s);
+        close_last(&mut l, id, &s);
+        assert_eq!(l.financing_charges().len(), 2);
+        assert!(l.financing_charges().iter().all(|c| c.components.is_none()));
+        assert!(l.metadata().carry_tables.is_empty());
+        let json = serde_json::to_string(&l.financing_charges()[0]).unwrap();
+        assert!(!json.contains("components"), "{json}");
+        let json = serde_json::to_string(l.metadata()).unwrap();
+        assert!(!json.contains("carry_tables"), "{json}");
     }
 
     #[test]

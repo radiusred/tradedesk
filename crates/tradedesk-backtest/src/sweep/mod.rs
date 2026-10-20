@@ -562,7 +562,10 @@ impl<'a> Prepared<'a> {
                         source,
                     })?;
                 (
-                    CostConfig::from_toml_str(&text)?,
+                    CostConfig::from_toml_str_at(
+                        &text,
+                        path.parent().unwrap_or(std::path::Path::new("")),
+                    )?,
                     CostConfigRef {
                         source: path.display().to_string(),
                         blake3: blake3::hash(text.as_bytes()).to_hex().to_string(),
@@ -778,6 +781,7 @@ impl<'a> Prepared<'a> {
         match engine::run(strategy.as_mut(), data, &self.costs, &engine_config) {
             Ok(out) => {
                 let fills = out.ledger.fills();
+                let rollovers = out.ledger.financing_charges();
                 TrialOutcome::Ok {
                     engine: out.stats,
                     metrics: Box::new(out.metrics),
@@ -786,6 +790,10 @@ impl<'a> Prepared<'a> {
                         .iter()
                         .any(|f| f.cost_detail.is_some())
                         .then(|| fills.to_vec()),
+                    rollovers: rollovers
+                        .iter()
+                        .any(|c| c.components.is_some())
+                        .then(|| rollovers.to_vec()),
                 }
             }
             Err(e) => failed(FailureStage::Run, e.to_string()),

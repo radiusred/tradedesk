@@ -13,7 +13,9 @@
 //!
 //! The charge for one rollover is `|size| × mark × rate / day_count × days`. The mark is
 //! the configured side's quote price at the rollover instant, and `rate` is the long or
-//! short rate.
+//! short rate. A modelled carry ([`carry_charge`]) is charged at the same rollovers by the
+//! same formula, with the rate of its table's row for the rollover's local date and its
+//! own day count.
 
 use chrono::{
     DateTime, Datelike, Days, LocalResult, NaiveDate, NaiveDateTime, NaiveTime, TimeZone, Utc,
@@ -22,7 +24,7 @@ use chrono::{
 use chrono_tz::Tz;
 use serde::{Deserialize, Serialize};
 
-use super::config::{AssetClass, Financing, RolloverSpec, WeekendRules};
+use super::config::{AssetClass, CarryRow, Financing, RolloverSpec, WeekendRules};
 
 /// Long or short.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
@@ -171,6 +173,28 @@ pub fn rollover_charge(
         Direction::Short => financing.short_rate,
     };
     size.abs() * mark * rate / f64::from(financing.day_count) * f64::from(days)
+}
+
+/// The carry charged at one rollover from its table row, in quote currency: the long or
+/// short rate of `row` and `|size| × mark × rate / day_count × days`. Returns the rate
+/// used and the charge; positive is a charge to the trader, negative a credit.
+#[must_use]
+pub fn carry_charge(
+    row: &CarryRow,
+    day_count: u32,
+    direction: Direction,
+    size: f64,
+    mark: f64,
+    days: u32,
+) -> (f64, f64) {
+    let rate = match direction {
+        Direction::Long => row.long_rate,
+        Direction::Short => row.short_rate,
+    };
+    (
+        rate,
+        size.abs() * mark * rate / f64::from(day_count) * f64::from(days),
+    )
 }
 
 #[cfg(test)]

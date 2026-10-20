@@ -40,6 +40,8 @@ blake3             = "1"
 # The bar cache's Arrow IPC format.
 arrow              = "58"
 csv                = "1.4"
+# The sha256 a cost file pins its carry tables by.
+sha2               = "0.10"
 zstd               = "0.13"
 walkdir            = "2.5"
 tempfile           = "3"
