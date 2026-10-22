@@ -402,6 +402,23 @@ pub struct FinancingCharge {
     /// Charge, quote currency (negative is a credit): the financing and carry parts
     /// together.
     pub charge: f64,
+    /// The position's direction. The ledger always sets it; `None` only in a record
+    /// written before task #205.
+    #[serde(default)]
+    pub direction: Option<Direction>,
+    /// The position's size, instrument units. The ledger always sets it; `None` only in
+    /// a record written before task #205.
+    #[serde(default)]
+    pub size: Option<f64>,
+    /// The quote → account rate used, from the run's [`AccountFx`] (the same rate as
+    /// [`ClosedTrade::fx_rate`]). The ledger always sets it; `None` only in a record
+    /// written before task #205.
+    #[serde(default)]
+    pub fx_rate: Option<f64>,
+    /// `charge × fx_rate`, account currency (negative is a credit). The ledger always
+    /// sets it; `None` only in a record written before task #205.
+    #[serde(default)]
+    pub charge_account: Option<f64>,
     /// The charge per component, with the carry table row used. `None`, and absent from
     /// the JSON, when the instrument's carry is excluded (the charge is then all
     /// financing).
@@ -425,6 +442,15 @@ pub struct ChargeComponents {
     pub carry_day_count: u32,
     /// The carry table row for the rollover's local date.
     pub carry_row: CarryRow,
+    /// The carry table's `table` path as configured (as in
+    /// [`RunMetadata::carry_tables`]). The ledger always sets it; `None` only in a record
+    /// written before task #205.
+    #[serde(default)]
+    pub carry_table_path: Option<String>,
+    /// The carry table file's sha256, lower-case hex, as checked at load. The ledger
+    /// always sets it; `None` only in a record written before task #205.
+    #[serde(default)]
+    pub carry_table_sha256: Option<String>,
 }
 
 /// A position on the book.
@@ -873,6 +899,10 @@ impl Ledger {
     ) -> Result<Vec<FinancingCharge>, LedgerError> {
         let p = &self.open[i];
         let model = self.model(&p.instrument)?;
+        let fx_rate = self
+            .metadata
+            .account_fx
+            .rate(&model.spec().quote_currency)?;
         let rollovers =
             self.calendar
                 .rollovers_between(model.spec().asset_class, p.financed_through, now);
@@ -909,9 +939,18 @@ impl Ledger {
                             carry_rate: rate,
                             carry_day_count: day_count,
                             carry_row: row.clone(),
+                            carry_table_path: Some(
+                                carry
+                                    .table
+                                    .as_ref()
+                                    .map(|path| path.display().to_string())
+                                    .unwrap_or_default(),
+                            ),
+                            carry_table_sha256: Some(table.sha256().to_owned()),
                         })
                     }
                 };
+                let charge = financing + components.as_ref().map_or(0.0, |c| c.carry);
                 Ok(FinancingCharge {
                     position: p.id,
                     instrument: p.instrument.clone(),
@@ -920,7 +959,11 @@ impl Ledger {
                     days: r.days,
                     mark_bar_open: bar.ts_open_utc,
                     mark_price: mark,
-                    charge: financing + components.as_ref().map_or(0.0, |c| c.carry),
+                    charge,
+                    direction: Some(p.direction),
+                    size: Some(p.size),
+                    fx_rate: Some(fx_rate),
+                    charge_account: Some(charge * fx_rate),
                     components,
                 })
             })
@@ -1662,6 +1705,99 @@ date,long_rate,short_rate,long_rate_date,short_rate_date,flag
         assert!(!json.contains("components"), "{json}");
         let json = serde_json::to_string(l.metadata()).unwrap();
         assert!(!json.contains("carry_tables"), "{json}");
+    }
+
+    #[test]
+    fn each_rollover_records_the_side_size_fx_rate_and_account_charge() {
+        let d = |day| NaiveDate::from_ymd_opt(2024, 1, day).unwrap();
+        let sha256 = crate::cost::config::sha256_hex(CARRY_CSV.as_bytes());
+        // Modelled carry: long 2 USA500 Tuesday to Thursday (two rollovers), and short 1.5
+        // Friday to Monday (one triple rollover). USD → GBP is 0.8 in the fixture.
+        for (s, direction, size, dates) in [
+            (
+                spx_series(utc(2024, 1, 16, 12, 0), 49, 4800.0, 1.0),
+                Direction::Long,
+                2.0,
+                vec![d(16), d(17)],
+            ),
+            (
+                spx_series(utc(2024, 1, 19, 12, 0), 75, 4800.0, -1.0),
+                Direction::Short,
+                1.5,
+                vec![d(19)],
+            ),
+        ] {
+            let mut l = carry_ledger("USA500IDXUSD", 365);
+            let id = open_at(&mut l, &order(direction, size), &s);
+            let trade = close_last(&mut l, id, &s);
+            let charges = l.financing_charges();
+            assert_eq!(
+                charges.iter().map(|c| c.local_date).collect::<Vec<_>>(),
+                dates
+            );
+            for c in charges {
+                assert_eq!(c.direction, Some(direction));
+                assert_eq!(c.size, Some(size));
+                assert_eq!(c.fx_rate, Some(0.8));
+                assert_eq!(c.fx_rate, Some(trade.fx_rate));
+                assert_eq!(c.charge_account, Some(c.charge * 0.8));
+                assert!(c.charge != 0.0);
+                let parts = c.components.as_ref().unwrap();
+                assert_eq!(parts.carry_table_path.as_deref(), Some("carry.csv"));
+                assert_eq!(parts.carry_table_sha256.as_deref(), Some(sha256.as_str()));
+                assert_eq!(
+                    parts.carry_table_path.as_deref(),
+                    Some(l.metadata().carry_tables["USA500IDXUSD"].path.as_str())
+                );
+            }
+            // The account-currency charges sum to the trade's financing in account
+            // currency.
+            let account: f64 = charges.iter().map(|c| c.charge_account.unwrap()).sum();
+            assert!(close_to(account, trade.financing * trade.fx_rate));
+        }
+        // Excluded carry: the same four fields, no components.
+        let s = spx_series(utc(2024, 1, 16, 12, 0), 49, 4800.0, 1.0);
+        let mut l = ledger(STOP_FIRST);
+        let id = open_at(&mut l, &order(Direction::Long, 2.0), &s);
+        close_last(&mut l, id, &s);
+        for c in l.financing_charges() {
+            assert!(c.components.is_none());
+            assert_eq!(
+                (c.direction, c.size, c.fx_rate),
+                (Some(Direction::Long), Some(2.0), Some(0.8))
+            );
+            assert_eq!(c.charge_account, Some(c.charge * 0.8));
+        }
+        let json = serde_json::to_value(&l.financing_charges()[0]).unwrap();
+        for (key, value) in [
+            ("direction", serde_json::json!("long")),
+            ("size", serde_json::json!(2.0)),
+            ("fx_rate", serde_json::json!(0.8)),
+        ] {
+            assert_eq!(json[key], value, "{key}");
+        }
+        assert!(json["charge_account"].is_f64());
+    }
+
+    #[test]
+    fn a_rollover_record_written_before_the_record_fields_reads_back() {
+        // A charge as task #203 wrote it: no side, size, FX rate, account charge or table.
+        let json = r#"{"position":0,"instrument":"X","at_utc":"2024-01-16T22:00:00Z",
+            "local_date":"2024-01-16","days":1,"mark_bar_open":"2024-01-16T21:00:00Z",
+            "mark_price":100.0,"charge":0.5,"components":{"financing":0.3,"carry":0.2,
+            "carry_rate":0.05,"carry_day_count":365,"carry_row":{"date":"2024-01-16",
+            "long_rate":0.05,"short_rate":-0.04,"long_rate_date":"2024-01-16",
+            "short_rate_date":"2024-01-16","flag":""}}}"#;
+        let c: FinancingCharge = serde_json::from_str(json).unwrap();
+        assert_eq!(
+            (c.direction, c.size, c.fx_rate, c.charge_account),
+            (None, None, None, None)
+        );
+        let parts = c.components.unwrap();
+        assert_eq!(
+            (parts.carry_table_path, parts.carry_table_sha256),
+            (None, None)
+        );
     }
 
     #[test]

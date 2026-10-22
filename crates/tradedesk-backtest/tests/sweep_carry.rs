@@ -185,6 +185,17 @@ fn every_rollover_charge_recomputes_from_the_record_and_the_cost_file() {
         assert_eq!(parts.carry, charge(carry_rate, 365));
         assert_eq!(parts.financing, charge(fin_rate, cost.financing.day_count));
         assert_eq!(r.charge, parts.financing + parts.carry);
+        // The position, the conversion and the table, on the record itself (#205).
+        assert_eq!(r.direction, Some(trade.direction));
+        assert_eq!(r.size, Some(trade.size));
+        assert_eq!(r.fx_rate, Some(0.8));
+        assert_eq!(r.fx_rate, Some(trade.fx_rate));
+        assert_eq!(r.charge_account, Some(r.charge * 0.8));
+        assert_eq!(parts.carry_table_path.as_deref(), Some(TABLE));
+        assert_eq!(
+            parts.carry_table_sha256.as_deref(),
+            Some(sha256_hex(table.as_bytes()).as_str())
+        );
     }
     assert!(stale, "no rollover used a stale row");
     // Each trade's financing is the sum of its rollovers' charges.
@@ -248,6 +259,8 @@ fn a_sweep_with_every_carry_excluded_writes_none_of_the_new_keys() {
         "\"carry_tables\"",
         "\"components\"",
         "\"carry_row\"",
+        "\"charge_account\"",
+        "\"carry_table_sha256\"",
     ] {
         assert!(!text.contains(key), "{key} in a builtin sweep's registry");
     }
