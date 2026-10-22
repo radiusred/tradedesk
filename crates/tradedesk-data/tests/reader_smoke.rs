@@ -1,4 +1,5 @@
-//! Plan 02-01 Task 4 — CACHE-01 / CACHE-05 reader smoke tests.
+//! Plan 02-01 Task 4 — CACHE-01 / CACHE-05 reader smoke tests, plus the
+//! timestamp-only read path that gap detection uses (M33-R3).
 //!
 //! Exercises the `tradedesk_data::Reader` contract end-to-end against a synthetic
 //! `.csv.zst` fixture cache. Uses ONLY the public re-export surface of
@@ -9,7 +10,7 @@ mod fixtures;
 
 use chrono::{NaiveDate, TimeZone, Utc};
 use tradedesk_data::dukascopy::{DukascopyError, DukascopyReader};
-use tradedesk_data::{Reader, Side};
+use tradedesk_data::{GapDetector, GapReason, Reader, Side};
 
 use crate::fixtures::{SyntheticCache, one_minute_csv_body, whole_day_range};
 
@@ -152,4 +153,156 @@ fn enumerate_days_sorted_ascending() {
         .enumerate_days("EURUSD", Side::Bid, range)
         .expect("enumerate ok");
     assert_eq!(days, vec![d3, d1, d2]);
+}
+
+// ---- Timestamp-only read path (M33-R3) ------------------------------------
+
+/// The same CSV rows with every OHLC field set to `NOT_A_PRICE` and every
+/// volume to `NOT_A_VOLUME`. The timestamp column is unchanged.
+fn unparseable_fields(body: &str) -> String {
+    let mut lines = body.lines();
+    let mut out = format!("{}\n", lines.next().expect("header"));
+    for line in lines {
+        let ts = line.split(',').next().expect("timestamp column");
+        out.push_str(&format!(
+            "{ts},NOT_A_PRICE,NOT_A_PRICE,NOT_A_PRICE,NOT_A_PRICE,NOT_A_VOLUME\n"
+        ));
+    }
+    out
+}
+
+/// A synthetic open-hours day (Monday 2024-01-08) with the minutes 10:00 to
+/// 10:02 removed, so the manifest has intra-day gaps to compare.
+fn monday_body_with_hole() -> (NaiveDate, String) {
+    let date = NaiveDate::from_ymd_opt(2024, 1, 8).unwrap();
+    let start = Utc.from_utc_datetime(&date.and_hms_opt(0, 0, 0).unwrap());
+    let hole = ["2024-01-08 10:00", "2024-01-08 10:01", "2024-01-08 10:02"];
+    let mut body = String::new();
+    for line in one_minute_csv_body(start, 1440).lines() {
+        if !hole.iter().any(|h| line.starts_with(h)) {
+            body.push_str(line);
+            body.push('\n');
+        }
+    }
+    (date, body)
+}
+
+#[test]
+fn timestamps_skip_unparseable_price_and_volume() {
+    let cache = SyntheticCache::new();
+    let date = NaiveDate::from_ymd_opt(2024, 6, 15).unwrap();
+    let start = Utc.from_utc_datetime(&date.and_hms_opt(0, 0, 0).unwrap());
+    let body = unparseable_fields(&one_minute_csv_body(start, 1440));
+    cache.write_day("EURUSD", date, Side::Bid, &body);
+
+    let reader = DukascopyReader::new(cache.root.path());
+    let range = whole_day_range(date);
+
+    // The fixture really is unparseable as bars.
+    let first_bar = reader
+        .read_1m_bars("EURUSD", Side::Bid, range)
+        .expect("read_1m_bars opens")
+        .next();
+    assert!(
+        matches!(first_bar, Some(Err(DukascopyError::Csv(_)))),
+        "bars path must reject NOT_A_PRICE; got {first_bar:?}",
+    );
+
+    let ts: Vec<_> = reader
+        .read_1m_timestamps("EURUSD", Side::Bid, range)
+        .expect("read_1m_timestamps opens")
+        .collect::<Result<Vec<_>, _>>()
+        .expect("timestamps parse without the price fields");
+    let expected: Vec<_> = (0..1440)
+        .map(|i| start + chrono::Duration::minutes(i))
+        .collect();
+    assert_eq!(ts, expected, "all 1440 minute timestamps, ascending");
+}
+
+#[test]
+fn timestamps_zero_byte_file_is_corrupt() {
+    let cache = SyntheticCache::new();
+    let date = NaiveDate::from_ymd_opt(2024, 6, 15).unwrap();
+    cache.write_zero_byte_day("EURUSD", date, Side::Bid);
+
+    let reader = DukascopyReader::new(cache.root.path());
+    let first = reader
+        .read_1m_timestamps("EURUSD", Side::Bid, whole_day_range(date))
+        .expect("read_1m_timestamps opens")
+        .next();
+    assert!(
+        matches!(first, Some(Err(DukascopyError::CorruptSourceFile { .. }))),
+        "zero-byte file must yield CorruptSourceFile; got {first:?}",
+    );
+}
+
+#[test]
+fn gap_manifest_ignores_price_and_volume_fields() {
+    let (date, numeric) = monday_body_with_hole();
+    let numeric_cache = SyntheticCache::new();
+    numeric_cache.write_day("AAA", date, Side::Bid, &numeric);
+    let text_cache = SyntheticCache::new();
+    text_cache.write_day("AAA", date, Side::Bid, &unparseable_fields(&numeric));
+
+    let range = whole_day_range(date);
+    let from_numeric = GapDetector::detect(
+        &DukascopyReader::new(numeric_cache.root.path()),
+        "AAA",
+        Side::Bid,
+        range,
+    )
+    .expect("detect numeric");
+    let from_text = GapDetector::detect(
+        &DukascopyReader::new(text_cache.root.path()),
+        "AAA",
+        Side::Bid,
+        range,
+    )
+    .expect("detect unparseable");
+
+    let hole_start = Utc.from_utc_datetime(&date.and_hms_opt(10, 0, 0).unwrap());
+    let expected: Vec<_> = (0..3)
+        .map(|i| hole_start + chrono::Duration::minutes(i))
+        .collect();
+    let starts: Vec<_> = from_numeric.gaps.iter().map(|g| g.start_utc).collect();
+    assert_eq!(starts, expected, "the three removed minutes, nothing else");
+    assert!(
+        from_numeric
+            .gaps
+            .iter()
+            .all(|g| matches!(g.reason, GapReason::IntraDayGap { .. })),
+        "intra-day gaps only: {:?}",
+        from_numeric.gaps,
+    );
+    assert_eq!(
+        from_text, from_numeric,
+        "changing only OHLC and volume must not change the manifest",
+    );
+}
+
+#[test]
+fn gap_manifest_bad_timestamp_is_corrupt() {
+    let (date, numeric) = monday_body_with_hole();
+    let body = unparseable_fields(&numeric).replacen("2024-01-08 12:00:00+00:00", "NOT_A_TIME", 1);
+    let cache = SyntheticCache::new();
+    cache.write_day("AAA", date, Side::Bid, &body);
+
+    let manifest = GapDetector::detect(
+        &DukascopyReader::new(cache.root.path()),
+        "AAA",
+        Side::Bid,
+        whole_day_range(date),
+    )
+    .expect("detect");
+    assert_eq!(
+        manifest.gaps.len(),
+        1,
+        "one whole-day span: {:?}",
+        manifest.gaps
+    );
+    assert!(
+        matches!(manifest.gaps[0].reason, GapReason::CorruptSourceFile { .. }),
+        "a bad timestamp still makes the day corrupt: {:?}",
+        manifest.gaps[0],
+    );
 }
