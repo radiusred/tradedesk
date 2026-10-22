@@ -46,6 +46,54 @@ struct RawRow {
     volume: f64,
 }
 
+/// Timestamp-only view of the same CSV row, for the gap detector. serde
+/// ignores the other columns, so OHLC and volume are never parsed.
+#[derive(serde::Deserialize)]
+struct TsRow {
+    timestamp: String,
+}
+
+/// A CSV row type that the shared day decoder can yield from.
+trait DayRow: serde::de::DeserializeOwned + Send + 'static {
+    type Item: Send + 'static;
+    fn timestamp(&self) -> &str;
+    fn into_item(self, ts_open_utc: DateTime<Utc>) -> Self::Item;
+}
+
+impl DayRow for RawRow {
+    type Item = RawBar;
+
+    fn timestamp(&self) -> &str {
+        &self.timestamp
+    }
+
+    fn into_item(self, ts_open_utc: DateTime<Utc>) -> RawBar {
+        RawBar {
+            ts_open_utc,
+            ts_close_utc: ts_open_utc + Duration::seconds(60),
+            open: self.open,
+            high: self.high,
+            low: self.low,
+            close: self.close,
+            // Boundary rename — CSV `volume` becomes `tick_volume: f64`.
+            // A1 invariant: never propagated as `volume`.
+            tick_volume: self.volume,
+        }
+    }
+}
+
+impl DayRow for TsRow {
+    type Item = DateTime<Utc>;
+
+    fn timestamp(&self) -> &str {
+        &self.timestamp
+    }
+
+    fn into_item(self, ts_open_utc: DateTime<Utc>) -> DateTime<Utc> {
+        ts_open_utc
+    }
+}
+
 /// Concrete reader for `<cache_root>/<SYMBOL>/<YYYY>/<MM>/<DD>_<side>.csv.zst`.
 ///
 /// Cheap to construct (just stores the root). Does NOT validate that the path
@@ -115,7 +163,22 @@ impl Reader for DukascopyReader {
         let symbol_arc: std::sync::Arc<str> = std::sync::Arc::from(symbol);
         let iter = days.into_iter().flat_map(move |date| {
             let symbol_arc = std::sync::Arc::clone(&symbol_arc);
-            day_bar_iter(self, symbol_arc, side, date, range)
+            day_row_iter::<RawRow>(self, symbol_arc, side, date, range)
+        });
+        Ok(Box::new(iter))
+    }
+
+    fn read_1m_timestamps<'a>(
+        &'a self,
+        symbol: &str,
+        side: Side,
+        range: ClosedRangeUtc,
+    ) -> Result<crate::reader::MinuteTsIter<'a, Self::Error>, Self::Error> {
+        let days = self.enumerate_days(symbol, side, range)?;
+        let symbol_arc: std::sync::Arc<str> = std::sync::Arc::from(symbol);
+        let iter = days.into_iter().flat_map(move |date| {
+            let symbol_arc = std::sync::Arc::clone(&symbol_arc);
+            day_row_iter::<TsRow>(self, symbol_arc, side, date, range)
         });
         Ok(Box::new(iter))
     }
@@ -205,7 +268,8 @@ impl Reader for DukascopyReader {
     }
 }
 
-/// Yield the (filtered) `RawBar` stream for one day. Wrapped in a function so
+/// Yield the (filtered) row stream for one day: `RawBar`s for `RawRow`,
+/// timestamps for `TsRow`. Wrapped in a function so
 /// `read_1m_bars`'s `flat_map` closure stays small and the per-day error path
 /// surfaces cleanly as a single-element `Err` iterator.
 ///
@@ -215,13 +279,13 @@ impl Reader for DukascopyReader {
 /// closure's call-borrow, which the borrow checker rejects (the iterator
 /// outlives the closure body).
 #[allow(clippy::needless_pass_by_value)]
-fn day_bar_iter<'a>(
+fn day_row_iter<'a, R: DayRow>(
     reader: &'a DukascopyReader,
     symbol: std::sync::Arc<str>,
     side: Side,
     date: NaiveDate,
     range: ClosedRangeUtc,
-) -> Box<dyn Iterator<Item = Result<RawBar, DukascopyError>> + Send + 'a> {
+) -> Box<dyn Iterator<Item = Result<R::Item, DukascopyError>> + Send + 'a> {
     let day_bytes = match reader.read_day_bytes(&symbol, side, date) {
         Ok(Some(db)) => db,
         Ok(None) => {
@@ -265,7 +329,7 @@ fn day_bar_iter<'a>(
 
     let path_for_errors = day_bytes.path;
     let iter = csv_reader
-        .into_deserialize::<RawRow>()
+        .into_deserialize::<R>()
         .enumerate()
         .filter_map(move |(i, row_result)| {
             // The CSV header is consumed by `has_headers(true)`; data rows are
@@ -276,11 +340,12 @@ fn day_bar_iter<'a>(
                 Ok(r) => r,
                 Err(e) => return Some(Err(DukascopyError::Csv(e))),
             };
-            let parsed_ts = match DateTime::parse_from_str(&row.timestamp, "%Y-%m-%d %H:%M:%S%:z") {
+            let parsed_ts = match DateTime::parse_from_str(row.timestamp(), "%Y-%m-%d %H:%M:%S%:z")
+            {
                 Ok(dt) => dt.with_timezone(&Utc),
                 Err(e) => {
                     return Some(Err(DukascopyError::TimestampParse {
-                        raw: row.timestamp,
+                        raw: row.timestamp().to_string(),
                         source: e,
                     }));
                 }
@@ -293,18 +358,7 @@ fn day_bar_iter<'a>(
                 return None;
             }
 
-            let bar = RawBar {
-                ts_open_utc: parsed_ts,
-                ts_close_utc: parsed_ts + Duration::seconds(60),
-                open: row.open,
-                high: row.high,
-                low: row.low,
-                close: row.close,
-                // Boundary rename — CSV `volume` becomes `tick_volume: f64`.
-                // A1 invariant: never propagated as `volume`.
-                tick_volume: row.volume,
-            };
-            Some(Ok(bar))
+            Some(Ok(row.into_item(parsed_ts)))
         });
     Box::new(iter)
 }

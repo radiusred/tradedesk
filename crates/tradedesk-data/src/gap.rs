@@ -15,8 +15,9 @@
 //!    would be redundant.
 //! 2. **Zero-byte / corrupt source file** — same range,
 //!    `reason: CorruptSourceFile { date, detail }`. v1 detects corruption
-//!    indirectly: [`fingerprint_day`] returned `Ok(Some)` but [`read_1m_bars`]
-//!    immediately yielded `Err`. A more rigorous "explicit zero-byte sentinel"
+//!    indirectly: [`fingerprint_day`] returned `Ok(Some)` but
+//!    [`read_1m_timestamps`] yielded `Err` (zero bytes, bad zstd, bad CSV
+//!    structure or a bad timestamp; price and volume fields are not read). A more rigorous "explicit zero-byte sentinel"
 //!    path is left for Phase 7.
 //! 3. **Intra-day hole during open hours** — every missing minute whose UTC
 //!    timestamp satisfies [`Calendar::is_open_at`] becomes a single
@@ -52,7 +53,7 @@
 //! contract.
 //!
 //! [`fingerprint_day`]: crate::reader::Reader::fingerprint_day
-//! [`read_1m_bars`]: crate::reader::Reader::read_1m_bars
+//! [`read_1m_timestamps`]: crate::reader::Reader::read_1m_timestamps
 //! [`Calendar::is_open_at`]: crate::calendar::Calendar::is_open_at
 
 use chrono::{DateTime, Duration, NaiveDate, Utc};
@@ -176,7 +177,8 @@ impl GapDetector {
     /// 3. Else: call `reader.fingerprint_day(symbol, side, date)`:
     ///    - `Ok(None)` → emit a single `MissingSourceFile` span; **do not
     ///      also emit per-minute intra-day gaps for this date** (D2-17).
-    ///    - `Ok(Some(_))` → call `reader.read_1m_bars(...)`. If the iterator
+    ///    - `Ok(Some(_))` → call `reader.read_1m_timestamps(...)` (timestamps
+    ///      only: price and volume fields are not parsed). If the iterator
     ///      yields any `Err`, emit a `CorruptSourceFile` span and skip
     ///      intra-day detection for the day (Option A in PLAN — explicit
     ///      zero-byte sentinel is a Phase 7 TODO).
@@ -221,7 +223,7 @@ impl GapDetector {
             // sentinel path is a future refinement.
             // TODO(Phase 7): consider explicit zero-byte sentinel.
             let day_range = whole_day_range(date);
-            let iter = match reader.read_1m_bars(symbol, side, day_range) {
+            let iter = match reader.read_1m_timestamps(symbol, side, day_range) {
                 Ok(it) => it,
                 Err(e) => {
                     // Reader couldn't even start the stream — treat as
@@ -235,10 +237,10 @@ impl GapDetector {
             let mut present: std::collections::BTreeSet<DateTime<Utc>> =
                 std::collections::BTreeSet::new();
             let mut corrupt_detail: Option<String> = None;
-            for bar_result in iter {
-                match bar_result {
-                    Ok(bar) => {
-                        present.insert(bar.ts_open_utc);
+            for ts_result in iter {
+                match ts_result {
+                    Ok(ts_open_utc) => {
+                        present.insert(ts_open_utc);
                     }
                     Err(e) => {
                         // First iterator-error becomes the CorruptSourceFile

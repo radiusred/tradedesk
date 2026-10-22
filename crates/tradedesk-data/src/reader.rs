@@ -287,6 +287,10 @@ impl JsonSchema for Blake3Hex {
 /// on every implementation.
 pub type RawBarIter<'a, E> = Box<dyn Iterator<Item = Result<RawBar, E>> + Send + 'a>;
 
+/// Iterator-of-`Result<DateTime<Utc>, E>` returned by
+/// [`Reader::read_1m_timestamps`]: the `ts_open_utc` of each 1-minute row.
+pub type MinuteTsIter<'a, E> = Box<dyn Iterator<Item = Result<DateTime<Utc>, E>> + Send + 'a>;
+
 /// Pluggable data-source trait. The aggregator, gap detector, and cache all
 /// consume `&dyn Reader` so a future equity/crypto reader plugs in without
 /// changing `miner-core`.
@@ -325,6 +329,27 @@ pub trait Reader: Send + Sync {
         side: Side,
         range: ClosedRangeUtc,
     ) -> Result<RawBarIter<'a, Self::Error>, Self::Error>;
+
+    /// Stream only the `ts_open_utc` of each 1-minute row for `(symbol, side)`
+    /// in `range`, in ascending UTC order. Same range, ordering and error
+    /// contract as [`Reader::read_1m_bars`].
+    ///
+    /// Gap detection uses this path: whether a minute is present depends on its
+    /// timestamp only, never on whether its price or volume fields parse.
+    /// The default body maps [`Reader::read_1m_bars`], so it still parses the
+    /// bar fields. A reader that can skip them should override it.
+    ///
+    /// # Errors
+    /// As [`Reader::read_1m_bars`].
+    fn read_1m_timestamps<'a>(
+        &'a self,
+        symbol: &str,
+        side: Side,
+        range: ClosedRangeUtc,
+    ) -> Result<MinuteTsIter<'a, Self::Error>, Self::Error> {
+        let bars = self.read_1m_bars(symbol, side, range)?;
+        Ok(Box::new(bars.map(|bar| bar.map(|b| b.ts_open_utc))))
+    }
 
     /// blake3 hex fingerprint over the FULL `.csv.zst` bytes of one day. `None`
     /// when the day file is absent (D2-05). Used by the cache invalidator to
