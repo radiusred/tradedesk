@@ -360,6 +360,12 @@ rates are separate, and a positive rate is a charge.
 
 With the carry excluded, the charge uses the configured annual rate alone.
 
+Each charge is a `FinancingCharge`. It records the position's `direction`
+and `size`, the `charge` in quote currency, the `fx_rate` (quote to account,
+from the run's `account_fx`, the same rate as the trade's) and
+`charge_account = charge x fx_rate` in account currency. A record written
+before these fields reads back with `None` for each.
+
 ### Carry
 
 A modelled carry is a dated rate table that the ledger charges at each
@@ -389,8 +395,9 @@ carry = { placeholder = false, estimated = true, table = "carry/eurusd.csv", sha
   stops the run with `LedgerError::NoCarryRate`: a missing rate is never a
   zero.
 - **Records.** Each `FinancingCharge` then has `components`: the
-  `financing` and `carry` parts, the `carry_rate` and `carry_day_count` used
-  and the whole `carry_row`; `charge` is the sum of the two parts.
+  `financing` and `carry` parts, the `carry_rate` and `carry_day_count` used,
+  the whole `carry_row`, and the table's configured `carry_table_path` and
+  its `carry_table_sha256`; `charge` is the sum of the two parts.
   `RunMetadata.carry_tables` lists, per instrument, the table's configured
   `path`, its `sha256`, `day_count`, `rows`, `first_date` and `last_date`.
   The carry is listed in `RunMetadata.estimates`, and the instrument stays
@@ -987,7 +994,8 @@ records are:
   only when at least one fill has the volatility slippage or spread excess detail
   (task #199); otherwise it is absent and reads back with `None`. `rollovers` is
   every `FinancingCharge` in booking order, written only when a charge has
-  `components` (a modelled carry, task #203); otherwise it is absent and reads
+  `components` (a modelled carry, task #203), each with its side, size, FX rate
+  and account-currency charge (task #205); otherwise it is absent and reads
   back with `None`. The report and the walk-forward read neither;
 - `{status: "failed", stage: "config" | "run" | "panic", error}`.
 
