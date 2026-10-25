@@ -52,7 +52,7 @@ its strategy implementations, their goldens and their parity harness.
 | `MinuteCosts` / `MinuteLookback` | One instrument's per-minute ranges and ask − bid over the window and a look-back before it, which the volatility slippage and the spread excess read (`InstrumentSeries::minute_costs`). |
 | `CostConfig` | The validated cost configuration. `builtin()` loads the checked-in `config/costs.toml`, a labelled example with illustrative figures, and `from_path` / `from_toml_str` load a real file. Per venue, `placeholders` lists every unverified component, `exclusions` every excluded one, `estimates` every estimated one, `minimum_spreads` the instruments whose spread is a published minimum, `costed` which instruments can be reported as costed, and `cost_models` each instrument's slippage model and spread excess. |
 | `InstrumentSpec` | Venue-independent units: `asset_class`, `quote_currency`, `raw_scale` (raw → quote), `pip_size`, and `divergence_tolerance`. |
-| `Venue` / `VenueInstrumentCost` | A venue's rollover clock, weekend rules and per-instrument `price_side`, `Spread`, `Slippage` (`SlippageModel` fixed or volatility), `Commission`, `Financing`, `Carry` and an optional `SpreadExcess`. Each component (`CostComponent`) has its own `source` and a `ProvenanceStatus`: verified, placeholder, excluded or estimated (`provenance()`, `is_costed()`). |
+| `Venue` / `VenueInstrumentCost` | A venue's rollover clock, weekend rules and per-instrument `price_side`, `Spread`, `Slippage` (`SlippageModel` fixed or volatility), `Commission`, `Financing`, `Carry`, an optional `SpreadExcess` and an optional `Dividend` (its ex-date `DividendTable` of `DividendRow`s). Each component (`CostComponent`) has its own `source` and a `ProvenanceStatus`: verified, placeholder, excluded or estimated (`provenance()`, `is_costed()`). |
 | `Spread` / `SpreadBasis` / `SpreadWindow` | The venue spread: a flat `pips`, or a time-of-day `schedule` of local windows in `tz` (`pips_at(instant)`), with a `basis` of `average` or `minimum`. |
 | `Exclusion` / `ExclusionEffect` | An excluded component in a run's metadata, with its reason and whether results stay costed with the cost `omitted` or are `uncosted`. |
 | `FillModel` | One venue × instrument. `quote(bar, PricePoint, at, TradeSide, size)` prices a market fill at instant `at` as a `FillQuote`, and `quote_as(…, FillKind)` a fill of any kind (`market`, `stop`, `limit`). `attach_minutes` gives it the `MinuteCosts` the volatility models read; the quote's `FillCostDetail` records what they used. `reference(bar)` gives the configured side's OHLC, and `mark_close(bar)` gives the mark. |
@@ -140,6 +140,8 @@ financing = { long_rate = 0.02, short_rate = 0.02, day_count = 360, placeholder 
 carry = { placeholder = false, excluded = true, reason = "...", source = "..." }
 # or modelled from a dated rate table (see "Carry" below):
 # carry = { placeholder = false, estimated = true, table = "carry/eurusd.csv", sha256 = "...", day_count = 365, source = "..." }
+# Optional: absent charges nothing. Charged from an ex-date table (see "Dividend" below):
+# dividend = { placeholder = false, estimated = true, table = "dividend/x.csv", sha256 = "...", tz = "America/New_York", time = "16:00", weekdays_before = 1, source = "..." }
 
 [venues.example_spread_bet.instruments.USA500IDXUSD.spread]   # a spread by time of day
 pips = 1.0                      # outside every window
@@ -177,9 +179,11 @@ with a source.
   - An excluded **spread** or **commission** makes the venue × instrument
     **uncosted**. It still runs, at no spread or commission, so it can be used
     for signal work, but it is never reported as costed.
-  - Excluded **slippage**, **spread excess**, **financing** or **carry** is
-    **omitted**. The result stays costed and lists what it leaves out.
-- **estimated** (`estimated = true`, on `slippage`, `spread_excess` and `carry` only):
+  - Excluded **slippage**, **spread excess**, **financing**, **carry** or
+    **dividend** is **omitted**. The result stays costed and lists what it
+    leaves out.
+- **estimated** (`estimated = true`, on `slippage`, `spread_excess`, `carry`
+  and `dividend` only):
   the figures are derived from data, not published. The component is charged
   and costed, and `CostConfig::estimates` and `RunMetadata.estimates` list it
   with its `source`, which names the inputs of the estimate.
@@ -405,6 +409,72 @@ carry = { placeholder = false, estimated = true, table = "carry/eurusd.csv", sha
   (`outcome.rollovers`, in booking order) when one has `components`, so that
   every charge can be recomputed. With every carry excluded none of these
   keys is written.
+
+### Dividend
+
+The optional `dividend` component charges a position held over an
+ex-dividend date: a long is credited, a short is debited. A venue ×
+instrument without it charges nothing, and every record and output is as
+before. It has the four provenance states:
+
+```toml
+# Estimated: charged from an ex-date table, at the instant tz, time and weekdays_before set.
+dividend = { placeholder = false, estimated = true, table = "dividend/x.csv", sha256 = "<64 hex digits>", tz = "America/New_York", time = "16:00", weekdays_before = 1, source = "the inputs of the table" }
+# Verified or placeholder: with the same five table fields it charges from the table;
+# with none of them it is a stated zero and charges nothing.
+dividend = { placeholder = false, source = "where the venue states that no adjustment applies" }
+# Excluded: charges nothing, takes no table field; results stay costed and list it.
+dividend = { placeholder = false, excluded = true, reason = "...", source = "..." }
+```
+
+- **The table** is a CSV file with the header
+  `date,points,long_share,short_share,bound`, one row per ex-date, ISO
+  dates, ascending. `points` is the dividend in index points (`pip_size` in
+  quote price, as everywhere in this crate). `long_share` and `short_share`
+  are the shares of `points` credited to a long and debited to a short.
+  `points` and the shares are finite and not negative. `bound` (`true` or
+  `false`) says that `points` is a bound, not a figure for the date. The
+  table covers its first row's date to its last row's date; a row with
+  `points = 0` states a covered date with no dividend.
+- **Load.** As the carry table: a relative `table` path resolves against the
+  cost file's directory, and the file's sha256 must equal `sha256`, or the
+  config does not load.
+- **Instant.** For ex-date `d`, the charge instant is `time` in `tz` on the
+  weekday `weekdays_before` weekdays (Monday to Friday) before `d`: 0 is `d`
+  itself, 1 the weekday before (at most 5). Every calendar date is a
+  candidate, so with `weekdays_before = 1` a Saturday, Sunday and Monday
+  ex-date are all charged at Friday's instant. Exchange holidays are not
+  modelled: the table's maker states the instant. A position is held over
+  the instant as over a rollover: `entry < instant < exit`.
+- **Charge.** A long is credited `-(points x pip_size x long_share x |size|)`
+  and a short is debited `points x pip_size x short_share x |size|`, quote
+  currency; `x fx_rate` in account currency. A position held over the
+  instant of a date outside the table's first and last date stops the run
+  with `LedgerError::DividendOutsideTable`: a date the table does not cover
+  is never a zero.
+- **Records.** Each charge is one `FinancingCharge` of its own, in
+  `Ledger::financing_charges` beside the rollovers and linked to its trade
+  by `position`. It is booked at the dividend's instant with `days = 0`, so
+  its financing and carry parts are zero, and `charge` is the dividend. It
+  has the `direction`, `size`, `fx_rate` and `charge_account` of every
+  record, the mark at the instant, and a `dividend` part: the `ex_date`, the
+  whole table `row`, the `share` applied, the `charge` and `charge_account`,
+  and the table's configured `table_path` and its `table_sha256`. A rollover
+  record has no `dividend` part.
+- **Totals.** The trade's (and the open position's) `financing` includes
+  its dividend charges, so net P&L, the equity curve and the cost breakdown
+  pay them. `ClosedTrade.dividend` and `OpenPosition.dividend` keep them
+  apart, credits apart from debits: `credit` (0 or negative) and `debit`
+  (0 or positive), quote currency. They are absent when the instrument's
+  dividend charges nothing.
+- **Metadata and registry.** `RunMetadata.dividend_tables` lists, per
+  instrument, the table's configured `path`, its `sha256`, `rows`,
+  `first_date`, `last_date`, and the instant's `tz`, `time` and
+  `weekdays_before`. An estimated dividend is listed in
+  `RunMetadata.estimates`, and the instrument stays costed. The sweep
+  registry writes every held-position record (`outcome.rollovers`) when one
+  has a `dividend` part. Without a charged dividend none of these keys is
+  written.
 
 ### The builtin example
 
@@ -994,9 +1064,9 @@ records are:
   only when at least one fill has the volatility slippage or spread excess detail
   (task #199); otherwise it is absent and reads back with `None`. `rollovers` is
   every `FinancingCharge` in booking order, written only when a charge has
-  `components` (a modelled carry, task #203), each with its side, size, FX rate
-  and account-currency charge (task #205); otherwise it is absent and reads
-  back with `None`. The report and the walk-forward read neither;
+  `components` (a modelled carry, task #203) or a `dividend` part (task #209),
+  each with its side, size, FX rate and account-currency charge (task #205);
+  otherwise it is absent and reads back with `None`. The report and the walk-forward read neither;
 - `{status: "failed", stage: "config" | "run" | "panic", error}`.
 
 The ids are blake3 hashes:
@@ -1004,7 +1074,7 @@ The ids are blake3 hashes:
   the code version (`CARGO_PKG_VERSION`) and build (`code_revision`), the
   strategy, the params and resolved config, the instrument, the window and
   warm-up, the venue, the blake3 of the cost config's TOML text (which pins
-  each carry table by its sha256), the exit mode,
+  each carry and dividend table by its sha256), the exit mode,
   the FX, the sizing, the end-of-run rule, the capital and the risk-free rate.
 - **`code_revision`** is `tradedesk_data::CODE_REVISION`: the git commit the
   workspace was built from, prefixed `dirty-` for a modified tree, or `unknown`
