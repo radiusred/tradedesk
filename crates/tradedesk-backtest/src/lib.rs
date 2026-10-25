@@ -64,16 +64,20 @@ pub use aggregate::{JoinedAggregateError, aggregate_series};
 pub use bar::{JoinedBar, Ohlcv};
 pub use cost::config::{
     AssetClass, Carry, CarryRow, CarryTable, CarryTableRef, Commission, ComponentProvenance,
-    ConfigError, CostComponent, CostConfig, CostModels, Estimate, Exclusion, ExclusionEffect,
-    Financing, InstrumentSpec, Placeholder, PriceSide, Product, ProvenanceStatus, RolloverSpec,
-    Slippage, SlippageModel, Spread, SpreadBasis, SpreadExcess, SpreadExcessState, SpreadWindow,
-    TripleDay, Venue, VenueInstrumentCost, WeekendRule, WeekendRules,
+    ConfigError, CostComponent, CostConfig, CostModels, DIVIDEND_TABLE_HEADER, Dividend,
+    DividendRow, DividendTable, DividendTableRef, Estimate, Exclusion, ExclusionEffect, Financing,
+    InstrumentSpec, Placeholder, PriceSide, Product, ProvenanceStatus, RolloverSpec, Slippage,
+    SlippageModel, Spread, SpreadBasis, SpreadExcess, SpreadExcessState, SpreadWindow, TripleDay,
+    Venue, VenueInstrumentCost, WeekendRule, WeekendRules,
 };
 pub use cost::fill::{
     FillCostDetail, FillError, FillKind, FillModel, FillQuote, PricePoint, SpreadRatioStatus,
     TradeSide,
 };
-pub use cost::financing::{Direction, Rollover, RolloverCalendar, carry_charge, rollover_charge};
+pub use cost::financing::{
+    Direction, DividendClock, DividendInstant, Rollover, RolloverCalendar, carry_charge,
+    dividend_charge, rollover_charge,
+};
 pub use cost::minutes::{MinuteCosts, MinuteCostsError, MinutePrices};
 pub use engine::{
     EndOfRun, EndOfRunRule, EngineConfig, EngineError, EngineStats, FinalBarEntry, RunOutput,
@@ -82,8 +86,9 @@ pub use engine::{
 pub use exit::{BothHit, ExitEvaluation, ExitReason, ExitTrigger, SignalExitReason};
 pub use join::{JoinError, Joined, OneSidedMinute, join_sides};
 pub use ledger::{
-    AccountFx, ChargeComponents, ClosedTrade, Fill, FillAt, FinancingCharge, Ledger, LedgerError,
-    MarkSource, OpenOrder, OpenPosition, PositionId, PositionMark, RunMetadata,
+    AccountFx, ChargeComponents, ClosedTrade, DividendPart, DividendTotals, Fill, FillAt,
+    FinancingCharge, Ledger, LedgerError, MarkSource, OpenOrder, OpenPosition, PositionId,
+    PositionMark, RunMetadata,
 };
 pub use load::{
     InstrumentSeries, LoadError, LoadRequest, MarketData, MinuteLookback, OneSidedPolicy, load,

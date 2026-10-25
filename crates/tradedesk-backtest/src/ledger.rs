@@ -20,11 +20,13 @@ use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 
 use crate::cost::config::{
-    CarryRow, CarryTableRef, CostConfig, CostModels, Estimate, Exclusion, InstrumentSpec,
-    Placeholder, PriceSide, Product,
+    CarryRow, CarryTableRef, CostConfig, CostModels, DividendRow, DividendTableRef, Estimate,
+    Exclusion, InstrumentSpec, Placeholder, PriceSide, Product,
 };
 use crate::cost::fill::{FillCostDetail, FillError, FillKind, FillModel, PricePoint, TradeSide};
-use crate::cost::financing::{Direction, RolloverCalendar, carry_charge, rollover_charge};
+use crate::cost::financing::{
+    Direction, DividendClock, RolloverCalendar, carry_charge, dividend_charge, rollover_charge,
+};
 use crate::cost::minutes::MinuteCosts;
 use crate::exit::{ExitEvaluation, ExitReason, ExitTrigger, SignalExitReason};
 use crate::{BarTimeframe, JoinedBar, JoinedSeries, MarketData};
@@ -99,6 +101,25 @@ pub enum LedgerError {
         local_date: NaiveDate,
         /// The rollover instant.
         at: DateTime<Utc>,
+    },
+    /// A position was held over the dividend charge instant of a date outside its
+    /// dividend table's first and last date. The run stops: a date the table does not
+    /// cover is never charged as zero.
+    #[error(
+        "{instrument} dividend table covers {first_date} to {last_date}, but the position \
+         was held over the charge instant for {ex_date} (at {at})"
+    )]
+    DividendOutsideTable {
+        /// Instrument.
+        instrument: String,
+        /// The ex-date the instant is for.
+        ex_date: NaiveDate,
+        /// The charge instant.
+        at: DateTime<Utc>,
+        /// The table's first date.
+        first_date: NaiveDate,
+        /// The table's last date.
+        last_date: NaiveDate,
     },
     /// The exit is before the entry.
     #[error(
@@ -250,6 +271,12 @@ pub struct RunMetadata {
     /// #203.
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub carry_tables: BTreeMap<String, CarryTableRef>,
+    /// For each instrument at the venue whose dividend charges from a table, the table
+    /// and the charge instant: the path as configured, the sha256 checked at load, the
+    /// row count, the first and last date, and the zone, time and weekdays before. Left
+    /// out of the JSON when empty, and empty in a record written before task #209.
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub dividend_tables: BTreeMap<String, DividendTableRef>,
 }
 
 impl RunMetadata {
@@ -382,25 +409,27 @@ pub struct Fill {
     pub cost_detail: Option<FillCostDetail>,
 }
 
-/// One rollover charge booked against a position.
+/// One held-position charge booked against a position: a rollover's financing (with its
+/// carry part), or a dividend at its own instant.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct FinancingCharge {
     /// Position charged.
     pub position: PositionId,
     /// Instrument.
     pub instrument: String,
-    /// The rollover instant.
+    /// The rollover instant, or a dividend's charge instant.
     pub at_utc: DateTime<Utc>,
-    /// The venue-local trading date it closes.
+    /// The venue-local trading date the rollover closes; for a dividend, the date of
+    /// the charge instant in the dividend's zone.
     pub local_date: NaiveDate,
-    /// Calendar days charged.
+    /// Calendar days of financing charged; 0 for a dividend.
     pub days: u32,
     /// Open of the bar whose configured-side close is the mark.
     pub mark_bar_open: DateTime<Utc>,
     /// Mark, quote units.
     pub mark_price: f64,
     /// Charge, quote currency (negative is a credit): the financing and carry parts
-    /// together.
+    /// together, or the dividend part of a dividend record.
     pub charge: f64,
     /// The position's direction. The ledger always sets it; `None` only in a record
     /// written before task #205.
@@ -424,6 +453,53 @@ pub struct FinancingCharge {
     /// financing).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub components: Option<ChargeComponents>,
+    /// The dividend part, on a dividend record: booked at the dividend's own instant with
+    /// `days = 0`, so its financing and carry parts are zero and `charge` is the
+    /// dividend. `None`, and absent from the JSON, on a rollover record.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub dividend: Option<DividendPart>,
+}
+
+/// The dividend charged on a position held over an ex-date's charge instant. A verifier
+/// recomputes it from the record's `direction` and `size`, the instrument's `pip_size`
+/// and the row here: a long is credited `-(points × pip_size × long_share × |size|)`, a
+/// short is debited `points × pip_size × short_share × |size|`.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct DividendPart {
+    /// The ex-dividend date.
+    pub ex_date: NaiveDate,
+    /// The table row for the ex-date.
+    pub row: DividendRow,
+    /// The share applied: the row's long or short share.
+    pub share: f64,
+    /// The dividend, quote currency: negative is a credit (a long), positive a debit (a
+    /// short).
+    pub charge: f64,
+    /// `charge × fx_rate`, account currency.
+    pub charge_account: f64,
+    /// The table's `table` path as configured (as in [`RunMetadata::dividend_tables`]).
+    pub table_path: String,
+    /// The table file's sha256, lower-case hex, as checked at load.
+    pub table_sha256: String,
+}
+
+/// A position's dividend charges, credits apart from debits.
+#[derive(Debug, Clone, Copy, PartialEq, Default, Serialize, Deserialize)]
+pub struct DividendTotals {
+    /// The sum of the credits, quote currency: 0 or negative.
+    pub credit: f64,
+    /// The sum of the debits, quote currency: 0 or positive.
+    pub debit: f64,
+}
+
+impl DividendTotals {
+    fn add(&mut self, charge: f64) {
+        if charge < 0.0 {
+            self.credit += charge;
+        } else {
+            self.debit += charge;
+        }
+    }
 }
 
 /// One rollover's charge split by component, when the carry is modelled. A verifier
@@ -490,10 +566,15 @@ pub struct OpenPosition {
     pub target: Option<f64>,
     /// The last rollover charged (or the entry): only rollovers strictly after it remain.
     pub financed_through: DateTime<Utc>,
-    /// Financing charged so far, quote currency.
+    /// Held-position charges so far, quote currency: financing, carry and dividends.
     pub financing: f64,
     /// Calendar days charged so far.
     pub financing_days: u32,
+    /// The dividends charged so far, credits apart from debits (both are in
+    /// `financing`). `None`, and absent from the JSON, when the instrument's dividend
+    /// does not charge from a table.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub dividend: Option<DividendTotals>,
 }
 
 /// A round trip.
@@ -529,7 +610,8 @@ pub struct ClosedTrade {
     pub spread_cost: f64,
     /// Slippage cost over both fills, quote currency.
     pub slippage_cost: f64,
-    /// Financing over the hold, quote currency (negative is a credit).
+    /// Held-position charges over the hold, quote currency (negative is a credit):
+    /// financing, carry and dividends.
     pub financing: f64,
     /// Calendar days of financing charged.
     pub financing_days: u32,
@@ -556,6 +638,11 @@ pub struct ClosedTrade {
     /// JSON, when the cost has neither the volatility slippage nor a spread excess.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub spread_excess_cost: Option<f64>,
+    /// The dividends over the hold, quote currency, credits apart from debits (both are
+    /// in `financing`). `None`, and absent from the JSON, when the instrument's dividend
+    /// does not charge from a table.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub dividend: Option<DividendTotals>,
 }
 
 /// An open position valued at a mark.
@@ -693,6 +780,9 @@ impl Ledger {
                 carry_tables: config
                     .carry_tables(venue_id)
                     .map_err(|_| LedgerError::UnknownVenue(venue_id.to_owned()))?,
+                dividend_tables: config
+                    .dividend_tables(venue_id)
+                    .map_err(|_| LedgerError::UnknownVenue(venue_id.to_owned()))?,
             },
             calendar: RolloverCalendar::new(venue.rollover, venue.weekend),
             models,
@@ -807,6 +897,12 @@ impl Ledger {
         };
         let q = model.quote_as(at.bar, at.point, at.ts, side, order.size, FillKind::Market)?;
         let price_side = model.price_side();
+        let dividend = model
+            .cost()
+            .dividend
+            .as_ref()
+            .filter(|d| d.is_charged())
+            .map(|_| DividendTotals::default());
         let id = PositionId(self.next_id);
         self.next_id += 1;
         self.fills.push(Fill {
@@ -847,6 +943,7 @@ impl Ledger {
             financed_through: at.ts,
             financing: 0.0,
             financing_days: 0,
+            dividend,
         });
         Ok(id)
     }
@@ -890,7 +987,9 @@ impl Ledger {
             .evaluate(&reference, p.direction, p.stop, p.target))
     }
 
-    /// The rollover charges position `i` owes for rollovers strictly before `now`.
+    /// The held-position charges position `i` owes for rollovers and dividend instants
+    /// strictly before `now`, oldest first (a rollover before a dividend at the same
+    /// instant).
     fn pending_financing(
         &self,
         i: usize,
@@ -965,9 +1064,88 @@ impl Ledger {
                     fx_rate: Some(fx_rate),
                     charge_account: Some(charge * fx_rate),
                     components,
+                    dividend: None,
                 })
             })
-            .collect()
+            .collect::<Result<Vec<_>, LedgerError>>()
+            .and_then(|mut charges| {
+                charges.extend(self.pending_dividends(i, now, marks, fx_rate)?);
+                // Stable: a rollover stays before a dividend at the same instant.
+                charges.sort_by_key(|c| c.at_utc);
+                Ok(charges)
+            })
+    }
+
+    /// The dividend charges position `i` owes for charge instants strictly before `now`.
+    fn pending_dividends(
+        &self,
+        i: usize,
+        now: DateTime<Utc>,
+        marks: &impl MarkSource,
+        fx_rate: f64,
+    ) -> Result<Vec<FinancingCharge>, LedgerError> {
+        let p = &self.open[i];
+        let model = self.model(&p.instrument)?;
+        let Some(dividend) = model.cost().dividend.as_ref() else {
+            return Ok(Vec::new());
+        };
+        let (Some(table), Some(clock)) = (dividend.events.as_ref(), DividendClock::of(dividend))
+        else {
+            return Ok(Vec::new());
+        };
+        let tz = dividend.tz.unwrap_or(chrono_tz::UTC);
+        let mut out = Vec::new();
+        for instant in clock.instants_between(p.financed_through, now) {
+            if !table.covers(instant.ex_date) {
+                return Err(LedgerError::DividendOutsideTable {
+                    instrument: p.instrument.clone(),
+                    ex_date: instant.ex_date,
+                    at: instant.at_utc,
+                    first_date: table.first_date(),
+                    last_date: table.last_date(),
+                });
+            }
+            let Some(row) = table.row(instant.ex_date) else {
+                continue;
+            };
+            let bar = marks
+                .bar_closed_by(&p.instrument, instant.at_utc)
+                .ok_or_else(|| LedgerError::NoMark {
+                    instrument: p.instrument.clone(),
+                    at: instant.at_utc,
+                })?;
+            let mark = checked_mark(model, bar)?;
+            let (share, charge) = dividend_charge(row, model.spec().pip_size, p.direction, p.size);
+            out.push(FinancingCharge {
+                position: p.id,
+                instrument: p.instrument.clone(),
+                at_utc: instant.at_utc,
+                local_date: instant.at_utc.with_timezone(&tz).date_naive(),
+                days: 0,
+                mark_bar_open: bar.ts_open_utc,
+                mark_price: mark,
+                charge,
+                direction: Some(p.direction),
+                size: Some(p.size),
+                fx_rate: Some(fx_rate),
+                charge_account: Some(charge * fx_rate),
+                components: None,
+                dividend: Some(DividendPart {
+                    ex_date: instant.ex_date,
+                    row: row.clone(),
+                    share,
+                    charge,
+                    charge_account: charge * fx_rate,
+                    table_path: dividend
+                        .table
+                        .as_ref()
+                        .map(|path| path.display().to_string())
+                        .unwrap_or_default(),
+                    table_sha256: table.sha256().to_owned(),
+                }),
+            });
+        }
+        Ok(out)
     }
 
     fn book_financing(&mut self, i: usize, charges: Vec<FinancingCharge>) {
@@ -976,18 +1154,23 @@ impl Ledger {
             p.financing += c.charge;
             p.financing_days += c.days;
             p.financed_through = c.at_utc;
+            if let (Some(totals), Some(d)) = (&mut p.dividend, &c.dividend) {
+                totals.add(d.charge);
+            }
         }
         self.financing.extend(charges);
     }
 
-    /// Charge every open position for each rollover it has been held across, up to (not
-    /// including) `now`. Calling it again for the same span charges nothing more.
+    /// Charge every open position for each rollover and each dividend charge instant it
+    /// has been held across, up to (not including) `now`. Calling it again for the same
+    /// span charges nothing more.
     ///
     /// # Errors
-    /// [`LedgerError::NoMark`] when no bar has closed by a rollover to mark from,
-    /// [`LedgerError::BadMark`] when that bar's mark is not a finite price above zero, and
-    /// [`LedgerError::NoCarryRate`] when a modelled carry's table has no row for a
-    /// rollover's date; nothing is booked in any case.
+    /// [`LedgerError::NoMark`] when no bar has closed by a rollover or a dividend instant
+    /// to mark from, [`LedgerError::BadMark`] when that bar's mark is not a finite price
+    /// above zero, [`LedgerError::NoCarryRate`] when a modelled carry's table has no row
+    /// for a rollover's date, and [`LedgerError::DividendOutsideTable`] when a dividend
+    /// instant is for a date outside the table; nothing is booked in any case.
     pub fn accrue_financing(
         &mut self,
         now: DateTime<Utc>,
@@ -1003,14 +1186,14 @@ impl Ledger {
         Ok(())
     }
 
-    /// Close a position with a fill at `at`, first charging any rollovers it was held
-    /// across before `at.ts`.
+    /// Close a position with a fill at `at`, first charging any rollovers and dividend
+    /// instants it was held across before `at.ts`.
     ///
     /// # Errors
     /// [`LedgerError::UnknownPosition`], [`LedgerError::ExitBeforeEntry`],
-    /// [`LedgerError::Fill`] (including a divergent bar), [`LedgerError::NoMark`] or
-    /// [`LedgerError::NoCarryRate`]. On error the position stays open and nothing is
-    /// booked.
+    /// [`LedgerError::Fill`] (including a divergent bar), [`LedgerError::NoMark`],
+    /// [`LedgerError::NoCarryRate`] or [`LedgerError::DividendOutsideTable`]. On error the
+    /// position stays open and nothing is booked.
     pub fn close(
         &mut self,
         id: PositionId,
@@ -1135,6 +1318,7 @@ impl Ledger {
             exit_reason: reason,
             signal_reason,
             spread_excess_cost,
+            dividend: p.dividend,
         });
         Ok(&self.closed[self.closed.len() - 1])
     }
@@ -2229,5 +2413,244 @@ date,long_rate,short_rate,long_rate_date,short_rate_date,flag
             2.0
         );
         assert!(last_closed_bar(&s, utc(2024, 1, 16, 21, 58)).is_none());
+    }
+
+    /// A labelled synthetic dividend table for January 2024: test values, not any
+    /// index's or any venue's.
+    const DIVIDEND_CSV: &str = "\
+date,points,long_share,short_share,bound
+2024-01-02,0,1,1,false
+2024-01-17,1.5,0.8,1,false
+2024-01-22,3,1,1,false
+2024-01-31,2.25,0,1.1,true
+";
+
+    /// USA500 at the example spread-bet venue with the dividend above, charged at 16:00
+    /// New York on the weekday before each ex-date.
+    fn dividend_ledger() -> Ledger {
+        let c = crate::cost::config::arithmetic_fixture().with_estimated_dividend(
+            "example_spread_bet",
+            "USA500IDXUSD",
+            DIVIDEND_CSV,
+            (chrono_tz::America::New_York, "16:00", 1),
+        );
+        Ledger::new(&c, "example_spread_bet", STOP_FIRST, fx()).unwrap()
+    }
+
+    fn dividends(l: &Ledger) -> Vec<&FinancingCharge> {
+        l.financing_charges()
+            .iter()
+            .filter(|c| c.dividend.is_some())
+            .collect()
+    }
+
+    #[test]
+    fn a_long_is_credited_and_a_short_debited_over_one_ex_date() {
+        // Tuesday 2024-01-16 12:00Z to Thursday 13:00Z. The 2024-01-17 ex-date's instant
+        // is Tuesday 16:00 New York, 21:00Z; Wednesday's instant (for 2024-01-18, no row)
+        // charges nothing; the rollovers are Tuesday and Wednesday 22:00Z.
+        let s = spx_series(utc(2024, 1, 16, 12, 0), 49, 4800.0, 1.0);
+        let d = |day| NaiveDate::from_ymd_opt(2024, 1, day).unwrap();
+        for (direction, share, charge, credit, debit) in [
+            (Direction::Long, 0.8, -2.4, -2.4, 0.0),
+            (Direction::Short, 1.0, 3.0, 0.0, 3.0),
+        ] {
+            let mut l = dividend_ledger();
+            let id = open_at(&mut l, &order(direction, 2.0), &s);
+            let trade = close_last(&mut l, id, &s);
+            let charges = l.financing_charges();
+            assert_eq!(charges.len(), 3, "{direction:?}");
+            // The dividend record is booked first, at its own instant, with no financing.
+            let c = &charges[0];
+            assert_eq!(c.position, id);
+            assert_eq!(c.at_utc, utc(2024, 1, 16, 21, 0));
+            assert_eq!(c.local_date, d(16));
+            assert_eq!(c.days, 0);
+            assert_eq!(c.mark_bar_open, utc(2024, 1, 16, 20, 0));
+            assert_eq!(c.direction, Some(direction));
+            assert_eq!(c.size, Some(2.0));
+            assert_eq!(c.fx_rate, Some(0.8));
+            assert!(close_to(c.charge, charge));
+            assert!(close_to(c.charge_account.unwrap(), charge * 0.8));
+            assert!(c.components.is_none());
+            let part = c.dividend.as_ref().unwrap();
+            assert_eq!(part.ex_date, d(17));
+            assert_eq!(part.row.points, 1.5);
+            assert!(!part.row.bound);
+            assert_eq!(part.share, share);
+            assert_eq!(part.charge, c.charge);
+            assert!(close_to(part.charge_account, charge * 0.8));
+            assert_eq!(part.table_path, "dividend.csv");
+            assert_eq!(
+                part.table_sha256,
+                crate::cost::config::sha256_hex(DIVIDEND_CSV.as_bytes())
+            );
+            // The rollovers are unchanged and carry no dividend part.
+            for r in &charges[1..] {
+                assert!(r.dividend.is_none() && r.days == 1);
+            }
+            // The trade: financing holds every charge; the dividend totals keep the credit
+            // apart from the debit.
+            let total: f64 = charges.iter().map(|c| c.charge).sum();
+            assert!(close_to(trade.financing, total));
+            assert_eq!(trade.financing_days, 2);
+            let totals = trade.dividend.unwrap();
+            assert!(close_to(totals.credit, credit) && close_to(totals.debit, debit));
+            let sign = direction.sign();
+            assert!(close_to(
+                trade.net_pnl_quote,
+                (trade.exit_price - trade.entry_price) * sign * 2.0 - total
+            ));
+        }
+        // The run metadata lists the table, its instant and the dividend as estimated.
+        let ledger = dividend_ledger();
+        let m = ledger.metadata();
+        let t = &m.dividend_tables["USA500IDXUSD"];
+        assert_eq!((t.path.as_str(), t.rows), ("dividend.csv", 4));
+        assert_eq!((t.first_date, t.last_date), (d(2), d(31)));
+        assert_eq!((t.tz.as_str(), t.weekdays_before), ("America/New_York", 1));
+        assert!(
+            m.estimates
+                .iter()
+                .any(|e| e.instrument == "USA500IDXUSD" && e.component == CostComponent::Dividend)
+        );
+        assert!(m.is_costed("USA500IDXUSD"));
+    }
+
+    #[test]
+    fn an_open_position_holds_its_dividend_totals_as_charged() {
+        let s = spx_series(utc(2024, 1, 16, 12, 0), 49, 4800.0, 1.0);
+        let mut l = dividend_ledger();
+        open_at(&mut l, &order(Direction::Short, 2.0), &s);
+        let p = &l.open_positions()[0];
+        assert_eq!(p.dividend, Some(DividendTotals::default()));
+        l.accrue_financing(utc(2024, 1, 16, 21, 30), &s).unwrap();
+        let p = &l.open_positions()[0];
+        assert!(close_to(p.dividend.unwrap().debit, 3.0));
+        assert!(close_to(p.financing, 3.0));
+        assert_eq!(p.financed_through, utc(2024, 1, 16, 21, 0));
+        // Again for the same span: nothing more.
+        l.accrue_financing(utc(2024, 1, 16, 21, 30), &s).unwrap();
+        assert_eq!(l.financing_charges().len(), 1);
+    }
+
+    #[test]
+    fn a_monday_ex_date_is_charged_once_at_fridays_instant() {
+        // Friday 2024-01-19 12:00Z to Monday 13:00Z: the Saturday, Sunday and Monday
+        // ex-dates share Friday 21:00Z, and only Monday has a row.
+        let s = spx_series(utc(2024, 1, 19, 12, 0), 73, 4800.0, 0.0);
+        let mut l = dividend_ledger();
+        let id = open_at(&mut l, &order(Direction::Long, 1.0), &s);
+        let trade = close_last(&mut l, id, &s);
+        let ds = dividends(&l);
+        assert_eq!(ds.len(), 1);
+        assert_eq!(ds[0].at_utc, utc(2024, 1, 19, 21, 0));
+        assert_eq!(
+            ds[0].dividend.as_ref().unwrap().ex_date,
+            NaiveDate::from_ymd_opt(2024, 1, 22).unwrap()
+        );
+        assert!(close_to(ds[0].charge, -3.0));
+        // Before Friday's 22:00Z rollover, which charges the weekend's three days.
+        assert_eq!(l.financing_charges()[1].days, 3);
+        assert!(close_to(trade.dividend.unwrap().credit, -3.0));
+    }
+
+    #[test]
+    fn a_bound_row_with_a_zero_long_share_credits_nothing_and_debits_a_short() {
+        // Tuesday 2024-01-30 12:00Z to Wednesday 13:00Z: the 2024-01-31 instant.
+        let s = spx_series(utc(2024, 1, 30, 12, 0), 25, 4800.0, 0.0);
+        for (direction, charge) in [(Direction::Long, 0.0), (Direction::Short, 4.95)] {
+            let mut l = dividend_ledger();
+            let id = open_at(&mut l, &order(direction, 2.0), &s);
+            let trade = close_last(&mut l, id, &s);
+            let ds = dividends(&l);
+            assert_eq!(ds.len(), 1, "{direction:?}");
+            let part = ds[0].dividend.as_ref().unwrap();
+            assert!(part.row.bound);
+            assert!(close_to(ds[0].charge, charge));
+            assert!(ds[0].charge.is_sign_positive());
+            let totals = trade.dividend.unwrap();
+            assert_eq!(totals.credit, 0.0);
+            assert!(close_to(totals.debit, charge));
+        }
+    }
+
+    #[test]
+    fn opened_or_closed_at_the_instant_is_not_held_over_it() {
+        // Opened at Tuesday 21:00Z, the 2024-01-17 instant.
+        let s = spx_series(utc(2024, 1, 16, 21, 0), 3, 4800.0, 0.0);
+        let mut l = dividend_ledger();
+        let id = open_at(&mut l, &order(Direction::Short, 1.0), &s);
+        close_last(&mut l, id, &s);
+        assert!(dividends(&l).is_empty());
+        // Closed at the last bar's close, 21:00Z.
+        let s = spx_series(utc(2024, 1, 16, 12, 0), 9, 4800.0, 0.0);
+        let mut l = dividend_ledger();
+        let id = open_at(&mut l, &order(Direction::Short, 1.0), &s);
+        let trade = close_last(&mut l, id, &s);
+        assert_eq!(trade.exit_ts, utc(2024, 1, 16, 21, 0));
+        assert!(l.financing_charges().is_empty());
+        assert_eq!(trade.dividend, Some(DividendTotals::default()));
+    }
+
+    #[test]
+    fn a_position_held_over_a_date_outside_the_table_stops_the_run() {
+        let d = |y, m, day| NaiveDate::from_ymd_opt(y, m, day).unwrap();
+        // After the last date: Wednesday 2024-01-31 21:00Z is the 2024-02-01 instant.
+        let s = spx_series(utc(2024, 1, 31, 12, 0), 25, 4800.0, 0.0);
+        let mut l = dividend_ledger();
+        let id = open_at(&mut l, &order(Direction::Long, 1.0), &s);
+        let last = s.bars().len() - 1;
+        let err = l
+            .close(
+                id,
+                FillAt {
+                    bar: &s.bars()[last],
+                    point: PricePoint::Close,
+                    ts: s.bars()[last].ts_close_utc(BarTimeframe::H1),
+                    bar_index: last,
+                },
+                ExitReason::Signal,
+                &s,
+            )
+            .unwrap_err();
+        assert_eq!(
+            err,
+            LedgerError::DividendOutsideTable {
+                instrument: "USA500IDXUSD".to_owned(),
+                ex_date: d(2024, 2, 1),
+                at: utc(2024, 1, 31, 21, 0),
+                first_date: d(2024, 1, 2),
+                last_date: d(2024, 1, 31),
+            }
+        );
+        assert!(err.to_string().contains("covers 2024-01-02 to 2024-01-31"));
+        // Nothing is booked, and the position stays open.
+        assert!(l.financing_charges().is_empty() && l.closed_trades().is_empty());
+        assert_eq!(l.open_positions().len(), 1);
+        // Before the first date: Friday 2023-12-29 21:00Z is the instant of the weekend
+        // and of Monday 2024-01-01.
+        let s = spx_series(utc(2023, 12, 29, 12, 0), 12, 4800.0, 0.0);
+        let mut l = dividend_ledger();
+        open_at(&mut l, &order(Direction::Short, 1.0), &s);
+        match l.accrue_financing(utc(2023, 12, 29, 23, 0), &s) {
+            Err(LedgerError::DividendOutsideTable { ex_date, .. }) => {
+                assert_eq!(ex_date, d(2023, 12, 30));
+            }
+            other => panic!("expected DividendOutsideTable, got {other:?}"),
+        }
+        assert!(l.financing_charges().is_empty());
+    }
+
+    #[test]
+    fn without_a_dividend_the_records_have_no_dividend_key() {
+        let s = spx_series(utc(2024, 1, 16, 12, 0), 49, 4800.0, 1.0);
+        let mut l = ledger(STOP_FIRST);
+        let id = open_at(&mut l, &order(Direction::Long, 2.0), &s);
+        let trade = close_last(&mut l, id, &s);
+        assert!(trade.dividend.is_none());
+        assert!(l.metadata().dividend_tables.is_empty());
+        let json = serde_json::to_string(&(&trade, l.financing_charges(), l.metadata())).unwrap();
+        assert!(!json.contains("dividend"), "{json}");
     }
 }

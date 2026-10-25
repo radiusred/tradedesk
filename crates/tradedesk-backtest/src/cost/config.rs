@@ -15,12 +15,12 @@
 //!   positive for a charge to the trader and negative for a credit.
 //!
 //! Provenance is per component: the spread, slippage, commission, financing and carry of
-//! every venue × instrument, and its optional spread excess, each carry their own `source`
-//! and a status. A component is **verified** (a published venue figure), a **placeholder**
-//! (`placeholder = true`: an assumption or stand-in), **excluded** (`excluded = true` with
-//! a `reason`: no published figure exists, so the component charges nothing) or
-//! **estimated** (`estimated = true`, slippage, spread excess and carry only: derived from
-//! data, and costed). [`CostConfig::placeholders`], [`CostConfig::exclusions`] and
+//! every venue × instrument, and its optional spread excess and dividend, each carry their
+//! own `source` and a status. A component is **verified** (a published venue figure), a
+//! **placeholder** (`placeholder = true`: an assumption or stand-in), **excluded**
+//! (`excluded = true` with a `reason`: no published figure exists, so the component
+//! charges nothing) or **estimated** (`estimated = true`, slippage, spread excess, carry
+//! and dividend only: derived from data, and costed). [`CostConfig::placeholders`], [`CostConfig::exclusions`] and
 //! [`CostConfig::estimates`] list them, and [`CostConfig::costed`] says which instruments
 //! can be reported as costed (see [`CostComponent::exclusion_effect`]).
 
@@ -216,6 +216,13 @@ fn de_time<'de, D: Deserializer<'de>>(d: D) -> Result<NaiveTime, D::Error> {
     let s = String::deserialize(d)?;
     NaiveTime::parse_from_str(&s, "%H:%M")
         .map_err(|_| serde::de::Error::custom(format!("rollover time {s:?} is not HH:MM")))
+}
+
+fn de_opt_time<'de, D: Deserializer<'de>>(d: D) -> Result<Option<NaiveTime>, D::Error> {
+    let s = String::deserialize(d)?;
+    NaiveTime::parse_from_str(&s, "%H:%M")
+        .map(Some)
+        .map_err(|_| serde::de::Error::custom(format!("time {s:?} is not HH:MM")))
 }
 
 /// How an instrument's prices are stored and measured. Venue-independent.
@@ -692,9 +699,195 @@ pub(crate) fn sha256_hex(bytes: &[u8]) -> String {
         })
 }
 
+/// The dividend adjustment on a position held over an ex-dividend date: a long is
+/// credited, a short is debited.
+///
+/// Optional: a venue × instrument without it charges nothing. Four forms are valid.
+/// **Excluded** (`excluded = true` with a `reason`): nothing is charged, and costed
+/// results omit it. **Estimated** (`estimated = true`): a dated ex-date table
+/// ([`DividendTable`]) pinned by `table` and `sha256`, charged at the instant that `tz`,
+/// `time` and `weekdays_before` set. **Verified** or **placeholder**: with the same five
+/// table fields it charges from its table; with none of them it is a stated zero and
+/// charges nothing. The table's sha256 is checked when the config loads.
+#[derive(Debug, Clone, PartialEq, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct Dividend {
+    /// Where the venue states the adjustment, or the inputs of the table.
+    pub source: String,
+    /// `true` when the figures are an assumption or stand-in.
+    pub placeholder: bool,
+    /// `true` when the adjustment is not modelled: nothing is charged.
+    #[serde(default)]
+    pub excluded: bool,
+    /// Why it is excluded and what costed results therefore omit.
+    #[serde(default)]
+    pub reason: Option<String>,
+    /// `true` when the table is an estimate. Still costed, and listed by
+    /// [`CostConfig::estimates`].
+    #[serde(default)]
+    pub estimated: bool,
+    /// The ex-date table's CSV file. A relative path resolves against the cost file's
+    /// directory (see [`CostConfig::from_toml_str_at`]).
+    #[serde(default)]
+    pub table: Option<PathBuf>,
+    /// The sha256 of the table file, 64 hex digits (either case).
+    #[serde(default)]
+    pub sha256: Option<String>,
+    /// The IANA zone of the charge instant, e.g. the index's exchange.
+    #[serde(default, deserialize_with = "de_opt_tz")]
+    pub tz: Option<Tz>,
+    /// The local wall-clock time of the charge instant, `"HH:MM"` (for example the
+    /// cash close).
+    #[serde(default, deserialize_with = "de_opt_time")]
+    pub time: Option<NaiveTime>,
+    /// The weekday of the charge instant, counted back from the ex-date in weekdays
+    /// (Monday to Friday): 0 is the ex-date itself, 1 the weekday before it. At most 5.
+    #[serde(default)]
+    pub weekdays_before: Option<u32>,
+    /// The table, read and checked at load. `None` when the dividend charges nothing.
+    #[serde(skip)]
+    pub events: Option<Arc<DividendTable>>,
+}
+
+impl Dividend {
+    /// Whether the dividend charges from a loaded ex-date table.
+    #[must_use]
+    pub fn is_charged(&self) -> bool {
+        self.events.is_some()
+    }
+}
+
+/// The CSV header a dividend table must have, in this order.
+pub const DIVIDEND_TABLE_HEADER: [&str; 5] =
+    ["date", "points", "long_share", "short_share", "bound"];
+
+/// One row of a dividend table: the dividend for ex-date `date`.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct DividendRow {
+    /// The ex-dividend date.
+    pub date: NaiveDate,
+    /// The dividend in index points (`pip_size` in quote price); not negative. A row with
+    /// 0 states a covered date with no dividend.
+    pub points: f64,
+    /// The share of `points` credited to a long; not negative.
+    pub long_share: f64,
+    /// The share of `points` debited to a short; not negative.
+    pub short_share: f64,
+    /// `true` when `points` is a bound, not a figure for the date.
+    pub bound: bool,
+}
+
+/// A dividend table: one row per ex-date, ascending. It covers its first row's date to
+/// its last row's date.
+#[derive(Debug, Clone, PartialEq)]
+pub struct DividendTable {
+    sha256: String,
+    rows: Vec<DividendRow>,
+}
+
+impl DividendTable {
+    /// Parse a table from its file bytes and check them against `sha256` (lower-case or
+    /// upper-case hex).
+    ///
+    /// # Errors
+    /// A message for a sha256 mismatch, a header other than [`DIVIDEND_TABLE_HEADER`], a
+    /// row that does not parse, points or a share that is negative or not finite, a date
+    /// that is not after the row before it, or a table with no rows.
+    pub fn from_bytes(bytes: &[u8], sha256: &str) -> Result<Self, String> {
+        let found = sha256_hex(bytes);
+        if !found.eq_ignore_ascii_case(sha256) {
+            return Err(format!("sha256 is {found}, but the config says {sha256}"));
+        }
+        let mut reader = csv::ReaderBuilder::new()
+            .has_headers(true)
+            .trim(csv::Trim::All)
+            .from_reader(bytes);
+        let header = reader.headers().map_err(|e| format!("header: {e}"))?;
+        if header.iter().ne(DIVIDEND_TABLE_HEADER) {
+            return Err(format!(
+                "header is {:?}, expected {:?}",
+                header.iter().collect::<Vec<_>>().join(","),
+                DIVIDEND_TABLE_HEADER.join(",")
+            ));
+        }
+        let mut rows: Vec<DividendRow> = Vec::new();
+        for (i, record) in reader.deserialize::<DividendRow>().enumerate() {
+            // Line 1 is the header.
+            let line = i + 2;
+            let row = record.map_err(|e| format!("line {line}: {e}"))?;
+            for (name, v) in [
+                ("points", row.points),
+                ("long_share", row.long_share),
+                ("short_share", row.short_share),
+            ] {
+                if !v.is_finite() || v < 0.0 {
+                    return Err(format!(
+                        "line {line}: {name} {v} is not a finite number of at least 0"
+                    ));
+                }
+            }
+            if let Some(prev) = rows.last() {
+                if row.date <= prev.date {
+                    return Err(format!(
+                        "line {line}: date {} is not after the previous row's {}",
+                        row.date, prev.date
+                    ));
+                }
+            }
+            rows.push(row);
+        }
+        if rows.is_empty() {
+            return Err("the table has no rows".to_owned());
+        }
+        Ok(Self {
+            sha256: found,
+            rows,
+        })
+    }
+
+    /// The file's sha256, lower-case hex.
+    #[must_use]
+    pub fn sha256(&self) -> &str {
+        &self.sha256
+    }
+
+    /// Every row, by date.
+    #[must_use]
+    pub fn rows(&self) -> &[DividendRow] {
+        &self.rows
+    }
+
+    /// The first date the table covers (its first row's).
+    #[must_use]
+    pub fn first_date(&self) -> NaiveDate {
+        self.rows[0].date
+    }
+
+    /// The last date the table covers (its last row's).
+    #[must_use]
+    pub fn last_date(&self) -> NaiveDate {
+        self.rows[self.rows.len() - 1].date
+    }
+
+    /// Whether `date` is in the table's first to last date.
+    #[must_use]
+    pub fn covers(&self, date: NaiveDate) -> bool {
+        (self.first_date()..=self.last_date()).contains(&date)
+    }
+
+    /// The row for ex-date `date`, if the table has one.
+    #[must_use]
+    pub fn row(&self, date: NaiveDate) -> Option<&DividendRow> {
+        self.rows
+            .binary_search_by_key(&date, |r| r.date)
+            .ok()
+            .map(|i| &self.rows[i])
+    }
+}
+
 /// Dealing costs and financing for one instrument at one venue. Each of the five cost
 /// components carries its own `source`, `placeholder` flag and optional exclusion, and all
-/// five are required.
+/// five are required; the spread excess and the dividend are optional.
 #[derive(Debug, Clone, PartialEq, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct VenueInstrumentCost {
@@ -713,6 +906,10 @@ pub struct VenueInstrumentCost {
     /// The optional spread-excess charge. Absent: nothing is charged.
     #[serde(default)]
     pub spread_excess: Option<SpreadExcess>,
+    /// The optional dividend adjustment on a position held over an ex-dividend date.
+    /// Absent: nothing is charged.
+    #[serde(default)]
+    pub dividend: Option<Dividend>,
 }
 
 /// A cost component of a venue × instrument entry.
@@ -731,6 +928,8 @@ pub enum CostComponent {
     Carry,
     /// The optional spread-excess charge.
     SpreadExcess,
+    /// The optional dividend adjustment.
+    Dividend,
 }
 
 impl CostComponent {
@@ -744,21 +943,24 @@ impl CostComponent {
             Self::Financing => "financing",
             Self::Carry => "carry",
             Self::SpreadExcess => "spread_excess",
+            Self::Dividend => "dividend",
         }
     }
 
     /// What excluding this component does to a result. A spread or commission is the
     /// dealing cost a strategy's edge is measured against, so without it the venue ×
-    /// instrument is [`ExclusionEffect::Uncosted`]. Slippage, the spread excess and the two
-    /// financing parts are [`ExclusionEffect::Omitted`]: the result stays costed and lists
-    /// the omission.
+    /// instrument is [`ExclusionEffect::Uncosted`]. Slippage, the spread excess, the two
+    /// financing parts and the dividend are [`ExclusionEffect::Omitted`]: the result stays
+    /// costed and lists the omission.
     #[must_use]
     pub fn exclusion_effect(self) -> ExclusionEffect {
         match self {
             Self::Spread | Self::Commission => ExclusionEffect::Uncosted,
-            Self::Slippage | Self::Financing | Self::Carry | Self::SpreadExcess => {
-                ExclusionEffect::Omitted
-            }
+            Self::Slippage
+            | Self::Financing
+            | Self::Carry
+            | Self::SpreadExcess
+            | Self::Dividend => ExclusionEffect::Omitted,
         }
     }
 }
@@ -839,7 +1041,8 @@ fn entry<'a>(
 
 impl VenueInstrumentCost {
     /// Each component's provenance and flags, in schema order: spread, slippage,
-    /// commission, financing, carry, then the spread excess when it is configured.
+    /// commission, financing, carry, then the spread excess and the dividend when they are
+    /// configured.
     fn flagged(&self) -> Vec<(ComponentProvenance<'_>, Flags)> {
         let plain = |placeholder, excluded| Flags {
             placeholder,
@@ -898,13 +1101,26 @@ impl VenueInstrumentCost {
                 x.reason.as_ref(),
             ));
         }
+        if let Some(d) = &self.dividend {
+            out.push((
+                CostComponent::Dividend,
+                Flags {
+                    placeholder: d.placeholder,
+                    excluded: d.excluded,
+                    estimated: d.estimated,
+                },
+                d.source.as_str(),
+                d.reason.as_ref(),
+            ));
+        }
         out.into_iter()
             .map(|(c, f, source, reason)| (entry(c, f, source, reason), f))
             .collect()
     }
 
     /// Each component's provenance, in schema order: spread, slippage, commission,
-    /// financing, carry, then the spread excess when it is configured.
+    /// financing, carry, then the spread excess and the dividend when they are
+    /// configured.
     #[must_use]
     pub fn provenance(&self) -> Vec<ComponentProvenance<'_>> {
         self.flagged().into_iter().map(|(p, _)| p).collect()
@@ -1021,6 +1237,27 @@ pub struct CarryTableRef {
     pub last_date: NaiveDate,
 }
 
+/// A charged dividend's ex-date table and charge instant, recorded in run metadata.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct DividendTableRef {
+    /// The `table` path as configured.
+    pub path: String,
+    /// The file's sha256, lower-case hex, as checked at load.
+    pub sha256: String,
+    /// Rows in the table.
+    pub rows: usize,
+    /// The first date the table covers (its first row's).
+    pub first_date: NaiveDate,
+    /// The last date the table covers (its last row's).
+    pub last_date: NaiveDate,
+    /// The IANA zone of the charge instant.
+    pub tz: String,
+    /// The local time of the charge instant.
+    pub time: NaiveTime,
+    /// Weekdays from the charge instant's day to the ex-date.
+    pub weekdays_before: u32,
+}
+
 /// Whether a venue × instrument configures a spread excess.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -1082,6 +1319,7 @@ impl CostConfig {
         let mut config: Self = toml::from_str(text)?;
         config.validate()?;
         config.load_carry_tables(dir)?;
+        config.load_dividend_tables(dir)?;
         Ok(config)
     }
 
@@ -1123,6 +1361,72 @@ impl CostConfig {
             }
         }
         Ok(())
+    }
+
+    /// Read and check every dividend's ex-date table (validation has checked its fields).
+    fn load_dividend_tables(&mut self, dir: &Path) -> Result<(), ConfigError> {
+        for (id, venue) in &mut self.venues {
+            for (symbol, cost) in &mut venue.instruments {
+                let Some(dividend) = &mut cost.dividend else {
+                    continue;
+                };
+                let (Some(table), Some(sha256)) = (&dividend.table, &dividend.sha256) else {
+                    continue;
+                };
+                let path = dir.join(table);
+                let bytes = std::fs::read(&path).map_err(|source| ConfigError::Io {
+                    path: path.clone(),
+                    source,
+                })?;
+                let events = DividendTable::from_bytes(&bytes, sha256).map_err(|reason| {
+                    invalid(
+                        format!("venues.{id}.instruments.{symbol}.dividend.table"),
+                        format!("{}: {reason}", path.display()),
+                    )
+                })?;
+                dividend.events = Some(Arc::new(events));
+            }
+        }
+        Ok(())
+    }
+
+    /// For each instrument at `venue_id` whose dividend charges from a table, the table
+    /// and the charge instant: the path as configured, the sha256, the row count, the
+    /// first and last date, and the zone, time and weekdays before. Empty when no
+    /// dividend there charges.
+    ///
+    /// # Errors
+    /// [`ConfigError::UnknownVenue`] when the venue is not defined.
+    pub fn dividend_tables(
+        &self,
+        venue_id: &str,
+    ) -> Result<BTreeMap<String, DividendTableRef>, ConfigError> {
+        let venue = self.venue_or_err(venue_id)?;
+        Ok(venue
+            .instruments
+            .iter()
+            .filter_map(|(symbol, cost)| {
+                let d = cost.dividend.as_ref()?;
+                let events = d.events.as_ref()?;
+                Some((
+                    symbol.clone(),
+                    DividendTableRef {
+                        path: d
+                            .table
+                            .as_ref()
+                            .map(|p| p.display().to_string())
+                            .unwrap_or_default(),
+                        sha256: events.sha256().to_owned(),
+                        rows: events.rows().len(),
+                        first_date: events.first_date(),
+                        last_date: events.last_date(),
+                        tz: d.tz.map(|tz| tz.name().to_owned()).unwrap_or_default(),
+                        time: d.time.unwrap_or_default(),
+                        weekdays_before: d.weekdays_before.unwrap_or_default(),
+                    },
+                ))
+            })
+            .collect())
     }
 
     /// For each instrument at `venue_id` with a modelled carry, its table: the path as
@@ -1600,7 +1904,55 @@ fn validate_provenance(
             ));
         }
     }
-    validate_carry(&cost.carry, at)
+    validate_carry(&cost.carry, at)?;
+    cost.dividend
+        .as_ref()
+        .map_or(Ok(()), |d| validate_dividend(d, at))
+}
+
+/// The dividend is excluded (and has no table field), estimated (with every table field),
+/// or verified or placeholder (with every table field or none).
+fn validate_dividend(d: &Dividend, at: &impl Fn(&str) -> String) -> Result<(), ConfigError> {
+    let fields = [
+        ("table", d.table.is_some()),
+        ("sha256", d.sha256.is_some()),
+        ("tz", d.tz.is_some()),
+        ("time", d.time.is_some()),
+        ("weekdays_before", d.weekdays_before.is_some()),
+    ];
+    let any = fields.iter().any(|(_, set)| *set);
+    if d.excluded {
+        if let Some((field, _)) = fields.iter().find(|(_, set)| *set) {
+            return Err(invalid(
+                at(&format!("dividend.{field}")),
+                "an excluded dividend charges nothing: only a charged dividend takes this field",
+            ));
+        }
+        return Ok(());
+    }
+    if !d.estimated && !any {
+        // A verified or placeholder zero: it charges nothing.
+        return Ok(());
+    }
+    for (field, set) in fields {
+        if !set {
+            return Err(invalid(
+                at(&format!("dividend.{field}")),
+                "required by a dividend charged from a table",
+            ));
+        }
+    }
+    if d.weekdays_before.is_some_and(|n| n > 5) {
+        return Err(invalid(at("dividend.weekdays_before"), "must be at most 5"));
+    }
+    let sha = d.sha256.as_deref().unwrap_or_default();
+    if sha.len() != 64 || !sha.bytes().all(|b| b.is_ascii_hexdigit()) {
+        return Err(invalid(
+            at("dividend.sha256"),
+            format!("{sha:?} is not 64 hex digits"),
+        ));
+    }
+    Ok(())
 }
 
 /// The carry is excluded (and has none of the modelled fields) or modelled (`estimated`
@@ -1792,6 +2144,41 @@ impl CostConfig {
             day_count: Some(day_count),
             rates: Some(Arc::new(table)),
         };
+        self.validate().expect("the config is valid");
+        self
+    }
+
+    /// This config with `symbol`'s dividend at `venue` estimated from the synthetic table
+    /// `csv`, as if loaded from a file `dividend.csv` pinned by its sha256, charged at
+    /// `time` in `tz` on the weekday `weekdays_before` weekdays before each ex-date.
+    pub(crate) fn with_estimated_dividend(
+        mut self,
+        venue: &str,
+        symbol: &str,
+        csv: &str,
+        (tz, time, weekdays_before): (Tz, &str, u32),
+    ) -> Self {
+        let sha256 = sha256_hex(csv.as_bytes());
+        let table = DividendTable::from_bytes(csv.as_bytes(), &sha256).expect("a valid table");
+        self.venues
+            .get_mut(venue)
+            .expect("venue")
+            .instruments
+            .get_mut(symbol)
+            .expect("instrument")
+            .dividend = Some(Dividend {
+            source: "synthetic test table".to_owned(),
+            placeholder: false,
+            excluded: false,
+            reason: None,
+            estimated: true,
+            table: Some(PathBuf::from("dividend.csv")),
+            sha256: Some(sha256),
+            tz: Some(tz),
+            time: Some(NaiveTime::parse_from_str(time, "%H:%M").expect("HH:MM")),
+            weekdays_before: Some(weekdays_before),
+            events: Some(Arc::new(table)),
+        });
         self.validate().expect("the config is valid");
         self
     }
@@ -2837,5 +3224,289 @@ carry = {{ source = "test", placeholder = false, excluded = true, reason = "not 
     fn from_path_reports_the_missing_file() {
         let err = CostConfig::from_path("/nonexistent/costs.toml").unwrap_err();
         assert!(matches!(err, ConfigError::Io { .. }));
+    }
+
+    /// A labelled synthetic dividend table: test values, not any index's or any venue's.
+    const DIVIDEND_CSV: &str = "\
+date,points,long_share,short_share,bound
+2024-01-02,0,1,1,false
+2024-01-17,1.5,0.8,1,false
+2024-01-31,2.25,0,1.1,true
+";
+
+    fn estimated_dividend(table: &str, sha256: &str) -> String {
+        format!(
+            r#"dividend = {{ source = "synthetic test table", placeholder = false, estimated = true, table = "{table}", sha256 = "{sha256}", tz = "America/New_York", time = "16:00", weekdays_before = 1 }}"#
+        )
+    }
+
+    #[test]
+    fn a_cost_file_without_a_dividend_loads_and_lists_nothing() {
+        let c = CostConfig::from_toml_str(&minimal("", "", LONDON)).unwrap();
+        let cost = &c.venue("v").unwrap().instruments["EURUSD"];
+        assert!(cost.dividend.is_none());
+        assert!(
+            cost.provenance()
+                .iter()
+                .all(|p| p.component != CostComponent::Dividend)
+        );
+        assert!(c.dividend_tables("v").unwrap().is_empty());
+        let builtin = CostConfig::builtin();
+        for (id, venue) in builtin.venues() {
+            assert!(builtin.dividend_tables(id).unwrap().is_empty());
+            assert!(venue.instruments.values().all(|i| i.dividend.is_none()));
+        }
+    }
+
+    #[test]
+    fn an_estimated_dividend_loads_its_table_beside_the_cost_file() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::create_dir(dir.path().join("dividend")).unwrap();
+        std::fs::write(dir.path().join("dividend/x.csv"), DIVIDEND_CSV).unwrap();
+        let sha = sha256_hex(DIVIDEND_CSV.as_bytes());
+        let path = dir.path().join("costs.toml");
+        std::fs::write(
+            &path,
+            minimal(
+                "",
+                &estimated_dividend("dividend/x.csv", &sha.to_uppercase()),
+                LONDON,
+            ),
+        )
+        .unwrap();
+        let c = CostConfig::from_path(&path).unwrap();
+        let cost = &c.venue("v").unwrap().instruments["EURUSD"];
+        let dividend = cost.dividend.as_ref().unwrap();
+        assert!(dividend.is_charged());
+        let table = dividend.events.as_ref().unwrap();
+        assert_eq!(table.sha256(), sha);
+        let d = |m, day| NaiveDate::from_ymd_opt(2024, m, day).unwrap();
+        assert_eq!(table.rows().len(), 3);
+        assert_eq!(
+            table.row(d(1, 31)),
+            Some(&DividendRow {
+                date: d(1, 31),
+                points: 2.25,
+                long_share: 0.0,
+                short_share: 1.1,
+                bound: true,
+            })
+        );
+        assert!(table.row(d(1, 16)).is_none());
+        assert!(table.covers(d(1, 2)) && table.covers(d(1, 31)));
+        assert!(!table.covers(d(1, 1)) && !table.covers(d(2, 1)));
+        // Estimated: costed and listed, never excluded.
+        assert_eq!(
+            c.estimates("v")
+                .unwrap()
+                .iter()
+                .filter(|e| e.component == CostComponent::Dividend)
+                .map(|e| e.source.as_str())
+                .collect::<Vec<_>>(),
+            ["synthetic test table"]
+        );
+        assert!(c.costed("v").unwrap()["EURUSD"]);
+        assert_eq!(
+            c.dividend_tables("v").unwrap()["EURUSD"],
+            DividendTableRef {
+                path: "dividend/x.csv".to_owned(),
+                sha256: sha,
+                rows: 3,
+                first_date: d(1, 2),
+                last_date: d(1, 31),
+                tz: "America/New_York".to_owned(),
+                time: NaiveTime::from_hms_opt(16, 0, 0).unwrap(),
+                weekdays_before: 1,
+            }
+        );
+    }
+
+    #[test]
+    fn the_dividend_statuses_are_listed_and_an_excluded_one_is_omitted() {
+        let load = |dividend: &str| CostConfig::from_toml_str(&minimal("", dividend, LONDON));
+        // Verified zero: a stated fact, charges nothing, costed.
+        let c = load(
+            r#"dividend = { source = "test: the venue makes no adjustment", placeholder = false }"#,
+        )
+        .unwrap();
+        let d = c.venue("v").unwrap().instruments["EURUSD"]
+            .dividend
+            .clone()
+            .unwrap();
+        assert!(!d.is_charged());
+        let p = c.venue("v").unwrap().instruments["EURUSD"].provenance();
+        assert_eq!(p.last().unwrap().component, CostComponent::Dividend);
+        assert_eq!(p.last().unwrap().status, ProvenanceStatus::Verified);
+        assert!(c.costed("v").unwrap()["EURUSD"]);
+        assert!(c.dividend_tables("v").unwrap().is_empty());
+        // Placeholder: listed, and the instrument is not costed.
+        let c = load(r#"dividend = { source = "test", placeholder = true }"#).unwrap();
+        assert_eq!(
+            c.placeholders("v").unwrap()[0].component,
+            CostComponent::Dividend
+        );
+        assert!(!c.costed("v").unwrap()["EURUSD"]);
+        // Excluded: omitted, so still costed.
+        let c = load(r#"dividend = { source = "test", placeholder = false, excluded = true, reason = "not modelled" }"#)
+            .unwrap();
+        let e = c
+            .exclusions("v")
+            .unwrap()
+            .into_iter()
+            .find(|e| e.component == CostComponent::Dividend)
+            .unwrap();
+        assert_eq!(e.effect, ExclusionEffect::Omitted);
+        assert_eq!(e.reason, "not modelled");
+        assert!(c.costed("v").unwrap()["EURUSD"]);
+        assert_eq!(CostComponent::Dividend.key(), "dividend");
+    }
+
+    #[test]
+    fn the_dividend_forms_are_validated() {
+        let sha = "0".repeat(64);
+        let estimated = estimated_dividend("t.csv", &sha);
+        let without = |field: &str| {
+            let start = estimated.find(&format!(", {field} =")).unwrap();
+            let rest = &estimated[start + 2..];
+            let end = rest.find(", ").or_else(|| rest.find(" }")).unwrap();
+            format!("{}{}", &estimated[..start], &rest[end..])
+        };
+        let cases = [
+            // An estimated dividend needs every table field.
+            (without("table"), "dividend.table"),
+            (without("sha256"), "dividend.sha256"),
+            (without("tz"), "dividend.tz"),
+            (without("time"), "dividend.time"),
+            (without("weekdays_before"), "dividend.weekdays_before"),
+            (
+                r#"dividend = { source = "test", placeholder = false, estimated = true }"#
+                    .to_owned(),
+                "dividend.table",
+            ),
+            // A verified dividend takes every table field or none.
+            (
+                r#"dividend = { source = "test", placeholder = false, table = "t.csv" }"#
+                    .to_owned(),
+                "dividend.sha256",
+            ),
+            // An excluded dividend takes none.
+            (
+                r#"dividend = { source = "test", placeholder = false, excluded = true, reason = "r", tz = "UTC" }"#
+                    .to_owned(),
+                "dividend.tz",
+            ),
+            (
+                r#"dividend = { source = "test", placeholder = false, excluded = true }"#
+                    .to_owned(),
+                "dividend.reason",
+            ),
+            (
+                r#"dividend = { source = "test", placeholder = false, reason = "r" }"#.to_owned(),
+                "dividend.reason",
+            ),
+            (
+                r#"dividend = { source = " ", placeholder = false }"#.to_owned(),
+                "dividend.source",
+            ),
+            (
+                r#"dividend = { source = "test", placeholder = true, excluded = true, reason = "r" }"#
+                    .to_owned(),
+                "dividend",
+            ),
+            (
+                estimated.replace("weekdays_before = 1", "weekdays_before = 6"),
+                "dividend.weekdays_before",
+            ),
+            (
+                estimated.replace(&sha, "not-hex"),
+                "dividend.sha256",
+            ),
+        ];
+        for (dividend, expect) in cases {
+            match CostConfig::from_toml_str(&minimal("", &dividend, LONDON)) {
+                Err(ConfigError::Invalid { at, .. }) => {
+                    assert_eq!(
+                        at,
+                        format!("venues.v.instruments.EURUSD.{expect}"),
+                        "{dividend}"
+                    );
+                }
+                other => panic!("expected Invalid at {expect} for {dividend}, got {other:?}"),
+            }
+        }
+        // An unknown key, a bad zone and a bad time do not parse.
+        for dividend in [
+            estimated.replace("weekdays_before", "days_before"),
+            estimated.replace("America/New_York", "America/Nowhere"),
+            estimated.replace("16:00", "4pm"),
+        ] {
+            assert!(
+                matches!(
+                    CostConfig::from_toml_str(&minimal("", &dividend, LONDON)),
+                    Err(ConfigError::Parse(_))
+                ),
+                "{dividend}"
+            );
+        }
+    }
+
+    #[test]
+    fn a_dividend_table_that_is_missing_altered_or_malformed_does_not_load() {
+        let dir = tempfile::tempdir().unwrap();
+        let load = |csv: &str, sha: &str| {
+            std::fs::write(dir.path().join("t.csv"), csv).unwrap();
+            CostConfig::from_toml_str_at(
+                &minimal("", &estimated_dividend("t.csv", sha), LONDON),
+                dir.path(),
+            )
+        };
+        let refused = |csv: &str, expect: &str| {
+            let sha = sha256_hex(csv.as_bytes());
+            match load(csv, &sha) {
+                Err(ConfigError::Invalid { at, reason }) => {
+                    assert_eq!(at, "venues.v.instruments.EURUSD.dividend.table");
+                    assert!(reason.contains(expect), "{reason} lacks {expect:?}");
+                }
+                other => panic!("expected Invalid for\n{csv}, got {other:?}"),
+            }
+        };
+        let header = "date,points,long_share,short_share,bound\n";
+        let sha = sha256_hex(DIVIDEND_CSV.as_bytes());
+        match load(&DIVIDEND_CSV.replace("1.5", "1.6"), &sha) {
+            Err(ConfigError::Invalid { reason, .. }) => assert!(reason.contains("sha256")),
+            other => panic!("expected a sha256 mismatch, got {other:?}"),
+        }
+        refused(
+            &DIVIDEND_CSV.replace("long_share,short_share", "short_share,long_share"),
+            "header",
+        );
+        refused(header, "no rows");
+        refused(
+            &format!("{header}2024-01-17,1,1,1,false\n2024-01-17,1,1,1,false\n"),
+            "not after",
+        );
+        refused(
+            &format!("{header}2024-01-17,1,1,1,false\n2024-01-16,1,1,1,false\n"),
+            "not after",
+        );
+        refused(&format!("{header}2024-01-17,-1,1,1,false\n"), "points -1");
+        refused(&format!("{header}2024-01-17,NaN,1,1,false\n"), "points NaN");
+        refused(
+            &format!("{header}2024-01-17,1,-0.5,1,false\n"),
+            "long_share",
+        );
+        refused(
+            &format!("{header}2024-01-17,1,1,inf,false\n"),
+            "short_share",
+        );
+        refused(&format!("{header}2024-01-17,1,1,1,maybe\n"), "line 2");
+        refused(&format!("{header}17/01/2024,1,1,1,false\n"), "line 2");
+        assert!(matches!(
+            CostConfig::from_toml_str_at(
+                &minimal("", &estimated_dividend("absent.csv", &sha), LONDON),
+                dir.path()
+            ),
+            Err(ConfigError::Io { .. })
+        ));
     }
 }

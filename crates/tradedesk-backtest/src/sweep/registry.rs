@@ -164,10 +164,11 @@ pub enum TrialOutcome {
         /// recorded.
         #[serde(default, skip_serializing_if = "Option::is_none")]
         fills: Option<Vec<Fill>>,
-        /// Every rollover charge of the run's ledger, in booking order
+        /// Every held-position charge of the run's ledger, in booking order
         /// (`Ledger::financing_charges`), each split into its financing and carry parts
-        /// with the carry table row used: written only when a charge has `components`
-        /// (a modelled carry, task #203), so that every charge can be recomputed.
+        /// with the carry table row used, or a dividend record with its `dividend` part:
+        /// written only when a charge has `components` (a modelled carry, task #203) or a
+        /// `dividend` part (task #209), so that every charge can be recomputed.
         /// `FinancingCharge::position` is the `ClosedTrade::id` it belongs to. `None`, and
         /// absent from the JSON, otherwise and in records written before task #203.
         #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -225,8 +226,9 @@ impl TrialRecord {
         }
     }
 
-    /// The rollover charges of a completed trial, split by component; `None` for a failed
-    /// cell, a trial with no modelled carry, or a record written before task #203.
+    /// The held-position charges of a completed trial, split by component; `None` for a
+    /// failed cell, a trial with no modelled carry and no dividend charge, or a record
+    /// written before task #203.
     #[must_use]
     pub fn rollovers(&self) -> Option<&[FinancingCharge]> {
         match &self.outcome {
