@@ -19,7 +19,8 @@
 //!
 //! A dividend ([`DividendClock`], [`dividend_charge`]) is charged at its own instant: a
 //! local time on a weekday a configured number of weekdays before each ex-date, in its
-//! own zone. A position held across that instant is credited (long) or debited (short)
+//! own zone. The local time can follow a dated schedule, so the instant moves when an
+//! exchange changes its close time. A position held across that instant is credited (long) or debited (short)
 //! the row's points times its side's share.
 
 use chrono::{
@@ -180,49 +181,90 @@ pub struct DividendInstant {
     pub at_utc: DateTime<Utc>,
 }
 
-/// When a dividend is charged: `time` in `tz` on the weekday `weekdays_before` weekdays
-/// before each ex-date. Exchange holidays are not modelled.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+/// The day of the charge instant for ex-date `ex_date`: `weekdays_before` weekdays
+/// (Monday to Friday) before it.
+#[must_use]
+pub fn charge_day(ex_date: NaiveDate, weekdays_before: u32) -> NaiveDate {
+    let mut date = ex_date;
+    let mut left = weekdays_before;
+    while left > 0 {
+        date = date.pred_opt().unwrap_or(date);
+        if !matches!(date.weekday(), Weekday::Sat | Weekday::Sun) {
+            left -= 1;
+        }
+    }
+    date
+}
+
+/// When a dividend is charged: a local time in `tz` on the weekday `weekdays_before`
+/// weekdays before each ex-date. The time is the one of a dated schedule that applies on
+/// the day of the charge, so the instant can follow a change of an exchange's close time.
+/// Exchange holidays are not modelled.
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct DividendClock {
     tz: Tz,
-    time: NaiveTime,
+    /// `(from, time)`, `from` strictly ascending; not empty.
+    times: Vec<(NaiveDate, NaiveTime)>,
     weekdays_before: u32,
 }
 
 impl DividendClock {
-    /// A clock from its zone, local time and weekdays before the ex-date.
+    /// A clock from its zone, a single local time and weekdays before the ex-date.
     #[must_use]
     pub fn new(tz: Tz, time: NaiveTime, weekdays_before: u32) -> Self {
         Self {
             tz,
-            time,
+            times: vec![(NaiveDate::MIN, time)],
             weekdays_before,
         }
+    }
+
+    /// A clock from its zone, a dated schedule of local times and weekdays before the
+    /// ex-date. Each `(from, time)` applies to charge days from `from` to the day before
+    /// the next entry's; a day before the first entry takes the first entry's time.
+    /// `None` when `times` is empty or its `from` dates are not strictly ascending.
+    #[must_use]
+    pub fn with_schedule(
+        tz: Tz,
+        times: Vec<(NaiveDate, NaiveTime)>,
+        weekdays_before: u32,
+    ) -> Option<Self> {
+        if times.is_empty() || times.windows(2).any(|w| w[1].0 <= w[0].0) {
+            return None;
+        }
+        Some(Self {
+            tz,
+            times,
+            weekdays_before,
+        })
     }
 
     /// The clock of a dividend charged from a table; `None` when it charges nothing.
     #[must_use]
     pub fn of(dividend: &Dividend) -> Option<Self> {
         dividend.events.as_ref()?;
-        Some(Self::new(
+        Self::with_schedule(
             dividend.tz?,
-            dividend.time?,
+            dividend
+                .schedule()
+                .into_iter()
+                .map(|t| (t.from, t.time))
+                .collect(),
             dividend.weekdays_before?,
-        ))
+        )
+    }
+
+    /// The local time that applies on charge day `day`.
+    fn time_on(&self, day: NaiveDate) -> NaiveTime {
+        let i = self.times.partition_point(|(from, _)| *from <= day);
+        self.times[i.saturating_sub(1)].1
     }
 
     /// The charge instant for ex-date `ex_date`.
     #[must_use]
     pub fn instant_for(&self, ex_date: NaiveDate) -> DateTime<Utc> {
-        let mut date = ex_date;
-        let mut left = self.weekdays_before;
-        while left > 0 {
-            date = date.pred_opt().unwrap_or(date);
-            if !matches!(date.weekday(), Weekday::Sat | Weekday::Sun) {
-                left -= 1;
-            }
-        }
-        local_instant(self.tz, date, self.time)
+        let day = charge_day(ex_date, self.weekdays_before);
+        local_instant(self.tz, day, self.time_on(day))
     }
 
     /// Every date whose charge instant is strictly after `after` and strictly before
@@ -665,6 +707,92 @@ mod tests {
             ),
             vec![(date(2024, 1, 17), tuesday)]
         );
+    }
+
+    /// Illustrative times, not any exchange's: 13:00 New York to 2024-01-17, then 16:00.
+    fn changing_close() -> DividendClock {
+        DividendClock::with_schedule(
+            chrono_tz::America::New_York,
+            vec![
+                (date(2024, 1, 1), NaiveTime::from_hms_opt(13, 0, 0).unwrap()),
+                (
+                    date(2024, 1, 18),
+                    NaiveTime::from_hms_opt(16, 0, 0).unwrap(),
+                ),
+            ],
+            1,
+        )
+        .unwrap()
+    }
+
+    #[test]
+    fn the_dividend_instant_takes_the_time_of_its_charge_day() {
+        let clock = changing_close();
+        // Ex-date Wednesday 2024-01-17: charged Tuesday 16th at 13:00 EST, 18:00Z.
+        assert_eq!(
+            clock.instant_for(date(2024, 1, 17)),
+            utc(2024, 1, 16, 18, 0)
+        );
+        // Ex-date Thursday 18th: charged Wednesday 17th, the day before the change.
+        assert_eq!(
+            clock.instant_for(date(2024, 1, 18)),
+            utc(2024, 1, 17, 18, 0)
+        );
+        // Ex-date Friday 19th: charged Thursday 18th, the change date, at 16:00 EST.
+        assert_eq!(
+            clock.instant_for(date(2024, 1, 19)),
+            utc(2024, 1, 18, 21, 0)
+        );
+        // Ex-date Monday 22nd: charged Friday 19th at 16:00.
+        assert_eq!(
+            clock.instant_for(date(2024, 1, 22)),
+            utc(2024, 1, 19, 21, 0)
+        );
+        // A charge day before the first entry takes the first entry's time.
+        assert_eq!(
+            clock.instant_for(date(2023, 12, 20)),
+            utc(2023, 12, 19, 18, 0)
+        );
+        // Held over the instants across the change, in order.
+        let held = |a, b| {
+            clock
+                .instants_between(a, b)
+                .into_iter()
+                .map(|i| (i.ex_date, i.at_utc))
+                .collect::<Vec<_>>()
+        };
+        assert_eq!(
+            held(utc(2024, 1, 17, 12, 0), utc(2024, 1, 18, 22, 0)),
+            vec![
+                (date(2024, 1, 18), utc(2024, 1, 17, 18, 0)),
+                (date(2024, 1, 19), utc(2024, 1, 18, 21, 0)),
+            ]
+        );
+        // Between the old and the new instant on each side of the change: on the 17th
+        // the 13:00 instant is behind, on the 18th the 16:00 instant is ahead.
+        assert!(held(utc(2024, 1, 17, 19, 0), utc(2024, 1, 17, 20, 0)).is_empty());
+        assert!(held(utc(2024, 1, 18, 19, 0), utc(2024, 1, 18, 20, 0)).is_empty());
+    }
+
+    #[test]
+    fn a_single_time_is_a_one_entry_schedule_and_a_bad_schedule_is_refused() {
+        let t = |h| NaiveTime::from_hms_opt(h, 0, 0).unwrap();
+        let tz = chrono_tz::America::New_York;
+        let single = new_york_close(1);
+        let one = DividendClock::with_schedule(tz, vec![(date(2024, 1, 1), t(16))], 1).unwrap();
+        for day in 1..=31 {
+            let ex = date(2024, 1, day);
+            assert_eq!(single.instant_for(ex), one.instant_for(ex), "{ex}");
+        }
+        assert!(DividendClock::with_schedule(tz, vec![], 1).is_none());
+        for times in [
+            vec![(date(2024, 1, 18), t(16)), (date(2024, 1, 1), t(13))],
+            vec![(date(2024, 1, 1), t(16)), (date(2024, 1, 1), t(13))],
+        ] {
+            assert!(DividendClock::with_schedule(tz, times, 1).is_none());
+        }
+        assert_eq!(charge_day(date(2024, 1, 22), 1), date(2024, 1, 19));
+        assert_eq!(charge_day(date(2024, 1, 22), 0), date(2024, 1, 22));
     }
 
     #[test]
