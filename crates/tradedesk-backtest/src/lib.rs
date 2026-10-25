@@ -65,10 +65,10 @@ pub use bar::{JoinedBar, Ohlcv};
 pub use cost::config::{
     AssetClass, Carry, CarryRow, CarryTable, CarryTableRef, Commission, ComponentProvenance,
     ConfigError, CostComponent, CostConfig, CostModels, DIVIDEND_TABLE_HEADER, Dividend,
-    DividendRow, DividendTable, DividendTableRef, Estimate, Exclusion, ExclusionEffect, Financing,
-    InstrumentSpec, Placeholder, PriceSide, Product, ProvenanceStatus, RolloverSpec, Slippage,
-    SlippageModel, Spread, SpreadBasis, SpreadExcess, SpreadExcessState, SpreadWindow, TripleDay,
-    Venue, VenueInstrumentCost, WeekendRule, WeekendRules,
+    DividendRow, DividendTable, DividendTableRef, DividendTime, Estimate, Exclusion,
+    ExclusionEffect, Financing, InstrumentSpec, Placeholder, PriceSide, Product, ProvenanceStatus,
+    RolloverSpec, Slippage, SlippageModel, Spread, SpreadBasis, SpreadExcess, SpreadExcessState,
+    SpreadWindow, TripleDay, Venue, VenueInstrumentCost, WeekendRule, WeekendRules,
 };
 pub use cost::fill::{
     FillCostDetail, FillError, FillKind, FillModel, FillQuote, PricePoint, SpreadRatioStatus,
@@ -76,7 +76,7 @@ pub use cost::fill::{
 };
 pub use cost::financing::{
     Direction, DividendClock, DividendInstant, Rollover, RolloverCalendar, carry_charge,
-    dividend_charge, rollover_charge,
+    charge_day, dividend_charge, rollover_charge,
 };
 pub use cost::minutes::{MinuteCosts, MinuteCostsError, MinutePrices};
 pub use engine::{

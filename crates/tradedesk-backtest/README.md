@@ -420,7 +420,9 @@ before. It has the four provenance states:
 ```toml
 # Estimated: charged from an ex-date table, at the instant tz, time and weekdays_before set.
 dividend = { placeholder = false, estimated = true, table = "dividend/x.csv", sha256 = "<64 hex digits>", tz = "America/New_York", time = "16:00", weekdays_before = 1, source = "the inputs of the table" }
-# Verified or placeholder: with the same five table fields it charges from the table;
+# The same with a dated schedule of times in place of `time`, for a close time that changes.
+dividend = { placeholder = false, estimated = true, table = "dividend/x.csv", sha256 = "<64 hex digits>", tz = "America/New_York", times = [{ from = "2024-01-01", time = "13:00" }, { from = "2024-01-18", time = "16:00" }], weekdays_before = 1, source = "the inputs of the table" }
+# Verified or placeholder: with the same table fields it charges from the table;
 # with none of them it is a stated zero and charges nothing.
 dividend = { placeholder = false, source = "where the venue states that no adjustment applies" }
 # Excluded: charges nothing, takes no table field; results stay costed and list it.
@@ -446,6 +448,17 @@ dividend = { placeholder = false, excluded = true, reason = "...", source = "...
   ex-date are all charged at Friday's instant. Exchange holidays are not
   modelled: the table's maker states the instant. A position is held over
   the instant as over a rollover: `entry < instant < exit`.
+- **Dated times.** An exchange can change its close time inside the
+  table's span. In place of `time`, `times` is a list of
+  `{ from = "YYYY-MM-DD", time = "HH:MM" }` entries: each entry applies to
+  charge instants whose local day (the weekday `weekdays_before` before the
+  ex-date, not the ex-date) is on or after its `from` and before the next
+  entry's. A charged dividend has `time` or `times`, not both; a single
+  `time` is a one-entry schedule and charges as before. The config does not
+  load when `times` is empty, when its `from` dates are not strictly
+  ascending, or when the first entry is after the charge day of the
+  table's first date. Coverage (below) is checked at the instant that
+  applies on each date.
 - **Charge.** A long is credited `-(points x pip_size x long_share x |size|)`
   and a short is debited `points x pip_size x short_share x |size|`, quote
   currency; `x fx_rate` in account currency. A position held over the
@@ -469,8 +482,9 @@ dividend = { placeholder = false, excluded = true, reason = "...", source = "...
   dividend charges nothing.
 - **Metadata and registry.** `RunMetadata.dividend_tables` lists, per
   instrument, the table's configured `path`, its `sha256`, `rows`,
-  `first_date`, `last_date`, and the instant's `tz`, `time` and
-  `weekdays_before`. An estimated dividend is listed in
+  `first_date`, `last_date`, and the instant's `tz`, `time` (or `times`,
+  each `{ from, time }` with the time as `HH:MM`) and `weekdays_before`. Only
+  the one that is configured is written. An estimated dividend is listed in
   `RunMetadata.estimates`, and the instrument stays costed. The sweep
   registry writes every held-position record (`outcome.rollovers`) when one
   has a `dividend` part. Without a charged dividend none of these keys is

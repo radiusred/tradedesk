@@ -2642,6 +2642,104 @@ date,points,long_share,short_share,bound
         assert!(l.financing_charges().is_empty());
     }
 
+    /// `dividend_ledger` with a dated schedule in place of its single time: 13:00 New
+    /// York to 2024-01-17, 16:00 from 2024-01-18. Illustrative times, not any exchange's.
+    fn scheduled_dividend_ledger() -> Ledger {
+        let c = crate::cost::config::arithmetic_fixture()
+            .with_estimated_dividend(
+                "example_spread_bet",
+                "USA500IDXUSD",
+                DIVIDEND_CSV,
+                (chrono_tz::America::New_York, "16:00", 1),
+            )
+            .with_dividend_times(
+                "example_spread_bet",
+                "USA500IDXUSD",
+                &[("2024-01-01", "13:00"), ("2024-01-18", "16:00")],
+            );
+        Ledger::new(&c, "example_spread_bet", STOP_FIRST, fx()).unwrap()
+    }
+
+    #[test]
+    fn a_dated_schedule_charges_at_the_instant_of_each_side_of_the_change() {
+        // Tuesday 2024-01-16 is before the change: the 2024-01-17 ex-date is charged at
+        // 13:00 New York, 18:00Z. Friday 2024-01-19 is after it: the 2024-01-22 ex-date is
+        // charged at 16:00, 21:00Z. Each position is held from `open` for `hours`.
+        let (tue, fri) = (16, 19);
+        let cases = [
+            // Opened before the old instant, closed between the two: charged before the
+            // change only.
+            (tue, 17, 2, Some((18, 1.2, 1.5))),
+            (fri, 17, 2, None),
+            // Opened between the two, closed after the new instant: charged after the
+            // change only.
+            (tue, 20, 2, None),
+            (fri, 20, 2, Some((21, 3.0, 3.0))),
+            // Opened and closed between the two: never charged.
+            (tue, 19, 1, None),
+            (fri, 19, 1, None),
+        ];
+        for (day, open, hours, expected) in cases {
+            for direction in [Direction::Long, Direction::Short] {
+                let s = spx_series(utc(2024, 1, day, open, 0), hours, 4800.0, 0.0);
+                let mut l = scheduled_dividend_ledger();
+                let id = open_at(&mut l, &order(direction, 1.0), &s);
+                let trade = close_last(&mut l, id, &s);
+                let ds = dividends(&l);
+                let case = format!("{day} {open}:00Z +{hours}h {direction:?}");
+                if let Some((hour, credit, debit)) = expected {
+                    assert_eq!(ds.len(), 1, "{case}");
+                    assert_eq!(ds[0].at_utc, utc(2024, 1, day, hour, 0), "{case}");
+                    let charge = match direction {
+                        Direction::Long => -credit,
+                        Direction::Short => debit,
+                    };
+                    assert!(close_to(ds[0].charge, charge), "{case}");
+                    assert!(close_to(trade.financing, charge), "{case}");
+                } else {
+                    assert!(ds.is_empty(), "{case}");
+                    assert_eq!(trade.dividend, Some(DividendTotals::default()), "{case}");
+                }
+            }
+        }
+        // With the single 16:00 time, the Tuesday cases swap: the old instant is gone.
+        for (open, charged) in [(17, false), (20, true)] {
+            let s = spx_series(utc(2024, 1, tue, open, 0), 2, 4800.0, 0.0);
+            let mut l = dividend_ledger();
+            let id = open_at(&mut l, &order(Direction::Short, 1.0), &s);
+            close_last(&mut l, id, &s);
+            assert_eq!(dividends(&l).len(), usize::from(charged), "{open}:00Z");
+        }
+        // The run metadata records the schedule.
+        let l = scheduled_dividend_ledger();
+        let t = &l.metadata().dividend_tables["USA500IDXUSD"];
+        assert_eq!(t.time, None);
+        assert_eq!(t.times.as_ref().map(Vec::len), Some(2));
+    }
+
+    #[test]
+    fn coverage_is_checked_at_the_scheduled_instant() {
+        // The 2024-02-01 ex-date, outside the table, is charged Wednesday 2024-01-31 at
+        // 16:00 New York, 21:00Z, after the change. A position held over 13:00 (18:00Z)
+        // that day is not held over that instant and books nothing.
+        let s = spx_series(utc(2024, 1, 31, 17, 0), 2, 4800.0, 0.0);
+        let mut l = scheduled_dividend_ledger();
+        let id = open_at(&mut l, &order(Direction::Long, 1.0), &s);
+        close_last(&mut l, id, &s);
+        assert!(l.financing_charges().is_empty());
+        // Held over 21:00Z: the run stops at the scheduled instant.
+        let s = spx_series(utc(2024, 1, 31, 20, 0), 1, 4800.0, 0.0);
+        let mut l = scheduled_dividend_ledger();
+        open_at(&mut l, &order(Direction::Short, 1.0), &s);
+        match l.accrue_financing(utc(2024, 1, 31, 21, 30), &s) {
+            Err(LedgerError::DividendOutsideTable { ex_date, at, .. }) => {
+                assert_eq!(ex_date, NaiveDate::from_ymd_opt(2024, 2, 1).unwrap());
+                assert_eq!(at, utc(2024, 1, 31, 21, 0));
+            }
+            other => panic!("expected DividendOutsideTable, got {other:?}"),
+        }
+    }
+
     #[test]
     fn without_a_dividend_the_records_have_no_dividend_key() {
         let s = spx_series(utc(2024, 1, 16, 12, 0), 49, 4800.0, 1.0);

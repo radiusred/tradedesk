@@ -33,6 +33,8 @@ use chrono_tz::Tz;
 use serde::{Deserialize, Deserializer, Serialize};
 use sha2::{Digest, Sha256};
 
+use super::financing::charge_day;
+
 /// The checked-in example cost configuration (see the module docs).
 pub const BUILTIN_COSTS_TOML: &str = include_str!("../../config/costs.toml");
 
@@ -222,6 +224,12 @@ fn de_opt_time<'de, D: Deserializer<'de>>(d: D) -> Result<Option<NaiveTime>, D::
     let s = String::deserialize(d)?;
     NaiveTime::parse_from_str(&s, "%H:%M")
         .map(Some)
+        .map_err(|_| serde::de::Error::custom(format!("time {s:?} is not HH:MM")))
+}
+
+fn de_local_time<'de, D: Deserializer<'de>>(d: D) -> Result<NaiveTime, D::Error> {
+    let s = String::deserialize(d)?;
+    NaiveTime::parse_from_str(&s, "%H:%M")
         .map_err(|_| serde::de::Error::custom(format!("time {s:?} is not HH:MM")))
 }
 
@@ -706,9 +714,10 @@ pub(crate) fn sha256_hex(bytes: &[u8]) -> String {
 /// **Excluded** (`excluded = true` with a `reason`): nothing is charged, and costed
 /// results omit it. **Estimated** (`estimated = true`): a dated ex-date table
 /// ([`DividendTable`]) pinned by `table` and `sha256`, charged at the instant that `tz`,
-/// `time` and `weekdays_before` set. **Verified** or **placeholder**: with the same five
-/// table fields it charges from its table; with none of them it is a stated zero and
-/// charges nothing. The table's sha256 is checked when the config loads.
+/// `time` (or the dated schedule `times`) and `weekdays_before` set. **Verified** or
+/// **placeholder**: with the same table fields it charges from its table; with none of
+/// them it is a stated zero and charges nothing. The table's sha256 is checked when the
+/// config loads.
 #[derive(Debug, Clone, PartialEq, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Dividend {
@@ -737,9 +746,15 @@ pub struct Dividend {
     #[serde(default, deserialize_with = "de_opt_tz")]
     pub tz: Option<Tz>,
     /// The local wall-clock time of the charge instant, `"HH:MM"` (for example the
-    /// cash close).
+    /// cash close). A charged dividend has this or `times`, not both.
     #[serde(default, deserialize_with = "de_opt_time")]
     pub time: Option<NaiveTime>,
+    /// A dated schedule of local charge times, for a close time that changes inside the
+    /// table's span: each entry applies from its `from` date (the local date of the charge
+    /// instant) to the day before the next entry's. Not empty, `from` strictly ascending,
+    /// and the first entry on or before the charge day of the table's first date.
+    #[serde(default)]
+    pub times: Option<Vec<DividendTime>>,
     /// The weekday of the charge instant, counted back from the ex-date in weekdays
     /// (Monday to Friday): 0 is the ex-date itself, 1 the weekday before it. At most 5.
     #[serde(default)]
@@ -755,6 +770,37 @@ impl Dividend {
     pub fn is_charged(&self) -> bool {
         self.events.is_some()
     }
+
+    /// The charge times as a dated schedule: `times`, or a single `time` as one entry
+    /// from the earliest date. Empty when neither is set.
+    #[must_use]
+    pub fn schedule(&self) -> Vec<DividendTime> {
+        match (&self.times, self.time) {
+            (Some(times), _) => times.clone(),
+            (None, Some(time)) => vec![DividendTime {
+                from: NaiveDate::MIN,
+                time,
+            }],
+            (None, None) => Vec::new(),
+        }
+    }
+}
+
+/// One entry of a dividend's dated schedule of charge times.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct DividendTime {
+    /// The first local date of the charge instant that this entry applies to.
+    pub from: NaiveDate,
+    /// The local wall-clock time of the charge instant, `"HH:MM"`.
+    #[serde(deserialize_with = "de_local_time", serialize_with = "ser_local_time")]
+    pub time: NaiveTime,
+}
+
+// serde's `serialize_with` passes the field by reference.
+#[allow(clippy::trivially_copy_pass_by_ref)]
+fn ser_local_time<S: serde::Serializer>(t: &NaiveTime, s: S) -> Result<S::Ok, S::Error> {
+    s.serialize_str(&t.format("%H:%M").to_string())
 }
 
 /// The CSV header a dividend table must have, in this order.
@@ -1252,8 +1298,14 @@ pub struct DividendTableRef {
     pub last_date: NaiveDate,
     /// The IANA zone of the charge instant.
     pub tz: String,
-    /// The local time of the charge instant.
-    pub time: NaiveTime,
+    /// The local time of the charge instant, when the dividend has a single `time`.
+    /// Absent from the JSON when it has a schedule.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub time: Option<NaiveTime>,
+    /// The dated schedule of local charge times, when the dividend has `times`. Absent
+    /// from the JSON when it has a single `time`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub times: Option<Vec<DividendTime>>,
     /// Weekdays from the charge instant's day to the ex-date.
     pub weekdays_before: u32,
 }
@@ -1384,6 +1436,25 @@ impl CostConfig {
                         format!("{}: {reason}", path.display()),
                     )
                 })?;
+                // Every date the table covers needs a charge time: the schedule starts on
+                // or before the charge day of the table's first date.
+                if let Some(first) = dividend.times.as_ref().and_then(|t| t.first()) {
+                    let day = charge_day(
+                        events.first_date(),
+                        dividend.weekdays_before.unwrap_or_default(),
+                    );
+                    if day < first.from {
+                        return Err(invalid(
+                            format!("venues.{id}.instruments.{symbol}.dividend.times"),
+                            format!(
+                                "the first entry is from {}, but the table's first date {} \
+                                 is charged on {day}",
+                                first.from,
+                                events.first_date()
+                            ),
+                        ));
+                    }
+                }
                 dividend.events = Some(Arc::new(events));
             }
         }
@@ -1392,7 +1463,8 @@ impl CostConfig {
 
     /// For each instrument at `venue_id` whose dividend charges from a table, the table
     /// and the charge instant: the path as configured, the sha256, the row count, the
-    /// first and last date, and the zone, time and weekdays before. Empty when no
+    /// first and last date, and the zone, time or dated times, and weekdays before. Empty
+    /// when no
     /// dividend there charges.
     ///
     /// # Errors
@@ -1421,7 +1493,8 @@ impl CostConfig {
                         first_date: events.first_date(),
                         last_date: events.last_date(),
                         tz: d.tz.map(|tz| tz.name().to_owned()).unwrap_or_default(),
-                        time: d.time.unwrap_or_default(),
+                        time: d.time,
+                        times: d.times.clone(),
                         weekdays_before: d.weekdays_before.unwrap_or_default(),
                     },
                 ))
@@ -1917,9 +1990,15 @@ fn validate_dividend(d: &Dividend, at: &impl Fn(&str) -> String) -> Result<(), C
         ("table", d.table.is_some()),
         ("sha256", d.sha256.is_some()),
         ("tz", d.tz.is_some()),
-        ("time", d.time.is_some()),
+        ("time", d.time.is_some() || d.times.is_some()),
         ("weekdays_before", d.weekdays_before.is_some()),
     ];
+    if d.excluded && d.times.is_some() {
+        return Err(invalid(
+            at("dividend.times"),
+            "an excluded dividend charges nothing: only a charged dividend takes this field",
+        ));
+    }
     let any = fields.iter().any(|(_, set)| *set);
     if d.excluded {
         if let Some((field, _)) = fields.iter().find(|(_, set)| *set) {
@@ -1944,6 +2023,29 @@ fn validate_dividend(d: &Dividend, at: &impl Fn(&str) -> String) -> Result<(), C
     }
     if d.weekdays_before.is_some_and(|n| n > 5) {
         return Err(invalid(at("dividend.weekdays_before"), "must be at most 5"));
+    }
+    if let Some(times) = &d.times {
+        if d.time.is_some() {
+            return Err(invalid(
+                at("dividend.times"),
+                "give a single `time` or a dated `times`, not both",
+            ));
+        }
+        if times.is_empty() {
+            return Err(invalid(
+                at("dividend.times"),
+                "must have at least one entry",
+            ));
+        }
+        if let Some(pair) = times.windows(2).find(|w| w[1].from <= w[0].from) {
+            return Err(invalid(
+                at("dividend.times"),
+                format!(
+                    "entry from {} is not after the previous entry's {}",
+                    pair[1].from, pair[0].from
+                ),
+            ));
+        }
     }
     let sha = d.sha256.as_deref().unwrap_or_default();
     if sha.len() != 64 || !sha.bytes().all(|b| b.is_ascii_hexdigit()) {
@@ -2176,9 +2278,43 @@ impl CostConfig {
             sha256: Some(sha256),
             tz: Some(tz),
             time: Some(NaiveTime::parse_from_str(time, "%H:%M").expect("HH:MM")),
+            times: None,
             weekdays_before: Some(weekdays_before),
             events: Some(Arc::new(table)),
         });
+        self.validate().expect("the config is valid");
+        self
+    }
+
+    /// This config with `symbol`'s dividend at `venue` (set by
+    /// [`Self::with_estimated_dividend`]) charged at the dated schedule `times`, each
+    /// `("YYYY-MM-DD", "HH:MM")`, in place of its single time.
+    pub(crate) fn with_dividend_times(
+        mut self,
+        venue: &str,
+        symbol: &str,
+        times: &[(&str, &str)],
+    ) -> Self {
+        let dividend = self
+            .venues
+            .get_mut(venue)
+            .expect("venue")
+            .instruments
+            .get_mut(symbol)
+            .expect("instrument")
+            .dividend
+            .as_mut()
+            .expect("a dividend");
+        dividend.time = None;
+        dividend.times = Some(
+            times
+                .iter()
+                .map(|(from, time)| DividendTime {
+                    from: from.parse().expect("YYYY-MM-DD"),
+                    time: NaiveTime::parse_from_str(time, "%H:%M").expect("HH:MM"),
+                })
+                .collect(),
+        );
         self.validate().expect("the config is valid");
         self
     }
@@ -3315,7 +3451,8 @@ date,points,long_share,short_share,bound
                 first_date: d(1, 2),
                 last_date: d(1, 31),
                 tz: "America/New_York".to_owned(),
-                time: NaiveTime::from_hms_opt(16, 0, 0).unwrap(),
+                time: Some(NaiveTime::from_hms_opt(16, 0, 0).unwrap()),
+                times: None,
                 weekdays_before: 1,
             }
         );
@@ -3439,6 +3576,155 @@ date,points,long_share,short_share,bound
             estimated.replace("weekdays_before", "days_before"),
             estimated.replace("America/New_York", "America/Nowhere"),
             estimated.replace("16:00", "4pm"),
+        ] {
+            assert!(
+                matches!(
+                    CostConfig::from_toml_str(&minimal("", &dividend, LONDON)),
+                    Err(ConfigError::Parse(_))
+                ),
+                "{dividend}"
+            );
+        }
+    }
+
+    /// `estimated_dividend` with the dated schedule `times` (a TOML array) in place of
+    /// `time`. Illustrative times, not any exchange's.
+    fn scheduled_dividend(table: &str, sha256: &str, times: &str) -> String {
+        estimated_dividend(table, sha256).replace(r#"time = "16:00""#, &format!("times = {times}"))
+    }
+
+    const SCHEDULE: &str =
+        r#"[{ from = "2024-01-01", time = "13:00" }, { from = "2024-01-18", time = "16:00" }]"#;
+
+    #[test]
+    fn a_dated_schedule_of_charge_times_loads_and_is_recorded() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(dir.path().join("t.csv"), DIVIDEND_CSV).unwrap();
+        let sha = sha256_hex(DIVIDEND_CSV.as_bytes());
+        let load = |times: &str| {
+            CostConfig::from_toml_str_at(
+                &minimal("", &scheduled_dividend("t.csv", &sha, times), LONDON),
+                dir.path(),
+            )
+        };
+        let c = load(SCHEDULE).unwrap();
+        let d = |m, day| NaiveDate::from_ymd_opt(2024, m, day).unwrap();
+        let t = |h| NaiveTime::from_hms_opt(h, 0, 0).unwrap();
+        let expected = vec![
+            DividendTime {
+                from: d(1, 1),
+                time: t(13),
+            },
+            DividendTime {
+                from: d(1, 18),
+                time: t(16),
+            },
+        ];
+        let dividend = c.venue("v").unwrap().instruments["EURUSD"]
+            .dividend
+            .clone()
+            .unwrap();
+        assert!(dividend.is_charged() && dividend.time.is_none());
+        assert_eq!(dividend.schedule(), expected);
+        // The run metadata records the schedule and no single time.
+        let listed = &c.dividend_tables("v").unwrap()["EURUSD"];
+        assert_eq!(
+            (listed.time, listed.times.as_ref()),
+            (None, Some(&expected))
+        );
+        let json = serde_json::to_value(listed).unwrap();
+        assert!(json.get("time").is_none(), "{json}");
+        assert_eq!(
+            json["times"],
+            serde_json::json!([
+                { "from": "2024-01-01", "time": "13:00" },
+                { "from": "2024-01-18", "time": "16:00" },
+            ])
+        );
+        assert_eq!(
+            serde_json::from_value::<DividendTableRef>(json).unwrap(),
+            *listed
+        );
+        // A single `time` is a one-entry schedule, and its record has no `times` key.
+        let single = CostConfig::from_toml_str_at(
+            &minimal("", &estimated_dividend("t.csv", &sha), LONDON),
+            dir.path(),
+        )
+        .unwrap();
+        let s = single.venue("v").unwrap().instruments["EURUSD"]
+            .dividend
+            .clone()
+            .unwrap();
+        assert_eq!(
+            s.schedule(),
+            [DividendTime {
+                from: NaiveDate::MIN,
+                time: t(16),
+            }]
+        );
+        let json = serde_json::to_value(&single.dividend_tables("v").unwrap()["EURUSD"]).unwrap();
+        assert_eq!(json["time"], "16:00:00");
+        assert!(json.get("times").is_none(), "{json}");
+        // The table's first date (2024-01-02) is charged on 2024-01-01: a schedule that
+        // starts after that day leaves it without a charge time.
+        match load(r#"[{ from = "2024-01-02", time = "13:00" }]"#) {
+            Err(ConfigError::Invalid { at, reason }) => {
+                assert_eq!(at, "venues.v.instruments.EURUSD.dividend.times");
+                assert!(reason.contains("charged on 2024-01-01"), "{reason}");
+            }
+            other => panic!("expected Invalid, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn a_dated_schedule_of_charge_times_is_validated() {
+        let sha = "0".repeat(64);
+        let scheduled = |times: &str| scheduled_dividend("t.csv", &sha, times);
+        let cases = [
+            (scheduled("[]"), "dividend.times"),
+            // Out of order, or two entries from the same date.
+            (
+                scheduled(
+                    r#"[{ from = "2024-01-18", time = "16:00" }, { from = "2024-01-01", time = "13:00" }]"#,
+                ),
+                "dividend.times",
+            ),
+            (
+                scheduled(
+                    r#"[{ from = "2024-01-01", time = "13:00" }, { from = "2024-01-01", time = "16:00" }]"#,
+                ),
+                "dividend.times",
+            ),
+            // `time` and `times` together.
+            (
+                scheduled(SCHEDULE).replace("times =", r#"time = "16:00", times ="#),
+                "dividend.times",
+            ),
+            // An excluded dividend takes no schedule.
+            (
+                format!(
+                    r#"dividend = {{ source = "test", placeholder = false, excluded = true, reason = "r", times = {SCHEDULE} }}"#
+                ),
+                "dividend.times",
+            ),
+        ];
+        for (dividend, expect) in cases {
+            match CostConfig::from_toml_str(&minimal("", &dividend, LONDON)) {
+                Err(ConfigError::Invalid { at, .. }) => {
+                    assert_eq!(
+                        at,
+                        format!("venues.v.instruments.EURUSD.{expect}"),
+                        "{dividend}"
+                    );
+                }
+                other => panic!("expected Invalid at {expect} for {dividend}, got {other:?}"),
+            }
+        }
+        // A bad time, a bad date and an unknown key do not parse.
+        for dividend in [
+            scheduled(SCHEDULE).replace("13:00", "1pm"),
+            scheduled(SCHEDULE).replace("2024-01-18", "2024-01-32"),
+            scheduled(SCHEDULE).replace("from =", "since ="),
         ] {
             assert!(
                 matches!(
