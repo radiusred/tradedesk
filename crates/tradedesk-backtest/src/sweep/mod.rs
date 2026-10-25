@@ -792,7 +792,7 @@ impl<'a> Prepared<'a> {
                         .then(|| fills.to_vec()),
                     rollovers: rollovers
                         .iter()
-                        .any(|c| c.components.is_some())
+                        .any(|c| c.components.is_some() || c.dividend.is_some())
                         .then(|| rollovers.to_vec()),
                 }
             }

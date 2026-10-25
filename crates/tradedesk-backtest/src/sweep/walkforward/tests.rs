@@ -166,6 +166,7 @@ fn trade(exit: &str, gross: f64, spread: f64) -> ClosedTrade {
         exit_reason: ExitReason::Signal,
         signal_reason: None,
         spread_excess_cost: None,
+        dividend: None,
     }
 }
 

@@ -16,6 +16,11 @@
 //! short rate. A modelled carry ([`carry_charge`]) is charged at the same rollovers by the
 //! same formula, with the rate of its table's row for the rollover's local date and its
 //! own day count.
+//!
+//! A dividend ([`DividendClock`], [`dividend_charge`]) is charged at its own instant: a
+//! local time on a weekday a configured number of weekdays before each ex-date, in its
+//! own zone. A position held across that instant is credited (long) or debited (short)
+//! the row's points times its side's share.
 
 use chrono::{
     DateTime, Datelike, Days, LocalResult, NaiveDate, NaiveDateTime, NaiveTime, TimeZone, Utc,
@@ -24,7 +29,9 @@ use chrono::{
 use chrono_tz::Tz;
 use serde::{Deserialize, Serialize};
 
-use super::config::{AssetClass, CarryRow, Financing, RolloverSpec, WeekendRules};
+use super::config::{
+    AssetClass, CarryRow, Dividend, DividendRow, Financing, RolloverSpec, WeekendRules,
+};
 
 /// Long or short.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
@@ -89,21 +96,7 @@ impl RolloverCalendar {
     /// York), the first instant after the gap is used.
     #[must_use]
     pub fn instant_on(&self, date: NaiveDate) -> DateTime<Utc> {
-        let local = NaiveDateTime::new(date, self.time);
-        let resolved = match self.tz.from_local_datetime(&local) {
-            LocalResult::Single(t) | LocalResult::Ambiguous(t, _) => t,
-            LocalResult::None => {
-                // Step forward a minute at a time to the end of the gap.
-                let mut probe = local;
-                loop {
-                    probe += chrono::Duration::minutes(1);
-                    if let Some(t) = self.tz.from_local_datetime(&probe).earliest() {
-                        break t;
-                    }
-                }
-            }
-        };
-        resolved.with_timezone(&Utc)
+        local_instant(self.tz, date, self.time)
     }
 
     /// Every rollover strictly after `after` and strictly before `before`, oldest first,
@@ -156,6 +149,141 @@ impl RolloverCalendar {
         }
         out
     }
+}
+
+/// The UTC instant of local `time` on `date` in `tz`. In a DST gap, the first instant
+/// after the gap; in a repeated hour, the first of the two.
+fn local_instant(tz: Tz, date: NaiveDate, time: NaiveTime) -> DateTime<Utc> {
+    let local = NaiveDateTime::new(date, time);
+    let resolved = match tz.from_local_datetime(&local) {
+        LocalResult::Single(t) | LocalResult::Ambiguous(t, _) => t,
+        LocalResult::None => {
+            // Step forward a minute at a time to the end of the gap.
+            let mut probe = local;
+            loop {
+                probe += chrono::Duration::minutes(1);
+                if let Some(t) = tz.from_local_datetime(&probe).earliest() {
+                    break t;
+                }
+            }
+        }
+    };
+    resolved.with_timezone(&Utc)
+}
+
+/// One date whose dividend charge instant a position was held across.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct DividendInstant {
+    /// The ex-date (a candidate: the table says whether it has a dividend).
+    pub ex_date: NaiveDate,
+    /// The charge instant in UTC.
+    pub at_utc: DateTime<Utc>,
+}
+
+/// When a dividend is charged: `time` in `tz` on the weekday `weekdays_before` weekdays
+/// before each ex-date. Exchange holidays are not modelled.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct DividendClock {
+    tz: Tz,
+    time: NaiveTime,
+    weekdays_before: u32,
+}
+
+impl DividendClock {
+    /// A clock from its zone, local time and weekdays before the ex-date.
+    #[must_use]
+    pub fn new(tz: Tz, time: NaiveTime, weekdays_before: u32) -> Self {
+        Self {
+            tz,
+            time,
+            weekdays_before,
+        }
+    }
+
+    /// The clock of a dividend charged from a table; `None` when it charges nothing.
+    #[must_use]
+    pub fn of(dividend: &Dividend) -> Option<Self> {
+        dividend.events.as_ref()?;
+        Some(Self::new(
+            dividend.tz?,
+            dividend.time?,
+            dividend.weekdays_before?,
+        ))
+    }
+
+    /// The charge instant for ex-date `ex_date`.
+    #[must_use]
+    pub fn instant_for(&self, ex_date: NaiveDate) -> DateTime<Utc> {
+        let mut date = ex_date;
+        let mut left = self.weekdays_before;
+        while left > 0 {
+            date = date.pred_opt().unwrap_or(date);
+            if !matches!(date.weekday(), Weekday::Sat | Weekday::Sun) {
+                left -= 1;
+            }
+        }
+        local_instant(self.tz, date, self.time)
+    }
+
+    /// Every date whose charge instant is strictly after `after` and strictly before
+    /// `before`, oldest first. Every calendar date is a candidate; several can share one
+    /// instant (with `weekdays_before = 1`, a Saturday, Sunday and Monday ex-date are all
+    /// charged at Friday's).
+    #[must_use]
+    pub fn instants_between(
+        &self,
+        after: DateTime<Utc>,
+        before: DateTime<Utc>,
+    ) -> Vec<DividendInstant> {
+        let mut out = Vec::new();
+        if before <= after {
+            return out;
+        }
+        // An instant is on or before its ex-date, and at most `weekdays_before` weekdays
+        // (so at most `3 × weekdays_before + 3` calendar days, with the weekends) earlier.
+        let first = after.with_timezone(&self.tz).date_naive().pred_opt();
+        let last = before
+            .with_timezone(&self.tz)
+            .date_naive()
+            .checked_add_days(Days::new(u64::from(3 * self.weekdays_before + 3)));
+        let (Some(mut date), Some(last)) = (first, last) else {
+            return out;
+        };
+        while date <= last {
+            let at_utc = self.instant_for(date);
+            if at_utc > after && at_utc < before {
+                out.push(DividendInstant {
+                    ex_date: date,
+                    at_utc,
+                });
+            }
+            match date.succ_opt() {
+                Some(next) => date = next,
+                None => break,
+            }
+        }
+        out
+    }
+}
+
+/// The dividend charged on a position held over the instant of `row`'s ex-date, in quote
+/// currency: a long is credited `points × pip_size × long_share × |size|` (negative), a
+/// short is debited `points × pip_size × short_share × |size|` (positive). Returns the
+/// share applied and the charge.
+#[must_use]
+pub fn dividend_charge(
+    row: &DividendRow,
+    pip_size: f64,
+    direction: Direction,
+    size: f64,
+) -> (f64, f64) {
+    let (share, sign) = match direction {
+        Direction::Long => (row.long_share, -1.0),
+        Direction::Short => (row.short_share, 1.0),
+    };
+    let charge = sign * row.points * pip_size * share * size.abs();
+    // A zero credit is 0, not -0.
+    (share, if charge == 0.0 { 0.0 } else { charge })
 }
 
 /// The financing charged at one rollover, in quote currency: `|size| × mark × rate /
@@ -462,6 +590,105 @@ mod tests {
             ..f360
         };
         assert!((rollover_charge(&f365, Direction::Long, 2.0, 5000.0, 1) - 1.0).abs() < 1e-12);
+    }
+
+    fn new_york_close(weekdays_before: u32) -> DividendClock {
+        DividendClock::new(
+            chrono_tz::America::New_York,
+            NaiveTime::from_hms_opt(16, 0, 0).unwrap(),
+            weekdays_before,
+        )
+    }
+
+    fn date(y: i32, m: u32, d: u32) -> NaiveDate {
+        NaiveDate::from_ymd_opt(y, m, d).unwrap()
+    }
+
+    #[test]
+    fn the_dividend_instant_counts_weekdays_back_and_moves_with_dst() {
+        let before = new_york_close(1);
+        // Wednesday 2024-01-17: Tuesday 16:00 EST is 21:00Z.
+        assert_eq!(
+            before.instant_for(date(2024, 1, 17)),
+            utc(2024, 1, 16, 21, 0)
+        );
+        // Monday 2024-01-22: back over the weekend to Friday.
+        assert_eq!(
+            before.instant_for(date(2024, 1, 22)),
+            utc(2024, 1, 19, 21, 0)
+        );
+        // Tuesday 2024-03-12: Monday 16:00 EDT is 20:00Z.
+        assert_eq!(
+            before.instant_for(date(2024, 3, 12)),
+            utc(2024, 3, 11, 20, 0)
+        );
+        // 0: the ex-date itself; 3 from a Tuesday: the Thursday before.
+        assert_eq!(
+            new_york_close(0).instant_for(date(2024, 1, 17)),
+            utc(2024, 1, 17, 21, 0)
+        );
+        assert_eq!(
+            new_york_close(3).instant_for(date(2024, 1, 23)),
+            utc(2024, 1, 18, 21, 0)
+        );
+    }
+
+    #[test]
+    fn the_instants_held_across_are_strict_and_share_the_friday_over_a_weekend() {
+        let clock = new_york_close(1);
+        let held = |a, b| {
+            clock
+                .instants_between(a, b)
+                .into_iter()
+                .map(|i| (i.ex_date, i.at_utc))
+                .collect::<Vec<_>>()
+        };
+        // Friday 12:00Z to Monday 12:00Z: Friday 21:00Z is the instant of the Saturday,
+        // Sunday and Monday ex-dates.
+        let friday = utc(2024, 1, 19, 21, 0);
+        assert_eq!(
+            held(utc(2024, 1, 19, 12, 0), utc(2024, 1, 22, 12, 0)),
+            vec![
+                (date(2024, 1, 20), friday),
+                (date(2024, 1, 21), friday),
+                (date(2024, 1, 22), friday),
+            ]
+        );
+        // Opened or closed at the instant itself: not held across it.
+        let tuesday = utc(2024, 1, 16, 21, 0);
+        assert!(held(tuesday, utc(2024, 1, 17, 12, 0)).is_empty());
+        assert!(held(utc(2024, 1, 16, 12, 0), tuesday).is_empty());
+        assert_eq!(
+            held(
+                utc(2024, 1, 16, 12, 0),
+                tuesday + chrono::Duration::minutes(1)
+            ),
+            vec![(date(2024, 1, 17), tuesday)]
+        );
+    }
+
+    #[test]
+    fn a_long_is_credited_and_a_short_debited_its_share_of_the_points() {
+        let row = DividendRow {
+            date: date(2024, 1, 17),
+            points: 1.5,
+            long_share: 0.8,
+            short_share: 1.1,
+            bound: false,
+        };
+        let (share, long) = dividend_charge(&row, 1.0, Direction::Long, 2.0);
+        assert_eq!(share, 0.8);
+        assert!((long + 2.4).abs() < 1e-12);
+        let (share, short) = dividend_charge(&row, 0.01, Direction::Short, -2.0);
+        assert_eq!(share, 1.1);
+        assert!((short - 0.033).abs() < 1e-12);
+        // A zero share credits 0, not -0.
+        let zero = DividendRow {
+            long_share: 0.0,
+            ..row
+        };
+        let (_, credit) = dividend_charge(&zero, 1.0, Direction::Long, 2.0);
+        assert!(credit == 0.0 && credit.is_sign_positive());
     }
 
     proptest! {
