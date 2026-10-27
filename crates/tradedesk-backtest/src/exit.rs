@@ -30,7 +30,7 @@ use crate::cost::financing::Direction;
 #[serde(rename_all = "snake_case")]
 pub enum BothHit {
     /// The stop is taken, filled at the stop level. This is the usual "assume the worse
-    /// order" rule, and it is the archive's NR7 rule.
+    /// order" rule.
     StopFirst,
     /// The stop is taken, filled at the bar's adverse extreme (the low for a long, the
     /// high for a short): the worst price the bar admits. A stress setting.

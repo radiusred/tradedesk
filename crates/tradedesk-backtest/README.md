@@ -126,7 +126,7 @@ name = "Example spread bet (illustrative figures)"
 product = "spread_bet"          # spread_bet | cfd
 rollover = { tz = "Europe/London", time = "22:00" }
 weekend.fx = { triple_day = "wednesday", days_on_triple = 3 }
-weekend.metal = { triple_day = "friday" }
+weekend.metal = { triple_day = "friday" }       # days_on_triple defaults to 3
 weekend.index = { triple_day = "friday" }
 weekend.energy = { triple_day = "friday" }  # optional: required if the venue costs an energy instrument
 
@@ -255,7 +255,9 @@ spread_excess = { baseline_weekdays = 20, cap = 4.0, placeholder = false, estima
 ```
 
 A `volatility` slippage takes no `points` or `bps` (absent or 0), and a
-`fixed` one takes none of the five volatility fields. Both models read the
+`fixed` one takes none of the five volatility fields. Under `volatility`,
+`market`, `stop` and `limit` are required and not negative, and
+`floor_minutes` and `max_gap_minutes` are at least 1. Both models read the
 instrument's one-minute data, which the loader builds when the request asks
 for it (`LoadRequest::with_minute_costs`; a sweep does so for every
 instrument whose venue cost uses either model). The load then also reads
@@ -624,8 +626,8 @@ over every observation.
 The drawdown is measured peak to trough on the daily curve, with the starting
 capital as the opening point (dated the day before the window). There are two
 maxima, because the deepest loss in pounds and in percent can be different
-episodes: `by_amount` (`equity − running peak`, first-class for the ~£100k
-capital ceiling) and `by_fraction` (`equity / running peak − 1`). Each records
+episodes: `by_amount` (`equity − running peak`, first-class when the capital is
+capped) and `by_fraction` (`equity / running peak − 1`). Each records
 the amount, the fraction, the peak and trough dates and equities, and the
 recovery date, which is the first later point at or above the peak (`None` if
 there is none). A curve that never falls below a previous peak has no drawdown
@@ -914,23 +916,25 @@ A `SweepSpec` is TOML (`SweepSpec::from_toml_str` / `from_path`). Unknown keys
 are errors.
 
 ```toml
-name = "a label"                           # not part of any id
+name = "a label"                           # optional; not part of any id
 strategy = "my_strategy"                   # a name in the StrategyRegistry
 base = "default"                           # | frozen (the default), if the factory provides one
                                            # | explicit: each cell sets every field
 instruments = ["XAUUSD"]                   # each is crossed with every parameter cell
 first_day = "2024-01-01"                   # inclusive UTC days
 last_day = "2024-01-31"
-warmup_days = 90                           # calendar days loaded before first_day
+warmup_days = 90                           # calendar days loaded before first_day (default 0)
 venue = "my_venue"                         # a venue id in the cost config
 # cost_config = "path/to/costs.toml"       # absent: the builtin example config/costs.toml;
                                            # sweep --cost-config replaces it
 exit_evaluation = { mode = "intrabar", both_hit = "stop_first" }
+                                           # | both_hit = "conservative" | { mode = "close_only" }
 account_fx = { account_currency = "GBP", rates = { USD = 0.79 } }
 sizing = { kind = "stake_per_point", stake = 0.1 }
+# | { kind = "atr_risk", risk = 100.0, atr_multiple = 2.0, min_units = 1.0, max_units = 1000.0 }
 end_of_run = "close"                       # | leave_open
-starting_capital = 25000.0
-risk_free_rate = 0.0
+starting_capital = 25000.0                 # account currency
+risk_free_rate = 0.0                       # annual (default 0)
 
 [grid]                                     # or [[cells]], an explicit list
 period = [10, 20, 40]
