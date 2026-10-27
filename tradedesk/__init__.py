@@ -26,7 +26,7 @@ from .types import (
     StreamConsumer,
 )
 
-__version__ = "1.6.3"
+__version__ = "1.7.0"
 
 __all__ = [
     "__version__",
