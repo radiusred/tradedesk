@@ -42,7 +42,7 @@ arrow              = "58"
 csv                = "1.4"
 # The sha256 a cost file pins its carry tables by.
 sha2               = "0.10"
-zstd               = "0.13"
+zstd               = "0.14"
 walkdir            = "2.5"
 tempfile           = "3"
 # The SIGINT handler of the backtester's command line.
