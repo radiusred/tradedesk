@@ -112,7 +112,8 @@ in backtesting
 The crates are not published to crates.io; build and test them from the repository
 root with `cargo build --workspace` and `cargo test --workspace` (the toolchain is
 pinned in `rust-toolchain.toml`). The `tradedesk-backtest` binary has three
-commands, `sweep`, `report` and `walkforward`:
+commands, `sweep`, `report` and `walkforward`. For the report command, replace
+`path/to/registry.jsonl` with an existing registry written by a sweep.
 
 ```bash
 cargo run -p tradedesk-backtest -- --help
