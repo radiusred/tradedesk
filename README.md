@@ -92,7 +92,8 @@ cache-backed workflow.
 Beside the Python package, `crates/` holds a Cargo workspace with two Rust crates:
 
 - `tradedesk-data`, the market-data layer: the `Reader` trait, the trading
-  calendar, aggregation of 1-minute bars to 5m / 15m / 1h / 1d, gap detection, an
+  calendar, aggregation of 1-minute bars to 5m / 15m / 1h / 1d, gap detection
+  (which reads only the 1-minute timestamps, `Reader::read_1m_timestamps`), an
   Arrow IPC bar cache, and a reader for the
   `<root>/<SYMBOL>/<YYYY>/<MM 00-indexed>/<DD>_<bid|ask>.csv.zst` cache layout.
 - `tradedesk-backtest`, the backtester: venue costs and financing, the ledger,
@@ -110,7 +111,16 @@ in backtesting
 
 The crates are not published to crates.io; build and test them from the repository
 root with `cargo build --workspace` and `cargo test --workspace` (the toolchain is
-pinned in `rust-toolchain.toml`).
+pinned in `rust-toolchain.toml`). The `tradedesk-backtest` binary has three
+commands, `sweep`, `report` and `walkforward`:
+
+```bash
+cargo run -p tradedesk-backtest -- --help
+cargo run -p tradedesk-backtest -- report path/to/registry.jsonl   # a registry that sweep wrote
+```
+
+It registers no strategy, so `sweep` needs a binary built by a strategy crate; see
+the crate README's "Command line".
 
 ## Live trading with IG
 
