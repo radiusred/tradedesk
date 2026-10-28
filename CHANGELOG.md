@@ -8,6 +8,7 @@ For v1.6.3 and older, see the [GitHub releases](https://github.com/radiusred/tra
 ### Bug fixes
 
 - **data_sources:** Default the macro lake to a per-user path (#221)
+  - The default lake is now `~/tradedesk/marketdata`. To keep using an existing lake at another path, set `$TRADEDESK_MARKETDATA` or pass `lake=` explicitly.
 
 ### Documentation
 
