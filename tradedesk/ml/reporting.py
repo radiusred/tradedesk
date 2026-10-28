@@ -1,4 +1,4 @@
-"""Per-fold and aggregate reporting for walk-forward CV runs (Phase 6).
+"""Per-fold and aggregate reporting for walk-forward CV runs.
 
 Consumes the fitted models and per-fold metrics produced by the harness in
 :mod:`tradedesk.ml.cv` and renders:

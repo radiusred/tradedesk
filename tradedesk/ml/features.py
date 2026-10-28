@@ -1,4 +1,4 @@
-"""Feature engineering for 1-minute FX bars (Phase 6).
+"""Feature engineering for 1-minute FX bars.
 
 This module turns a 1-minute bid/ask OHLCV ``DataFrame`` plus an *indicator
 stack* (instances of :class:`tradedesk.marketdata.indicators.Indicator`) into

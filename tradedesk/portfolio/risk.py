@@ -63,7 +63,7 @@ class RiskAllocationPolicy(ABC):
     across multiple strategy sleeves based on regime activity or other criteria.
 
     Allocation is keyed by ``SleeveId`` so that two strategies on the same
-    instrument (e.g. ``AdaptiveFade_AUDCAD`` and ``BollingerReversion_AUDCAD``)
+    instrument (e.g. ``MeanReversion_EURUSD`` and ``Breakout_EURUSD``)
     receive independent risk budgets.
     """
 

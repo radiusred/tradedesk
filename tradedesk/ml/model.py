@@ -1,4 +1,4 @@
-"""XGBoost direction classifier wrapper (Phase 6).
+"""XGBoost direction classifier wrapper.
 
 A thin, opinionated wrapper around :class:`xgboost.XGBClassifier` that fixes
 hyperparameter defaults, enforces deterministic training, and persists models
@@ -43,7 +43,7 @@ __all__ = ["DirectionClassifier", "DirectionClassifierConfig"]
 class DirectionClassifierConfig:
     """Hyperparameters for :class:`DirectionClassifier`.
 
-    Defaults are tuned for 1-minute FX bar features (Phase 6 sprint): shallow
+    Defaults are tuned for 1-minute FX bar features: shallow
     trees with strong regularisation and aggressive sub-sampling to combat the
     noise-to-signal ratio. ``n_jobs=1`` is the default because XGBoost's
     ``hist`` method can introduce small numerical non-determinism across runs

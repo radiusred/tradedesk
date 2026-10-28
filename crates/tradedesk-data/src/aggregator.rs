@@ -228,7 +228,7 @@ impl BarFrame {
         self.ts_open_utc.is_empty()
     }
 
-    /// RAD-2397 — append every column of `other` onto `self` in place.
+    /// Append every column of `other` onto `self` in place.
     ///
     /// Used by the engine's `coalesce_subranges` path to fuse the
     /// per-sub-range frames emitted by the miner's `engine::gap_policy` into
@@ -328,7 +328,7 @@ pub(crate) fn align_down(ts: DateTime<Utc>, tf: Timeframe) -> DateTime<Utc> {
 ///
 /// Used by the miner's `engine::gap_policy::snap_subranges_to_timeframe` to round
 /// `continuous_only` sub-range starts forward to the next bucket boundary
-/// after the gap partitioner emits a minute-resolution start (RAD-2351).
+/// after the gap partitioner emits a minute-resolution start.
 #[inline]
 #[must_use]
 pub fn align_up(ts: DateTime<Utc>, tf: Timeframe) -> DateTime<Utc> {
@@ -701,7 +701,7 @@ mod tests {
 
     #[test]
     fn timeframe_json_schema_enumerates_five_timeframes() {
-        // RAD-3630: `miner scans` surfaces this schema; the enum must list the
+        // `miner scans` surfaces this schema; the enum must list the
         // five supported wire forms in canonical (ascending duration) order.
         let mut generator = SchemaGenerator::default();
         let schema = Timeframe::json_schema(&mut generator);

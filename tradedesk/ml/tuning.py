@@ -1,4 +1,4 @@
-"""Overfitting controls for the Phase 6 walk-forward sweep.
+"""Overfitting controls for the ML walk-forward sweep.
 
 The four controls layered on top of :class:`tradedesk.ml.model.DirectionClassifier`
 plus :class:`tradedesk.ml.cv.WalkForwardSplitter`:
@@ -164,11 +164,11 @@ def make_validation_tail(
 
 @dataclass(frozen=True)
 class ParamGrid:
-    """Grid over the four regularisation knobs Phase 6 sweeps over.
+    """Grid over the four regularisation knobs of the walk-forward sweep.
 
-    The grid is intentionally small — Comp 6's budget is 2 days and the
-    sweep runs *inside* every walk-forward fold, so the cartesian product is
-    multiplied by ``n_folds`` already.
+    The grid is intentionally small: the sweep runs *inside* every
+    walk-forward fold, so the cartesian product is multiplied by ``n_folds``
+    already.
 
     Attributes:
         max_depth: Tree depth values to try.
@@ -464,8 +464,8 @@ def walk_forward_sweep(
         base_config: Starting config; the grid point overrides only the four
             regularisation knobs. Defaults to :class:`DirectionClassifierConfig`'s
             defaults.
-        grid: Grid to sweep. Defaults to a small 3×2×2×2 grid that lines up
-            with the Phase 6 plan budget.
+        grid: Grid to sweep. Defaults to a small 3×2×2×2 grid that keeps
+            the sweep cheap.
         validation_tail: When set, controls the head/tail split used for
             early stopping.
         forward_returns: Forward-return series for Sharpe / drawdown columns.

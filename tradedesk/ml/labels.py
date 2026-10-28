@@ -1,4 +1,4 @@
-"""Label engineering for 1-minute FX bars (Phase 6).
+"""Label engineering for 1-minute FX bars.
 
 Two label families are exposed:
 

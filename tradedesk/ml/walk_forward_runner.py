@@ -1,12 +1,12 @@
-"""End-to-end walk-forward evaluator for the Phase 6 ML stack.
+"""End-to-end walk-forward evaluator for the ML stack.
 
-Glues together the four Phase 6 building blocks —
+Glues together the four ML building blocks —
 :class:`tradedesk.ml.FeatureBuilder`,
 :func:`tradedesk.ml.forward_return_labels`,
 :class:`tradedesk.ml.DirectionClassifier`, and
 :func:`tradedesk.ml.walk_forward_evaluate` — and feeds them a Dukascopy
 bid/ask cache so the resulting per-fold OOS Sharpe table can be used as
-the Phase 6 go/no-go signal.
+a first-pass go/no-go signal.
 
 The runner is intentionally framework-light: no async, no broker, no
 recording. The result is a tidy ``pandas.DataFrame`` per horizon you can
@@ -299,7 +299,7 @@ def build_dataset_directional(
 class WalkForwardRunConfig:
     """Configuration for :func:`run_walk_forward`.
 
-    Defaults target the Phase 6 first-pass run: a sliding 1-year
+    Defaults target a first-pass run: a sliding 1-year
     train window with 3-month test folds, ``embargo`` matching ``purge =
     horizon`` so the gap absorbs both label overlap and short-term feature
     autocorrelation.
@@ -364,7 +364,7 @@ def run_walk_forward(
     Args:
         cache_dir: Root of the Dukascopy cache directory.
         config: Optional :class:`WalkForwardRunConfig`. Defaults match
-            the Phase 6 first-pass spec.
+            a first-pass run.
 
     Returns:
         :class:`WalkForwardRunResult` with the loaded bars and one

@@ -3,7 +3,7 @@
 Historically tradedesk passed timeframes around as plain strings — ``"1MIN"``,
 ``"5MINUTE"``, ``"1H"``, ``"1D"``, ``"1440MINUTE"`` — with broker- and
 cache-specific aliases (IG REST uses ``"MINUTE_15"``; Dukascopy resamples on
-``"15min"``).  The string sprawl bit us once already (RAD-2112: ``1440MINUTE``
+``"15min"``).  The string sprawl caused a real bug (``1440MINUTE``
 was being passed to IG REST verbatim instead of being mapped to ``DAY``).
 
 ``Timeframe`` is a :class:`~enum.StrEnum` whose ``value`` is the

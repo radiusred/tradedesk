@@ -1,6 +1,6 @@
-"""Walk-forward cross-validation harness with embargo/purge (Phase 6).
+"""Walk-forward cross-validation harness with embargo/purge.
 
-This module is the **leakage-gate keystone** of the Phase 6 sprint. It exposes
+This module is the **leakage-gate keystone** of the ML stack. It exposes
 a positional :class:`WalkForwardSplitter` that respects the standard López de
 Prado guarantees against information leakage when labels carry a forward
 horizon ``h``:
