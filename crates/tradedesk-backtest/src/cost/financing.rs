@@ -131,15 +131,10 @@ impl RolloverCalendar {
             if !matches!(weekday, Weekday::Sat | Weekday::Sun) {
                 let at_utc = self.instant_on(date);
                 if at_utc > after && at_utc < before {
-                    let days = if weekday == rule.triple_day.weekday() {
-                        rule.days_on_triple
-                    } else {
-                        1
-                    };
                     out.push(Rollover {
                         at_utc,
                         local_date: date,
-                        days,
+                        days: rule.days_on(weekday),
                     });
                 }
             }

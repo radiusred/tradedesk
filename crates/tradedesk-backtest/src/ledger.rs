@@ -14,14 +14,14 @@
 
 use std::collections::BTreeMap;
 
-use chrono::{DateTime, NaiveDate, Utc};
+use chrono::{DateTime, Datelike, NaiveDate, Utc};
 use serde::{Deserialize, Serialize};
 
 use std::sync::Arc;
 
 use crate::cost::config::{
     CarryRow, CarryTableRef, CostConfig, CostModels, DividendRow, DividendTableRef, Estimate,
-    Exclusion, InstrumentSpec, Placeholder, PriceSide, Product,
+    Exclusion, FeeWeekendRules, InstrumentSpec, Placeholder, PriceSide, Product,
 };
 use crate::cost::fill::{FillCostDetail, FillError, FillKind, FillModel, PricePoint, TradeSide};
 use crate::cost::financing::{
@@ -422,8 +422,15 @@ pub struct FinancingCharge {
     /// The venue-local trading date the rollover closes; for a dividend, the date of
     /// the charge instant in the dividend's zone.
     pub local_date: NaiveDate,
-    /// Calendar days of financing charged; 0 for a dividend.
+    /// Calendar days charged at the rollover on the venue's `weekend` calendar (the
+    /// carry's); 0 for a dividend.
     pub days: u32,
+    /// Calendar days of the financing fee, when the venue's `fee_weekend` sets a rule for
+    /// the instrument's asset class (it can differ from `days` on a triple day). `None`,
+    /// and absent from the JSON, when the fee follows the `weekend` calendar: the fee
+    /// then charges `days`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub fee_days: Option<u32>,
     /// Open of the bar whose configured-side close is the mark.
     pub mark_bar_open: DateTime<Utc>,
     /// Mark, quote units.
@@ -503,9 +510,10 @@ impl DividendTotals {
 }
 
 /// One rollover's charge split by component, when the carry is modelled. A verifier
-/// recomputes each part from the charge's `mark_price` and `days`, the cost file's
+/// recomputes each part from the charge's `mark_price` and days, the cost file's
 /// financing rate and day count, and the row and day count here:
-/// `|size| × mark × rate / day_count × days`.
+/// `|size| × mark × rate / day_count × days`. The carry takes the charge's `days`; the
+/// financing takes its `fee_days` when present, otherwise `days`.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct ChargeComponents {
     /// The financing part (the venue's annual charge), quote currency.
@@ -719,6 +727,7 @@ impl MarkSource for JoinedSeries {
 pub struct Ledger {
     metadata: RunMetadata,
     calendar: RolloverCalendar,
+    fee_weekend: FeeWeekendRules,
     models: BTreeMap<String, FillModel>,
     next_id: u64,
     open: Vec<OpenPosition>,
@@ -785,6 +794,7 @@ impl Ledger {
                     .map_err(|_| LedgerError::UnknownVenue(venue_id.to_owned()))?,
             },
             calendar: RolloverCalendar::new(venue.rollover, venue.weekend),
+            fee_weekend: venue.fee_weekend,
             models,
             next_id: 0,
             open: Vec::new(),
@@ -1002,9 +1012,11 @@ impl Ledger {
             .metadata
             .account_fx
             .rate(&model.spec().quote_currency)?;
-        let rollovers =
-            self.calendar
-                .rollovers_between(model.spec().asset_class, p.financed_through, now);
+        let class = model.spec().asset_class;
+        let fee_rule = self.fee_weekend.for_class(class);
+        let rollovers = self
+            .calendar
+            .rollovers_between(class, p.financed_through, now);
         rollovers
             .into_iter()
             .map(|r| {
@@ -1015,8 +1027,14 @@ impl Ledger {
                         at: r.at_utc,
                     })?;
                 let mark = checked_mark(model, bar)?;
-                let financing =
-                    rollover_charge(&model.cost().financing, p.direction, p.size, mark, r.days);
+                let fee_days = fee_rule.map(|rule| rule.days_on(r.local_date.weekday()));
+                let financing = rollover_charge(
+                    &model.cost().financing,
+                    p.direction,
+                    p.size,
+                    mark,
+                    fee_days.unwrap_or(r.days),
+                );
                 let carry = &model.cost().carry;
                 let components = match &carry.rates {
                     None => None,
@@ -1056,6 +1074,7 @@ impl Ledger {
                     at_utc: r.at_utc,
                     local_date: r.local_date,
                     days: r.days,
+                    fee_days,
                     mark_bar_open: bar.ts_open_utc,
                     mark_price: mark,
                     charge,
@@ -1122,6 +1141,7 @@ impl Ledger {
                 at_utc: instant.at_utc,
                 local_date: instant.at_utc.with_timezone(&tz).date_naive(),
                 days: 0,
+                fee_days: None,
                 mark_bar_open: bar.ts_open_utc,
                 mark_price: mark,
                 charge,
@@ -1373,7 +1393,9 @@ impl Ledger {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::cost::config::{CostComponent, ExclusionEffect, ProvenanceStatus};
+    use crate::cost::config::{
+        CostComponent, ExclusionEffect, ProvenanceStatus, TripleDay, WeekendRule,
+    };
     use crate::exit::BothHit;
     use crate::{BarTimeframe, Ohlcv};
     use chrono::{Duration, TimeZone};
@@ -1835,6 +1857,149 @@ date,long_rate,short_rate,long_rate_date,short_rate_date,flag
         ));
         assert!(close_to(trade.financing, parts.financing + parts.carry));
         assert_eq!(trade.financing_days, 3);
+    }
+
+    /// A labelled synthetic carry table with every weekday from 2024-01-15 to 2024-01-26:
+    /// test values, not any venue's or any benchmark's.
+    const FULL_WEEKS_CARRY_CSV: &str = "\
+date,long_rate,short_rate,long_rate_date,short_rate_date,flag
+2024-01-15,0.06,-0.03,2024-01-15,2024-01-15,
+2024-01-16,0.06,-0.03,2024-01-16,2024-01-16,
+2024-01-17,0.06,-0.03,2024-01-17,2024-01-17,
+2024-01-18,0.06,-0.03,2024-01-18,2024-01-18,
+2024-01-19,0.06,-0.03,2024-01-19,2024-01-19,
+2024-01-22,0.06,-0.03,2024-01-22,2024-01-22,
+2024-01-23,0.06,-0.03,2024-01-23,2024-01-23,
+2024-01-24,0.06,-0.03,2024-01-24,2024-01-24,
+2024-01-25,0.06,-0.03,2024-01-25,2024-01-25,
+2024-01-26,0.06,-0.03,2024-01-26,2024-01-26,
+";
+
+    /// The example spread bet with a modelled EURUSD carry on the venue's `weekend`
+    /// calendar (FX triple Wednesday) and the financing fee's FX weekend on Friday: a
+    /// synthetic venue setup for the test, not any venue's.
+    fn fee_on_friday_ledger() -> Ledger {
+        let friday = WeekendRule {
+            triple_day: TripleDay::Friday,
+            days_on_triple: 3,
+        };
+        let c = crate::cost::config::arithmetic_fixture()
+            .with_modelled_carry("example_spread_bet", "EURUSD", FULL_WEEKS_CARRY_CSV, 360)
+            .with_fee_weekend(
+                "example_spread_bet",
+                FeeWeekendRules {
+                    fx: Some(friday),
+                    ..FeeWeekendRules::default()
+                },
+            );
+        Ledger::new(&c, "example_spread_bet", STOP_FIRST, fx()).unwrap()
+    }
+
+    /// Hourly EURUSD bars at a flat mid of 1.1000 from `from`.
+    fn flat_eurusd(from: DateTime<Utc>, hours: i64) -> JoinedSeries {
+        let bars = (0..hours)
+            .map(|h| JoinedBar {
+                ts_open_utc: from + Duration::hours(h),
+                bid: flat(10_999.75),
+                ask: flat(11_000.25),
+            })
+            .collect();
+        JoinedSeries::new("EURUSD", BarTimeframe::H1, bars).unwrap()
+    }
+
+    /// Long 100,000 EURUSD over `hours` from `from` on [`fee_on_friday_ledger`].
+    fn hold_eurusd(from: DateTime<Utc>, hours: i64) -> (Ledger, ClosedTrade) {
+        let s = flat_eurusd(from, hours);
+        let mut l = fee_on_friday_ledger();
+        let eurusd = OpenOrder {
+            instrument: "EURUSD".to_owned(),
+            ..order(Direction::Long, 100_000.0)
+        };
+        let id = open_at(&mut l, &eurusd, &s);
+        let trade = close_last(&mut l, id, &s);
+        (l, trade)
+    }
+
+    /// One day of the EURUSD fee (1.5% / 360) and of the carry (6% / 360) at mark 1.1.
+    const FEE_DAY: f64 = 100_000.0 * 1.1 * 0.015 / 360.0;
+    const CARRY_DAY: f64 = 100_000.0 * 1.1 * 0.06 / 360.0;
+
+    #[test]
+    fn over_the_carrys_triple_day_only_the_carry_charges_three_days() {
+        // Wednesday 2024-01-17 12:00Z to Thursday 12:00Z: the Wednesday 22:00Z rollover.
+        let (l, trade) = hold_eurusd(utc(2024, 1, 17, 12, 0), 24);
+        let c = &l.financing_charges()[0];
+        assert_eq!(l.financing_charges().len(), 1);
+        assert_eq!((c.days, c.fee_days), (3, Some(1)));
+        let parts = c.components.as_ref().unwrap();
+        assert!(close_to(parts.financing, FEE_DAY));
+        assert!(close_to(parts.carry, 3.0 * CARRY_DAY));
+        assert!(close_to(trade.financing, FEE_DAY + 3.0 * CARRY_DAY));
+    }
+
+    #[test]
+    fn over_the_fees_triple_day_only_the_fee_charges_three_days() {
+        // Friday 2024-01-19 12:00Z to Monday 12:00Z: the Friday 22:00Z rollover.
+        let (l, trade) = hold_eurusd(utc(2024, 1, 19, 12, 0), 72);
+        let c = &l.financing_charges()[0];
+        assert_eq!(l.financing_charges().len(), 1);
+        assert_eq!((c.days, c.fee_days), (1, Some(3)));
+        let parts = c.components.as_ref().unwrap();
+        assert!(close_to(parts.financing, 3.0 * FEE_DAY));
+        assert!(close_to(parts.carry, CARRY_DAY));
+        assert!(close_to(trade.financing, 3.0 * FEE_DAY + CARRY_DAY));
+        // The record carries the fee's days; a record without them reads back as `None`.
+        let json = serde_json::to_string(c).unwrap();
+        assert!(json.contains(r#""fee_days":3"#), "{json}");
+        let back: FinancingCharge = serde_json::from_str(&json).unwrap();
+        assert_eq!(&back, c);
+    }
+
+    #[test]
+    fn over_a_full_week_the_fee_and_the_carry_each_charge_seven_days() {
+        // Monday 2024-01-15 12:00Z to Monday 22nd 12:00Z: five rollovers.
+        let (l, trade) = hold_eurusd(utc(2024, 1, 15, 12, 0), 168);
+        let charges = l.financing_charges();
+        assert_eq!(charges.len(), 5);
+        let carry_days: u32 = charges.iter().map(|c| c.days).sum();
+        let fee_days: u32 = charges.iter().map(|c| c.fee_days.unwrap()).sum();
+        assert_eq!((carry_days, fee_days), (7, 7));
+        assert_eq!(
+            charges
+                .iter()
+                .map(|c| (c.local_date.weekday(), c.days, c.fee_days.unwrap()))
+                .collect::<Vec<_>>(),
+            vec![
+                (chrono::Weekday::Mon, 1, 1),
+                (chrono::Weekday::Tue, 1, 1),
+                (chrono::Weekday::Wed, 3, 1),
+                (chrono::Weekday::Thu, 1, 1),
+                (chrono::Weekday::Fri, 1, 3),
+            ]
+        );
+        assert!(close_to(trade.financing, 7.0 * (FEE_DAY + CARRY_DAY)));
+        assert_eq!(trade.financing_days, 7);
+    }
+
+    #[test]
+    fn a_class_without_a_fee_rule_and_a_venue_without_one_record_no_fee_days() {
+        // The fee rule is for FX only: an index on the same venue follows `weekend`.
+        let s = spx_series(utc(2024, 1, 19, 12, 0), 75, 4800.0, 0.0);
+        let mut l = fee_on_friday_ledger();
+        let id = open_at(&mut l, &order(Direction::Long, 1.0), &s);
+        close_last(&mut l, id, &s);
+        let c = &l.financing_charges()[0];
+        assert_eq!((c.days, c.fee_days), (3, None));
+        assert!(close_to(c.charge, 4800.0 * 0.034 / 360.0 * 3.0));
+        // Without `fee_weekend` (every existing config), no record has the key.
+        let mut l = ledger(STOP_FIRST);
+        let id = open_at(&mut l, &order(Direction::Long, 1.0), &s);
+        close_last(&mut l, id, &s);
+        for c in l.financing_charges() {
+            assert_eq!(c.fee_days, None);
+            let json = serde_json::to_string(c).unwrap();
+            assert!(!json.contains("fee_days"), "{json}");
+        }
     }
 
     #[test]

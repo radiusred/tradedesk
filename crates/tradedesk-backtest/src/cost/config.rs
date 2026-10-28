@@ -157,6 +157,19 @@ pub struct WeekendRule {
     pub days_on_triple: u32,
 }
 
+impl WeekendRule {
+    /// Days charged at the rollover of a local `weekday`: `days_on_triple` on the triple
+    /// day, otherwise 1.
+    #[must_use]
+    pub fn days_on(&self, weekday: Weekday) -> u32 {
+        if weekday == self.triple_day.weekday() {
+            self.days_on_triple
+        } else {
+            1
+        }
+    }
+}
+
 fn three() -> u32 {
     3
 }
@@ -187,6 +200,40 @@ impl WeekendRules {
             AssetClass::Fx => Some(self.fx),
             AssetClass::Metal => Some(self.metal),
             AssetClass::Index => Some(self.index),
+            AssetClass::Energy => self.energy,
+        }
+    }
+}
+
+/// The financing fee's own weekend rule per asset class, when a venue books the fee's
+/// weekend on a different weekday from the carry's. Each class is optional: a class
+/// without one charges the fee on its [`WeekendRules`] rule, so with none set the fee and
+/// the carry share one calendar.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct FeeWeekendRules {
+    /// Spot FX.
+    #[serde(default)]
+    pub fx: Option<WeekendRule>,
+    /// Spot metals.
+    #[serde(default)]
+    pub metal: Option<WeekendRule>,
+    /// Indices.
+    #[serde(default)]
+    pub index: Option<WeekendRule>,
+    /// Energy commodities.
+    #[serde(default)]
+    pub energy: Option<WeekendRule>,
+}
+
+impl FeeWeekendRules {
+    /// The fee's own rule for `class`, or `None` when the fee follows the carry's rule.
+    #[must_use]
+    pub fn for_class(&self, class: AssetClass) -> Option<WeekendRule> {
+        match class {
+            AssetClass::Fx => self.fx,
+            AssetClass::Metal => self.metal,
+            AssetClass::Index => self.index,
             AssetClass::Energy => self.energy,
         }
     }
@@ -1214,8 +1261,13 @@ pub struct Venue {
     pub product: Product,
     /// Daily rollover instant.
     pub rollover: RolloverSpec,
-    /// Weekend charging per asset class.
+    /// Weekend charging per asset class: the carry's calendar, and the financing fee's
+    /// where `fee_weekend` sets no rule.
     pub weekend: WeekendRules,
+    /// The financing fee's own weekend rule per asset class. Optional; absent, the fee
+    /// follows `weekend`.
+    #[serde(default)]
+    pub fee_weekend: FeeWeekendRules,
     /// Costs keyed by instrument symbol.
     pub instruments: BTreeMap<String, VenueInstrumentCost>,
 }
@@ -1728,6 +1780,26 @@ impl CostConfig {
                         "must be at least 1",
                     ));
                 }
+            }
+            let fee = venue.fee_weekend;
+            for (class, rule) in [
+                ("fx", fee.fx),
+                ("metal", fee.metal),
+                ("index", fee.index),
+                ("energy", fee.energy),
+            ] {
+                if rule.is_some_and(|r| r.days_on_triple == 0) {
+                    return Err(invalid(
+                        format!("venues.{id}.fee_weekend.{class}.days_on_triple"),
+                        "must be at least 1",
+                    ));
+                }
+            }
+            if fee.energy.is_some() && venue.weekend.energy.is_none() {
+                return Err(invalid(
+                    format!("venues.{id}.fee_weekend.energy"),
+                    "needs a weekend.energy rule for the carry",
+                ));
             }
             for (symbol, cost) in &venue.instruments {
                 let at = |field: &str| format!("venues.{id}.instruments.{symbol}.{field}");
@@ -2246,6 +2318,13 @@ impl CostConfig {
             day_count: Some(day_count),
             rates: Some(Arc::new(table)),
         };
+        self.validate().expect("the config is valid");
+        self
+    }
+
+    /// This config with `venue`'s financing fee on its own weekend rules `fee_weekend`.
+    pub(crate) fn with_fee_weekend(mut self, venue: &str, fee_weekend: FeeWeekendRules) -> Self {
+        self.venues.get_mut(venue).expect("venue").fee_weekend = fee_weekend;
         self.validate().expect("the config is valid");
         self
     }
@@ -3071,6 +3150,59 @@ date,long_rate,short_rate,long_rate_date,short_rate_date,flag
             CostConfig::from_toml_str(&text),
             Err(ConfigError::Parse(_))
         ));
+    }
+
+    #[test]
+    fn the_fee_weekend_is_optional_per_class_and_validated() {
+        // Absent: every class's fee follows the carry's weekend rule.
+        let c = CostConfig::from_toml_str(&minimal("", "", LONDON)).unwrap();
+        assert_eq!(
+            c.venue("v").unwrap().fee_weekend,
+            FeeWeekendRules::default()
+        );
+        // Set for one class: that class only.
+        let with_fee = |line: &str| {
+            minimal("", "", LONDON).replace(
+                "weekend.index = { triple_day = \"friday\" }\n",
+                &format!("weekend.index = {{ triple_day = \"friday\" }}\n{line}\n"),
+            )
+        };
+        let c =
+            CostConfig::from_toml_str(&with_fee(r#"fee_weekend.fx = { triple_day = "friday" }"#))
+                .unwrap();
+        let fee = c.venue("v").unwrap().fee_weekend;
+        assert_eq!(
+            fee.for_class(AssetClass::Fx),
+            Some(WeekendRule {
+                triple_day: TripleDay::Friday,
+                days_on_triple: 3
+            })
+        );
+        for class in [AssetClass::Metal, AssetClass::Index, AssetClass::Energy] {
+            assert_eq!(fee.for_class(class), None, "{class:?}");
+        }
+        // Validated as the weekend rules are.
+        assert_eq!(
+            invalid_at(&with_fee(
+                r#"fee_weekend.fx = { triple_day = "friday", days_on_triple = 0 }"#
+            )),
+            "venues.v.fee_weekend.fx.days_on_triple"
+        );
+        assert_eq!(
+            invalid_at(&with_fee(
+                r#"fee_weekend.energy = { triple_day = "friday" }"#
+            )),
+            "venues.v.fee_weekend.energy"
+        );
+        for line in [
+            r#"fee_weekend.fx = { triple_day = "saturday" }"#,
+            r#"fee_weekend.commodity = { triple_day = "friday" }"#,
+        ] {
+            assert!(matches!(
+                CostConfig::from_toml_str(&with_fee(line)),
+                Err(ConfigError::Parse(_))
+            ));
+        }
     }
 
     /// `minimal` plus a labelled example energy instrument (`EXAMPLEOIL`, not a cache
