@@ -106,8 +106,7 @@ The Python backtester, `tradedesk.execution.backtest`, remains the path on which
 strategy and its portfolio run byte-identically in backtest and live.
 `tradedesk-backtest` is the research engine for parameter sweeps. A later milestone
 joins the two, by moving the live runtime to Rust, once a strategy has proved itself
-in backtesting
-([Decision](https://github.com/radiusred/trading-hub/issues/2#issuecomment-6083458251)).
+in backtesting.
 
 The crates are not published to crates.io; build and test them from the repository
 root with `cargo build --workspace` and `cargo test --workspace` (the toolchain is

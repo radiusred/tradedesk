@@ -57,8 +57,8 @@ pre-commit install
 
    The guard script lives at `scripts/hooks/block-private-research.sh` and is
    also runnable on demand against the staged tree. If a commit is rejected
-   with `Blocked: private research content detected — commit to ig_trader
-   instead`, the listed files belong in the private `ig_trader` repo, not here.
+   with `Blocked: private research content detected — commit to a private
+   repository instead`, the listed files belong in a private repository, not here.
 
 ## Code Standards
 

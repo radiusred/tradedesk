@@ -106,7 +106,7 @@ def main(argv: list[str] | None = None) -> int:
     md_path = render_markdown_report(
         artifacts,
         args.output_dir,
-        title="Phase 6 walk-forward CV — sample report",
+        title="ML walk-forward CV — sample report",
         leakage_result=leakage_result,
     )
     print(f"wrote {md_path}")
