@@ -27,7 +27,7 @@ used by the Dukascopy OHLCV cache):
 <lake>/macro/cftc/<LABEL>.parquet         # e.g. EURUSD.parquet, GOLD.parquet
 ```
 
-`<lake>` defaults to `$TRADEDESK_MARKETDATA` or `/paperclip/tradedesk/marketdata`.
+`<lake>` defaults to `$TRADEDESK_MARKETDATA` or `~/tradedesk/marketdata`.
 
 ### Ingest (on demand or weekly)
 

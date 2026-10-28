@@ -14,7 +14,7 @@ Runs on demand or on a weekly schedule (see ``docs/data_sources_guide.md``)::
 
 Ingestion is idempotent: re-running refreshes each series in place.  FRED only
 downloads rows newer than what is already on disk (Akamai blocks multi-year
-history fetches from data-centre IPs, RAD-3791); CFTC re-downloads the
+history fetches from data-centre IPs); CFTC re-downloads the
 current-year zip so the latest Friday release appears.
 A failure on a single series is logged and skipped, never fatal, so a weekly
 cron job stays green even if one upstream endpoint is briefly unavailable.
@@ -56,7 +56,7 @@ def _parse_args(argv: list[str] | None) -> argparse.Namespace:
         type=Path,
         default=None,
         help="Market-data lake root (default: $TRADEDESK_MARKETDATA or "
-        "/paperclip/tradedesk/marketdata).",
+        "~/tradedesk/marketdata).",
     )
     p.add_argument(
         "--from",

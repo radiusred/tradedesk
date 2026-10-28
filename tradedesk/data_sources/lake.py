@@ -1,6 +1,6 @@
 """Macro-data lake: materialize free feeds to Parquet and load them back.
 
-This is the **data access pattern** Quanty uses in backtest scripts.  Macro
+This is the **data access pattern** for macro data in backtest scripts.  Macro
 series are slow (daily/weekly/monthly) tabular time series, so each series is
 stored as a single typed Parquet file under the existing market-data lake::
 
@@ -8,8 +8,8 @@ stored as a single typed Parquet file under the existing market-data lake::
     <lake>/macro/ecb/<LABEL>.parquet          # e.g. EUR_YLD_2Y.parquet
     <lake>/macro/cftc/<LABEL>.parquet         # e.g. EURUSD.parquet, GOLD.parquet
 
-``<lake>`` defaults to the Dukascopy market-data root (``$TRADEDESK_MARKETDATA``
-or ``/paperclip/tradedesk/marketdata``), the same location used for OHLCV.
+``<lake>`` defaults to the market-data root (``$TRADEDESK_MARKETDATA``
+or ``~/tradedesk/marketdata``), the same location used for OHLCV.
 
 Frame conventions
 -----------------
@@ -44,7 +44,7 @@ from .cot import CFTC_CONTRACTS, CFTCContract, load_contract_history
 
 log = logging.getLogger(__name__)
 
-_DEFAULT_LAKE = Path("/paperclip/tradedesk/marketdata")
+_DEFAULT_LAKE = Path.home() / "tradedesk" / "marketdata"
 
 # Common history start for on-demand / weekly ingest.  Earlier than the COT
 # disaggregated archive (2006) is pointless; 2010 gives a clean common window
@@ -52,7 +52,7 @@ _DEFAULT_LAKE = Path("/paperclip/tradedesk/marketdata")
 DEFAULT_HISTORY_START = date(2010, 1, 1)
 
 # FRED incremental-fetch tuning.  FRED is fronted by Akamai, which times out
-# multi-year history downloads from data-centre egress IPs (RAD-3789): the TLS
+# multi-year history downloads from data-centre egress IPs: the TLS
 # handshake completes but the response body never arrives (0 bytes).  So the
 # default ingest fetches only a delta on top of whatever is already on disk;
 # the first run (no parquet yet) pulls a trailing year, narrowing to a quarter
@@ -251,7 +251,7 @@ def _fred_fetched_today(path: Path) -> bool:
 
     FRED daily series publish with a lag, so re-running on the same day would
     otherwise re-request a tiny recent window — which Akamai also throttles in
-    some envs (RAD-3791).  The parquet mtime is a stateless "fetched today"
+    some envs.  The parquet mtime is a stateless "fetched today"
     marker that keeps same-day re-runs fully offline and idempotent.
     """
     return datetime.fromtimestamp(path.stat().st_mtime).date() >= date.today()
@@ -352,7 +352,7 @@ def materialize_fred(
     """Fetch and write FRED series to ``<lake>/macro/fred/`` incrementally.
 
     FRED is fronted by Akamai, which blocks multi-year history downloads from
-    data-centre egress IPs (RAD-3789), so this fetches only a *delta*:
+    data-centre egress IPs, so this fetches only a *delta*:
 
     * If ``<lake>/macro/fred/<ID>.parquet`` exists, only rows after its latest
       observation are downloaded and upserted (existing rows are preserved).
