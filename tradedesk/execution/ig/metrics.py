@@ -1,8 +1,8 @@
 """Resilience metrics for the IG execution layer.
 
 Counters and gauges are exposed as Prometheus metrics when ``prometheus_client``
-is installed (the ig_trader runtime declares it as a dependency and starts the
-``/metrics`` exporter). When the library is not available, the helpers degrade
+is installed (a runtime that wants them declares it as a dependency and starts
+the ``/metrics`` exporter). When the library is not available, the helpers degrade
 to no-ops so tradedesk itself does not gain a hard dependency on it.
 """
 

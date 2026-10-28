@@ -1,14 +1,14 @@
-"""ML-driven direction strategy (Phase 6).
+"""ML-driven direction strategy.
 
 Streams 1-minute candles through a trained probability model and emits a
 long/flat/short :class:`Signal` on each candle close. The strategy is the
-runtime glue between the offline Phase 6 ML stack
+runtime glue between the offline ML stack
 (:class:`tradedesk.ml.FeatureBuilder` plus any model exposing
 ``predict_proba``) and the existing portfolio risk-controls.
 
 Position sizing is **not** the strategy's concern: signals are dispatched
 via :class:`SignalGeneratedEvent` for the portfolio orchestrator (typically
-the ATR-aware sleeve in ``ig_trader``) to size and execute.
+an ATR-aware sleeve in your runtime) to size and execute.
 """
 
 from __future__ import annotations

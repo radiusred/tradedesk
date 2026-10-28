@@ -99,8 +99,8 @@ class ExcursionComputer:
         """
         self._index = candle_index
         # Keyed by position_id so concurrent positions on the same epic (e.g.
-        # dual AUDCAD sleeves) are tracked independently rather than the second
-        # open overwriting the first (RAD-3756 / RAD-3727).
+        # two EURUSD sleeves) are tracked independently rather than the second
+        # open overwriting the first.
         self._open_positions: dict[str, PositionOpenedEvent] = {}
 
         # Subscribe to position lifecycle and candle events

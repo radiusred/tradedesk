@@ -24,9 +24,9 @@ class PortfolioRunner:
       - Perform portfolio rebalancing
       - Attempt to increase utilisation
 
-    Two strategies on the same instrument (e.g. AdaptiveFade_AUDCAD and
-    BollingerReversion_AUDCAD) are stored under distinct SleeveIds. When a
-    candle arrives for AUDCAD, both sleeves receive the event.
+    Two strategies on the same instrument (e.g. MeanReversion_EURUSD and
+    Breakout_EURUSD) are stored under distinct SleeveIds. When a
+    candle arrives for EURUSD, both sleeves receive the event.
     """
 
     strategies: dict[SleeveId, PortfolioStrategy]
@@ -65,7 +65,7 @@ class PortfolioRunner:
 
         All strategy sleeves whose instrument matches the event receive the
         event. This supports multiple sleeves on the same instrument (e.g.
-        dual-strategy AUDCAD trading).
+        two strategies trading EURUSD).
 
         Phase 1: Update state for all matching sleeves
         Phase 2: Apply risk budgets across the whole portfolio

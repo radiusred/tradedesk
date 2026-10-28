@@ -6,7 +6,7 @@ Fetches US rates + volatility series from the St. Louis Fed using the
     https://fred.stlouisfed.org/graph/fredgraph.csv?id=<SERIES_ID>
 
 The default series cover the documented gaps for EUR/UK/JP carry tests
-(`RAD-2020`) and FOMC-surprise direction (`RAD-2029`):
+and FOMC-surprise direction:
 
 ================  ====================================================  =========
 Series id         Description                                           Frequency

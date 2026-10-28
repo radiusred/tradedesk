@@ -16,7 +16,7 @@
 //! match to the last bit in practice; the tests hold them to a `1e-9` relative
 //! tolerance.
 //!
-//! Inputs are validated at this boundary (RAD-1906: corrupt prices passed through the
+//! Inputs are validated at this boundary (corrupt prices once passed through the
 //! Python indicators undetected): a NaN, infinite or non-positive price, an
 //! inconsistent bar, or an invalid volume is an [`IndicatorError`], and the
 //! indicator's state is left exactly as it was.

@@ -74,9 +74,9 @@ class CFTCContract:
     """Which COT report contains this contract."""
 
 
-# RAD-1078 — initial mapping for the COT commercials-extreme strategy.
+# Initial mapping: the commodity and index contracts.
 # All seven original contracts verified against the 2024 annual zip 2026-05-09.
-# RAD-2987 — added CME currency futures (TFF) so FX trend-gating studies can
+# Added CME currency futures (TFF) so FX trend-gating studies can
 # reference dealer / asset-manager / leveraged-fund positioning.  FX codes
 # verified against the 2026 TFF annual zip on 2026-05-27.
 CFTC_CONTRACTS: dict[str, CFTCContract] = {
@@ -89,7 +89,7 @@ CFTC_CONTRACTS: dict[str, CFTCContract] = {
     # in the TFF report.  TFF splits positioning into Dealer/Intermediary,
     # Asset-Manager and Leveraged-Funds buckets — all three are exposed on
     # :class:`COTRow`.  The Dealer bucket is mirrored into ``commercial_*`` for
-    # backward compatibility with the RAD-1078 commercials-extreme strategy.
+    # backward compatibility with callers that read the commercials bucket.
     "SP500": CFTCContract("SP500", "13874A", CFTCReport.TFF),
     "TNOTE10": CFTCContract("TNOTE10", "043602", CFTCReport.TFF),
     # CME FX futures are quoted as foreign-currency/USD, i.e. a net-long
@@ -112,7 +112,7 @@ class COTRow:
 
     The TFF-only bucket fields — ``dealer_*``, ``asset_mgr_*`` and
     ``leveraged_*`` — carry the three Traders-in-Financial-Futures categories
-    used for FX/commodity trend gating (`RAD-2987`).  They are ``0`` for
+    used for FX/commodity trend gating.  They are ``0`` for
     Disaggregated rows, which have no such breakdown.  The :class:`COTRow.report`
     field records which family produced the row so callers can tell them apart.
     """
@@ -143,7 +143,7 @@ def cot_release_date(report_date_tuesday: date) -> date:
 
     The CFTC schedule is **fixed at three calendar days after the as-of
     Tuesday**.  When the Friday falls on a US federal holiday the actual
-    publication may slip to Monday, but Stage 1 backtests do not encode
+    publication may slip to Monday, but backtests built on this module do not encode
     that calendar — instead they enter on the first trading day strictly
     after the returned date, which absorbs holiday slip on the price side.
     """
@@ -214,7 +214,7 @@ def download_cot_zip(
     log.info("Downloading CFTC archive %s", url)
     tmp_path = out_path.with_suffix(out_path.suffix + ".part")
     # cftc.gov is fronted by Cloudflare, which 403s the default
-    # ``Python-urllib`` agent — send a descriptive User-Agent (RAD-2987).
+    # ``Python-urllib`` agent — send a descriptive User-Agent.
     req = urllib.request.Request(url, headers={"User-Agent": USER_AGENT})
     with urllib.request.urlopen(req) as resp, open(tmp_path, "wb") as fh:
         # Stream in chunks so 12 MB historical zips do not blow up memory.

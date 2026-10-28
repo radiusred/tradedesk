@@ -5,7 +5,7 @@ SDMX CSV endpoint — no API key required::
 
     https://data-api.ecb.europa.eu/service/data/<FLOW>/<KEY>?format=csvdata
 
-Default series cover the EUR carry + rate-surprise gaps for `RAD-2987`:
+Default series cover the EUR carry + rate-surprise gaps:
 
 ==================  ======  ============================================  =========
 Label               Flow    Description                                   Frequency
@@ -24,9 +24,7 @@ Label               Flow    Description                                   Freque
 Term **OIS** swap fixings (1w/1m/3m) are not published by the ECB as a free
 single series.  ``EUR_ESTR`` is the EUR OIS *reference* (overnight) rate and
 the short-end yield-curve tenors give the market-implied term structure;
-these are the free, no-auth proxies for OIS-implied magnitude.  See the
-RAD-2987 thread for the Quanty coordination on which fields a rate-surprise
-study needs.
+these are the free, no-auth proxies for OIS-implied magnitude.
 
 Output of :func:`fetch_ecb_series` / :func:`parse_ecb_csv` is a tidy
 :class:`pandas.DataFrame` indexed by observation ``date`` with a single

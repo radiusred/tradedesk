@@ -1,6 +1,6 @@
 """Correlation gate calculator for candidate strategies vs LIVE sleeves.
 
-Stage 2 of the research workflow rejects any candidate whose daily PnL is
+A correlation gate in a research workflow rejects any candidate whose daily PnL is
 ≥0.6 correlated with an existing LIVE sleeve. This module automates the
 matrix calculation that researchers previously did per candidate.
 
@@ -34,7 +34,7 @@ class CorrelationResult:
 
     Attributes:
         candidate: name of the candidate strategy under evaluation.
-        threshold: correlation cut-off applied. The hard kill in §3.2 is 0.6.
+        threshold: correlation cut-off applied (default 0.6).
         candidate_vs_sleeves: correlation of the candidate vs every LIVE
             sleeve, keyed by sleeve name. Sleeves with insufficient overlap
             are absent.
@@ -153,7 +153,7 @@ def correlation_gate(
         candidate_pnl: daily PnL series for the candidate strategy.
         live_sleeves: mapping of LIVE sleeve name to its daily PnL series.
         threshold: absolute correlation that triggers the kill flag.
-            Defaults to 0.6 per the Stage 2 hard-kill rule in §3.2.
+            Defaults to 0.6.
         min_overlap_days: minimum overlapping trading days required to
             compute a correlation. Sleeves below this floor are reported
             in ``skipped_sleeves`` and excluded from the kill check.

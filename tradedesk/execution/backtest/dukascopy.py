@@ -98,7 +98,7 @@ def _load_daily_candles(path: Path) -> pd.DataFrame | None:
         KeyError,
         ValueError,
     ) as e:
-        # Surface skipped days so RAD-1920-style cache corruption is visible
+        # Surface skipped days so cache corruption is visible
         # to operators instead of being silently dropped from backtests.
         log.warning(
             "Skipping unreadable Dukascopy cache file %s: %s: %s",

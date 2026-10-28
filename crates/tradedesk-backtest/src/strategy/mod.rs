@@ -151,7 +151,7 @@ pub enum ConfigError {
 /// Why a strategy could not process a bar or a feedback message.
 #[derive(Debug, Clone, PartialEq, thiserror::Error)]
 pub enum StrategyError {
-    /// The bar failed price validation (RAD-1906).
+    /// The bar failed price validation.
     #[error("bar at {ts}: {source}")]
     BadBar {
         /// Open of the rejected bar.
@@ -376,7 +376,7 @@ pub fn run_signals<S: Strategy + ?Sized>(
     Ok(signals)
 }
 
-/// Validate the configured side of `bar` (RAD-1906) before any state changes: the
+/// Validate the configured side of `bar` before any state changes: the
 /// check every strategy runs on a bar before its indicators see it.
 ///
 /// # Errors

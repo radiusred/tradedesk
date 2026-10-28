@@ -71,7 +71,7 @@ class ExcursionSampledEvent(DomainEvent):
     mfe_pnl: float  # MFE scaled by position size
     mae_pnl: float  # MAE scaled by position size
     # The position this excursion belongs to. Two sleeves can hold concurrent
-    # positions on the same epic (e.g. dual AUDCAD sleeves), so consumers must
+    # positions on the same epic (e.g. two EURUSD sleeves), so consumers must
     # key excursions by position_id, not instrument, to avoid cross-position
-    # collisions (RAD-3756 / RAD-3727).
+    # collisions.
     position_id: str = ""

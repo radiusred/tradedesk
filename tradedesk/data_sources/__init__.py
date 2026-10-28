@@ -4,7 +4,7 @@ Contains parsers and downloaders for off-IG market datasets — distinct from
 ``tradedesk.marketdata`` (live tick streaming) and
 ``tradedesk.execution.backtest.dukascopy`` (historic price candles).
 
-Three free, no-auth macro feeds are supported (`RAD-2987`):
+Three free, no-auth macro feeds are supported:
 
 * :mod:`tradedesk.data_sources.fred` — US rates + VIX (St. Louis FRED).
 * :mod:`tradedesk.data_sources.ecb` — EUR €STR, yield curve, Euribor (ECB).

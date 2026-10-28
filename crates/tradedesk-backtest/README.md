@@ -716,7 +716,7 @@ Python `sum()` is reproduced with CPython's compensated float summation (CPython
 | `Rsi(n)` | close | close `n+1` | Sums of the first `n` deltas, then Wilder. The value is 100 when there are no losses, else 0 when there are no gains |
 | `Vwap(price, session)` | (open time, bar) | first bar with volume | Typical price or close. Resets on the UTC date or at a UTC hour |
 
-Prices are validated at the boundary (RAD-1906). A NaN, infinite or
+Prices are validated at the boundary. A NaN, infinite or
 non-positive price, a bar with `low <= open, close <= high` violated, or a
 negative or non-finite volume is an `IndicatorError`, and the indicator's state
 is left untouched.
