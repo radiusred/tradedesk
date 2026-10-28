@@ -81,7 +81,7 @@ def test_default_lake_env_override(monkeypatch):
     monkeypatch.setenv("TRADEDESK_MARKETDATA", "/data/md")
     assert lake.default_lake() == Path("/data/md")
     monkeypatch.delenv("TRADEDESK_MARKETDATA")
-    assert lake.default_lake() == Path("/paperclip/tradedesk/marketdata")
+    assert lake.default_lake() == Path.home() / "tradedesk" / "marketdata"
 
 
 # ---------------------------------------------------------------------------
