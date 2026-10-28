@@ -204,7 +204,7 @@ For systemd-managed services, SIGTERM is sent on shutdown:
 ```ini
 [Service]
 Type=simple
-ExecStart=/usr/bin/python3 /opt/tradedesk/runner.py
+ExecStart=/usr/bin/python3 /opt/my-runtime/runner.py
 Environment="IG_ENVIRONMENT=LIVE"
 # Allow 60 seconds for graceful shutdown
 TimeoutStopSec=60

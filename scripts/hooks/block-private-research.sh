@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Block any commit that introduces files under research/, killstack/,
 # or any path containing "private". The public tradedesk repo must never
-# carry private strategy research; see RAD-1016, RAD-1018, RAD-1538.
+# carry private strategy research.
 set -euo pipefail
 
 staged="$(git diff --cached --name-only --diff-filter=ACMR)"
@@ -12,7 +12,7 @@ fi
 bad="$(printf '%s\n' "$staged" | grep -E '(^|/)(research|killstack)/|private' || true)"
 
 if [ -n "$bad" ]; then
-  echo "Blocked: private research content detected — commit to ig_trader instead" >&2
+  echo "Blocked: private research content detected — commit to a private repository instead" >&2
   echo "Offending paths:" >&2
   printf '  %s\n' $bad >&2
   exit 1

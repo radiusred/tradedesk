@@ -1,16 +1,16 @@
-"""Run the Phase 6 first-pass walk-forward on EURUSD 1-min Dukascopy data.
+"""Run a first-pass ML walk-forward on EURUSD 1-min Dukascopy data.
 
 Usage::
 
-    python docs/examples/phase6_walk_forward_eurusd.py \\
-        --cache /paperclip/tradedesk/marketdata \\
+    python docs/examples/ml_walk_forward_eurusd.py \\
+        --cache /data/marketdata \\
         --date-from 2018-01-01 --date-to 2026-03-15 \\
-        --out /tmp/phase6_eurusd.csv
+        --out /tmp/ml_walk_forward_eurusd.csv
 
 The script wires :func:`tradedesk.ml.run_walk_forward` to a Dukascopy cache
 and writes a tidy CSV with columns ``horizon, fold, n_train, n_test,
 log_loss, accuracy, auc, hit_rate, sharpe, max_drawdown, trade_count``
-suitable for reporting Phase 6 results.
+suitable for reporting walk-forward results.
 """
 
 from __future__ import annotations

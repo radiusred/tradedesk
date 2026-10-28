@@ -3,12 +3,12 @@
 Wraps :func:`tradedesk.execution.backtest.run_backtest` in a 2yr-train /
 6mo-OOS rolling loop and prints the aggregate IS/OOS Sharpe pair plus the
 OOS/IS degradation ratio. Intended to replace the manual
-"cut the date range up by hand" step in Stage 1 of the research workflow.
+"cut the date range up by hand" step of a research workflow.
 
 Usage::
 
     python docs/examples/research_walk_forward.py \\
-        --cache /paperclip/tradedesk/marketdata \\
+        --cache /data/marketdata \\
         --instrument EURUSD --period HOUR --symbol EURUSD \\
         --date-from 2018-01-01 --date-to 2024-01-01
 

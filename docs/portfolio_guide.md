@@ -252,11 +252,11 @@ await runner.on_candle_close(
 `PortfolioRunner` supports multiple sleeves on the same instrument, but a few
 important assumptions sit just below that surface:
 
-- Risk allocation is keyed by `SleeveId`, not by instrument. Two AUDCAD sleeves
+- Risk allocation is keyed by `SleeveId`, not by instrument. Two EURUSD sleeves
   with active regimes each receive their own budget slice.
-- Event fan-out is instrument-based. When an AUDCAD candle closes, every AUDCAD
+- Event fan-out is instrument-based. When a EURUSD candle closes, every EURUSD
   sleeve runs `update_state()`, then the portfolio re-allocates risk, then
-  every AUDCAD sleeve runs `evaluate_signals()`.
+  every EURUSD sleeve runs `evaluate_signals()`.
 - The ordering is intentional and fragile: regime changes discovered during
   `update_state()` affect the very next `evaluate_signals()` call on that same
   candle because risk allocation happens between the two phases.

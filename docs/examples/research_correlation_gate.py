@@ -1,6 +1,6 @@
 """Correlation gate — minimal end-to-end example.
 
-Stage 2 of the research workflow rejects any candidate whose daily PnL is
+A correlation gate in a research workflow rejects any candidate whose daily PnL is
 >= 0.6 correlated with an existing LIVE sleeve. This script reads a
 candidate trade-log CSV plus a directory of LIVE-sleeve trade-log CSVs,
 prints the correlation matrix, and exits non-zero if the kill rule fires.

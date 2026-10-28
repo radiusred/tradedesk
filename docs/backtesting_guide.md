@@ -42,10 +42,10 @@ Required inputs:
 - `date_from` / `date_to`: inclusive date range
 - `price_side`: `"bid"` or `"ask"` (`"bid"` is the default)
 
-Example shared cache location used at Radius Red:
+Example cache location:
 
 ```text
-/paperclip/tradedesk/marketdata/GBPUSD/2026/00/01_bid.csv.zst
+/data/marketdata/GBPUSD/2026/00/01_bid.csv.zst
 ```
 
 ---
@@ -113,7 +113,7 @@ from strategy import SimpleMomentumStrategy
 
 def client_factory():
     return BacktestClient.from_dukascopy_cache(
-        "/paperclip/tradedesk/marketdata",
+        "/data/marketdata",
         symbol="GBPUSD",
         instrument="CS.D.GBPUSD.TODAY.IP",
         period="5MINUTE",
@@ -140,7 +140,7 @@ created = {}
 
 def client_factory():
     c = BacktestClient.from_dukascopy_cache(
-        "/paperclip/tradedesk/marketdata",
+        "/data/marketdata",
         symbol="GBPUSD",
         instrument="CS.D.GBPUSD.TODAY.IP",
         period="5MINUTE",
@@ -173,7 +173,7 @@ created = {}
 
 def client_factory():
     c = BacktestClient.from_dukascopy_cache(
-        "/paperclip/tradedesk/marketdata",
+        "/data/marketdata",
         symbol="GBPUSD",
         instrument="CS.D.GBPUSD.TODAY.IP",
         period="5MINUTE",
@@ -257,7 +257,7 @@ async def main():
     spec = BacktestSpec(
         instrument="CS.D.GBPUSD.TODAY.IP",
         period="5MINUTE",
-        cache_dir=Path("/paperclip/tradedesk/marketdata"),
+        cache_dir=Path("/data/marketdata"),
         symbol="GBPUSD",
         date_from=date(2025, 1, 1),
         date_to=date(2025, 1, 31),
