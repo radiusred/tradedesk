@@ -178,12 +178,20 @@ fn every_rollover_charge_recomputes_from_the_record_and_the_cost_file() {
             Direction::Short => (cost.financing.short_rate, row.short_rate),
         };
         stale |= row.flag == "stale";
-        let charge = |rate: f64, day_count: u32| {
-            trade.size.abs() * r.mark_price * rate / f64::from(day_count) * f64::from(r.days)
+        let charge = |rate: f64, day_count: u32, days: u32| {
+            trade.size.abs() * r.mark_price * rate / f64::from(day_count) * f64::from(days)
         };
         assert_eq!(parts.carry_rate, carry_rate);
-        assert_eq!(parts.carry, charge(carry_rate, 365));
-        assert_eq!(parts.financing, charge(fin_rate, cost.financing.day_count));
+        assert_eq!(parts.carry, charge(carry_rate, 365, r.days));
+        // The fee charges `fee_days` when the venue sets its own fee calendar (#219).
+        assert_eq!(
+            parts.financing,
+            charge(
+                fin_rate,
+                cost.financing.day_count,
+                r.fee_days.unwrap_or(r.days)
+            )
+        );
         assert_eq!(r.charge, parts.financing + parts.carry);
         // The position, the conversion and the table, on the record itself (#205).
         assert_eq!(r.direction, Some(trade.direction));

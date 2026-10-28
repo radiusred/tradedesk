@@ -66,9 +66,10 @@ pub use cost::config::{
     AssetClass, Carry, CarryRow, CarryTable, CarryTableRef, Commission, ComponentProvenance,
     ConfigError, CostComponent, CostConfig, CostModels, DIVIDEND_TABLE_HEADER, Dividend,
     DividendRow, DividendTable, DividendTableRef, DividendTime, Estimate, Exclusion,
-    ExclusionEffect, Financing, InstrumentSpec, Placeholder, PriceSide, Product, ProvenanceStatus,
-    RolloverSpec, Slippage, SlippageModel, Spread, SpreadBasis, SpreadExcess, SpreadExcessState,
-    SpreadWindow, TripleDay, Venue, VenueInstrumentCost, WeekendRule, WeekendRules,
+    ExclusionEffect, FeeWeekendRules, Financing, InstrumentSpec, Placeholder, PriceSide, Product,
+    ProvenanceStatus, RolloverSpec, Slippage, SlippageModel, Spread, SpreadBasis, SpreadExcess,
+    SpreadExcessState, SpreadWindow, TripleDay, Venue, VenueInstrumentCost, WeekendRule,
+    WeekendRules,
 };
 pub use cost::fill::{
     FillCostDetail, FillError, FillKind, FillModel, FillQuote, PricePoint, SpreadRatioStatus,

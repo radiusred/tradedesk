@@ -129,6 +129,7 @@ weekend.fx = { triple_day = "wednesday", days_on_triple = 3 }
 weekend.metal = { triple_day = "friday" }       # days_on_triple defaults to 3
 weekend.index = { triple_day = "friday" }
 weekend.energy = { triple_day = "friday" }  # optional: required if the venue costs an energy instrument
+# fee_weekend.fx = { triple_day = "friday" }  # optional: the financing fee's own weekend (see "Financing")
 
 [venues.example_spread_bet.instruments.EURUSD]
 price_side = "mid"              # bid | ask | mid
@@ -366,11 +367,32 @@ rates are separate, and a positive rate is a charge.
 
 With the carry excluded, the charge uses the configured annual rate alone.
 
+**The fee's own weekend.** By default the financing fee and the carry
+charge the same days: both follow `weekend`. Some venues book the fee's
+weekend on a different weekday from the carry's. An optional
+`fee_weekend` rule per asset class gives the fee its own triple day, in the
+same form as `weekend`:
+
+```toml
+weekend.fx = { triple_day = "wednesday" }     # the carry's calendar
+fee_weekend.fx = { triple_day = "friday" }    # the fee's; days_on_triple defaults to 3
+```
+
+The rollover instants do not change; only the days each part charges can
+differ. With the example above, a position held over Wednesday's rollover
+pays three days of carry and one day of fee, over Friday's one day of carry
+and three days of fee, and over a full week seven days of each. A class
+without a `fee_weekend` rule follows `weekend`. A `fee_weekend.energy` rule
+needs a `weekend.energy` rule, and every `days_on_triple` must be at least 1.
+
 Each charge is a `FinancingCharge`. It records the position's `direction`
 and `size`, the `charge` in quote currency, the `fx_rate` (quote to account,
 from the run's `account_fx`, the same rate as the trade's) and
 `charge_account = charge x fx_rate` in account currency. A record written
-before these fields reads back with `None` for each.
+before these fields reads back with `None` for each. `days` is the days
+charged on the `weekend` calendar. When the venue sets a `fee_weekend` rule
+for the instrument's class, `fee_days` records the fee's days; otherwise the
+key is absent and the fee charges `days`.
 
 ### Carry
 
